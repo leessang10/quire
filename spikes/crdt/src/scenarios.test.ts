@@ -1,9 +1,9 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { M1, M2, M3, M4 } from './models';
+import { M1, M2, M3, M4, M5 } from './models';
 import { SCENARIOS, runScenario, type Result } from './scenarios';
 
-const MODELS = [M1, M2, M3, M4];
+const MODELS = [M1, M2, M3, M4, M5];
 
 const LABEL: Record<string, string> = {
   pass: '✅ 통과',

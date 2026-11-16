@@ -29,6 +29,25 @@ export interface Replica {
   paragraphs(): string[];
   /** 모델이 보장해야 할 구조 조건 위반 (없으면 null) */
   invariantViolation(): string | null;
+  /** 구획 모델만: 이웃한 구획 사이 BRK를 물리적으로 지운다 (정리 규칙 시험용) */
+  compactPhysical?(): void;
+  /** 구획 모델만: 크기 지표 */
+  stats?(): SegStats;
+}
+
+export interface SegStats {
+  /** 보이는 내용 글자 수 (숨긴 구획 포함, BRK 제외) */
+  liveChars: number;
+  /** 숨긴 구획에 남아 있는 글자 수 */
+  hiddenChars: number;
+  brk: number;
+  orderLen: number;
+  /** 텍스트 순서의 구획 수 */
+  segs: number;
+  /** 텍스트상으로도 화면상으로도 이웃한 구획을 하나로 볼 때의 구획 수 */
+  runs: number;
+  /** 위와 같되 숨긴 구획을 건너뛰고 셀 때 (화면 순서 계산이 실제로 다뤄야 할 조각 수) */
+  visibleRuns: number;
 }
 
 export interface Model {
@@ -316,6 +335,8 @@ class SegmentReplica implements Replica {
   constructor(
     readonly doc: LoroDoc,
     private readonly identity: 'start' | 'end' = 'start',
+    /** 문단 삭제 때 숨긴 구획의 내용도 같은 커밋에서 지운다 (정리 규칙 R2) */
+    private readonly clearHidden = false,
   ) {
     this.text = doc.getText('body');
     this.order = doc.getMovableList('order');
@@ -645,6 +666,89 @@ class SegmentReplica implements Replica {
     }
     const sid = this.isolate(p);
     this.hidden.set(sid, true);
+    if (this.clearHidden) {
+      // 구획 ID(BRK)와 숨김 표시는 남기고 내용만 지운다. 동시에 이 문단에 들어온 입력은 같은 구획에 들어가므로
+      // 숨겨진 채로 남는다. 같은 커밋이라 실행 취소는 숨김과 내용을 함께 되돌린다.
+      // 마지막 글자(¶) 하나는 남긴다: 구획이 비면 앞뒤 BRK가 맞붙어 별칭 규칙에 따라 이웃 구획과 한 구획이 되고,
+      // 그 구획 전체가 숨겨진다 (첫 시험에서 동시 이동·병합과 만나 앞 문단이 사라짐).
+      const s = this.view().segs.find((x) => x.aliases.includes(sid))!;
+      if (s.end - 1 > s.start) this.text.delete(s.start, s.end - 1 - s.start);
+    }
+  }
+
+  private isHidden(s: Seg): boolean {
+    return s.aliases.some((a) => this.hidden.get(a) === true);
+  }
+
+  /**
+   * 텍스트 순서상 이웃한 구획 쌍 [S, T] 중 하나로 볼 수 있는 것 (S의 인덱스).
+   * 조건: 화면 순서(숨긴 구획 포함)에서도 바로 이웃, 둘 다 숨기지 않음, S가 ¶로 끝나거나 비어 있음.
+   */
+  private joinable(v: SegView): number[] {
+    const all = this.arrange(v.segs, v.order);
+    const rank = new Map(all.map((s, k) => [s, k]));
+    const out: number[] = [];
+    for (let t = 0; t + 1 < v.segs.length; t++) {
+      const S = v.segs[t]!;
+      const T = v.segs[t + 1]!;
+      if (rank.get(T) !== rank.get(S)! + 1) continue;
+      if (this.isHidden(S) || this.isHidden(T)) continue;
+      if (S.end > S.start && v.cps[S.end - 1] !== PARA) continue;
+      out.push(t);
+    }
+    return out;
+  }
+
+  /**
+   * 정리 규칙 R3 시험: 하나로 볼 수 있는 구획 사이의 BRK를 지우고 order·moved 항목도 지운다.
+   * 혼자 편집할 때는 화면이 그대로지만, 동시에 그 구획을 옮기거나 숨기는 편집과 만나면 의도가 깨진다.
+   */
+  compactPhysical(): void {
+    const v = this.view();
+    const ts = this.joinable(v);
+    for (const t of ts.reverse()) {
+      const S = v.segs[t]!;
+      const T = v.segs[t + 1]!;
+      this.text.delete(S.end, T.start - S.end);
+      for (const a of S.aliases) {
+        const k = (this.order.toJSON() as string[]).indexOf(a);
+        if (k >= 0) this.order.delete(k, 1);
+        this.moved.delete(a);
+      }
+    }
+    this.doc.commit();
+  }
+
+  stats(): SegStats {
+    const v = this.view();
+    let brk = 0;
+    for (const c of v.cps) if (c === BRK) brk++;
+    let hiddenChars = 0;
+    for (const s of v.segs) if (this.isHidden(s)) hiddenChars += s.end - s.start;
+    return {
+      liveChars: v.cps.length - brk,
+      hiddenChars,
+      brk,
+      orderLen: v.order.length,
+      segs: v.segs.length,
+      runs: v.segs.length - this.joinable(v).length,
+      visibleRuns: this.visibleRuns(v),
+    };
+  }
+
+  /** 숨긴 구획을 건너뛰고 볼 때, 텍스트상으로도 화면상으로도 이웃한 보이는 구획을 하나로 센 수 */
+  private visibleRuns(v: SegView): number {
+    const vis = v.segs.filter((s) => !this.isHidden(s));
+    const rank = new Map(v.disp.map((s, k) => [s, k]));
+    let runs = vis.length;
+    for (let i = 0; i + 1 < vis.length; i++) {
+      const S = vis[i]!;
+      const T = vis[i + 1]!;
+      if (rank.get(T) !== rank.get(S)! + 1) continue;
+      if (S.end > S.start && v.cps[S.end - 1] !== PARA) continue;
+      runs--;
+    }
+    return runs;
   }
 
   undo(): boolean {
@@ -697,6 +801,17 @@ export const M4: Model = {
     const doc = newDoc(peer);
     doc.import(snapshot);
     return new SegmentReplica(doc, 'end');
+  },
+};
+
+/** M4 + 문단 삭제 때 숨긴 내용 지우기 (정리 규칙 R2) */
+export const M5: Model = {
+  name: 'M4 + 숨긴 내용 삭제',
+  createBase: M4.createBase,
+  replica(snapshot, peer) {
+    const doc = newDoc(peer);
+    doc.import(snapshot);
+    return new SegmentReplica(doc, 'end', true);
   },
 };
 
