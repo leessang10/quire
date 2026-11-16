@@ -8,6 +8,8 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@quire/editor": "*"
+    "@quire/editor": "*",
+    "@quire/sync": "*",
+    "@quire/model": "*"
   }
 }

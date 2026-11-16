@@ -9,6 +9,8 @@ import { TextareaInput, type InputIntent, type InputLogEntry } from './input';
 export interface EditorOptions {
   host: HTMLElement;
   text?: string;
+  /** 이미 있는 문서 모델을 편집한다 (동기화 브리지가 붙은 Doc 등). 주면 text는 무시 */
+  doc?: Doc;
   fontFamily?: string;
   fontSize?: number;
   onInputLog?: (entry: InputLogEntry) => void;
@@ -134,7 +136,7 @@ export class Editor {
       paraSpacing: Math.round(this.fontSize * 0.5),
     };
 
-    this.doc = Doc.fromText(opts.text ?? '');
+    this.doc = opts.doc ?? Doc.fromText(opts.text ?? '');
     const start = this.doc.positionAt(0);
     this.sel = { anchor: start, head: start };
 
@@ -227,6 +229,16 @@ export class Editor {
     this.history = new History();
     this.refresh();
     this.scroller.scrollTop = 0;
+  }
+
+  /**
+   * 바깥에서 문서 모델이 바뀌었을 때(원격 편집 적용 등) 호출한다. 선택 영역은 원소 ID 기준이라 그대로 유지된다.
+   * 실행 취소 기록에는 들어가지 않는다.
+   */
+  docChanged(): void {
+    this.relayout();
+    this.render();
+    this.opts.onChange?.(this);
   }
 
   getText(): string {

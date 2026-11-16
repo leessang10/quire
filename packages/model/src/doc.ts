@@ -60,6 +60,20 @@ export type Op =
   | { type: 'delete'; ids: ElementId[] }
   | { type: 'segments'; before: SegState; after: SegState };
 
+/**
+ * 원소 열 변경 기록 (CRDT 브리지용, 09 §4). 위치·길이는 UTF-16 단위이고 구획 표식은 U+E000 한 글자로 센다.
+ * 순서대로 적용하면 상대 텍스트가 이 Doc의 살아 있는 원소 열(구획 표식 포함)과 같아진다.
+ */
+export type RawChange =
+  | { kind: 'insert'; at: number; text: string }
+  | { kind: 'delete'; at: number; len: number };
+
+/** 원격 텍스트 델타 (UTF-16 단위) */
+export type TextDelta = Array<{ retain?: number; insert?: string; delete?: number }>;
+
+/** 구획 표식이 외부(CRDT) 텍스트에서 쓰는 문자 */
+export const BRK_CHAR = '';
+
 export interface ParagraphInfo {
   /** 문단 ID = 문단을 끝내는 ¶ 원소의 ID */
   id: ElementId;
@@ -78,6 +92,16 @@ interface Seg {
   hidden: boolean;
 }
 
+/** 변경 기록용: 저장 순서로 이어진 원소 구간 */
+interface Run {
+  chunk: Chunk;
+  i: number;
+  /** UTF-16 위치 (묘비로 만들 때는 바꾸기 전) */
+  at: number;
+  len: number;
+  codes: number[];
+}
+
 const CHUNK = 512;
 const CAP = CHUNK * 2;
 /** 처음 불러올 때 청크를 채우는 양. 입력할 여유를 남기고 거의 채워 메모리를 아낀다 */
@@ -91,6 +115,8 @@ class Chunk {
   len = 0;
   /** 살아 있는 원소 수 (구획 표식 제외) */
   visible = 0;
+  /** 묘비가 아닌 원소의 UTF-16 길이 (구획 표식은 1) */
+  u16 = 0;
   readonly codes = new Uint32Array(CAP);
   readonly ctrs = new Int32Array(CAP);
   readonly dead = new Uint8Array(CAP);
@@ -122,8 +148,80 @@ export class Doc {
   /** 화면 순서의 구획 (숨긴 구획 포함) */
   private order: Seg[] = [this.segs[0]!];
   private segMap = new Map<SegId, Seg>([['tail', this.segs[0]!]]);
+  private listener: ((c: RawChange) => void) | null = null;
+  /** 원격 델타 적용 중 (변경 기록을 보내지 않음) */
+  private muted = false;
+  /** false면 구획 연산(문단 이동·숨김)을 거부한다 (구획을 동기화하지 않는 브리지가 붙었을 때) */
+  segmentsEnabled = true;
 
   constructor(readonly peer = 'local') {}
+
+  /** 원소 열 변경 기록을 받는다 (하나만). null이면 해제 */
+  observe(fn: ((c: RawChange) => void) | null): void {
+    this.listener = fn;
+  }
+
+  private emit(c: RawChange): void {
+    if (this.listener && !this.muted) this.listener(c);
+  }
+
+  /** 살아 있는 원소 열 전체 (구획 표식은 U+E000, 숨긴 구획 포함, 저장 순서). CRDT 텍스트와 같아야 한다 */
+  rawText(): string {
+    const out: number[] = [];
+    for (const c of this.chunks)
+      for (let i = 0; i < c.len; i++) {
+        if (c.dead[i] === TOMB) continue;
+        out.push(c.dead[i] === STRUCT ? BRK_CHAR.codePointAt(0)! : c.codes[i]!);
+      }
+    return fromCodes(out);
+  }
+
+  /**
+   * 원격 텍스트 델타를 적용한다 (UTF-16 단위, 구획 표식 포함 위치). 변경 기록은 보내지 않는다.
+   * 1단계: 구획이 하나인 문서만 (구획 동기화는 2단계).
+   */
+  applyDelta(delta: TextDelta): void {
+    if (!this.simple) throw new Error('applyDelta: segmented documents are not synced yet');
+    this.muted = true;
+    try {
+      let pos = 0;
+      for (const op of delta) {
+        if (op.retain !== undefined) {
+          pos += op.retain;
+        } else if (op.insert !== undefined) {
+          const codes = toCodes(op.insert);
+          if (codes.length === 0) continue;
+          if (codes.includes(BRK_CHAR.codePointAt(0)!)) throw new Error('applyDelta: segment marks are not synced yet');
+          const { chunk, index, raw } = this.locateU16(pos);
+          this.insertIntoChunk(chunk, index, codes, 0);
+          this.visible += codes.length;
+          this.segs[0]!.len += codes.length;
+          this.updateParagraphs(raw, raw + codes.length, codes.length);
+          this._version++;
+          pos += op.insert.length;
+        } else if (op.delete !== undefined && op.delete > 0) {
+          const { raw } = this.locateU16(pos);
+          let left = op.delete;
+          let n = 0;
+          this.rawForEach(raw, (code, _ctr, chunk, i) => {
+            chunk.dead[i] = TOMB;
+            chunk.visible--;
+            const w = width16(code);
+            chunk.u16 -= w;
+            left -= w;
+            n++;
+            return left <= 0;
+          });
+          this.visible -= n;
+          this.segs[0]!.len -= n;
+          this.updateParagraphs(raw, raw, -n);
+          this._version++;
+        }
+      }
+    } finally {
+      this.muted = false;
+    }
+  }
 
   static fromText(text: string, peer?: string): Doc {
     const doc = new Doc(peer);
@@ -148,6 +246,7 @@ export class Doc {
       chunk.codes[i] = code;
       chunk.ctrs[i] = ctr;
       chunk.visible++;
+      chunk.u16 += width16(code);
       doc.chunkIdOf[ctr] = chunk.id;
       if (code === PARA_CODE) {
         paraCtrs.push(ctr);
@@ -250,11 +349,13 @@ export class Doc {
     offset = clamp(offset, 0, this.maxCaret);
     const { seg, raw } = this.toRaw(offset);
     const { chunk, index } = this.locateRaw(raw);
+    const at = this.listener ? this.u16At(chunk, index) : 0;
     const first = this.insertIntoChunk(chunk, index, codes, 0);
     this.visible += codes.length;
     seg.len += codes.length;
     this.updateParagraphs(offset, offset + codes.length, codes.length);
     this._version++;
+    this.emit({ kind: 'insert', at, text: fromCodes(codes) });
     return this.idRange(first, codes.length);
   }
 
@@ -270,9 +371,18 @@ export class Doc {
     if (this.simple) {
       const ids: ElementId[] = [];
       let n = to - from;
-      this.rawForEach(from, (_code, ctr, chunk, i) => {
+      let at = 0;
+      if (this.listener) {
+        const { chunk, index } = this.locateRaw(from);
+        at = this.u16At(chunk, index);
+      }
+      let len16 = 0;
+      this.rawForEach(from, (code, ctr, chunk, i) => {
         chunk.dead[i] = TOMB;
         chunk.visible--;
+        const w = width16(code);
+        chunk.u16 -= w;
+        len16 += w;
         ids.push(this.idOf(ctr));
         return --n <= 0;
       });
@@ -280,6 +390,7 @@ export class Doc {
       this.segs[0]!.len -= ids.length;
       this.updateParagraphs(from, from, -ids.length);
       this._version++;
+      this.emit({ kind: 'delete', at, len: len16 });
       return [{ type: 'delete', ids }];
     }
 
@@ -297,13 +408,23 @@ export class Doc {
     // 저장 순서상 뒤에서부터 지워야 앞서 계산한 raw 위치가 그대로 맞다
     for (const p of [...pieces].sort((x, y) => y.raw - x.raw)) {
       let n = p.n;
-      this.rawForEach(p.raw, (_code, ctr, chunk, i) => {
+      let at = 0;
+      if (this.listener) {
+        const { chunk, index } = this.locateRaw(p.raw);
+        at = this.u16At(chunk, index);
+      }
+      let len16 = 0;
+      this.rawForEach(p.raw, (code, ctr, chunk, i) => {
         chunk.dead[i] = TOMB;
         chunk.visible--;
+        const w = width16(code);
+        chunk.u16 -= w;
+        len16 += w;
         p.ids.push(this.idOf(ctr));
         return --n <= 0;
       });
       p.seg.len -= p.n;
+      this.emit({ kind: 'delete', at, len: len16 });
     }
     const ids = pieces.flatMap((p) => p.ids);
     this.visible -= ids.length;
@@ -336,6 +457,7 @@ export class Doc {
    */
   moveParagraphs(i: number, j: number, to: number): Op[] {
     const n = this.paras.length;
+    if (!this.segmentsEnabled) return [];
     if (i < 0 || j < i || j >= n || to < 0 || to > n || (to >= i && to <= j + 1)) return [];
     const before = this.segState();
     const targetOffset = to < n ? this.paras[to]!.start : -1;
@@ -356,6 +478,7 @@ export class Doc {
   /** 문단 i..j를 숨긴다(문단 삭제). 보이는 문단을 모두 숨기는 요청은 무시한다 */
   hideParagraphs(i: number, j: number): Op[] {
     const n = this.paras.length;
+    if (!this.segmentsEnabled) return [];
     if (i < 0 || j < i || j >= n || (i === 0 && j === n - 1)) return [];
     const before = this.segState();
     const run = this.isolateRun(i, j);
@@ -412,11 +535,14 @@ export class Doc {
       if (c.index !== k) throw new Error(`chunk ${k} has index ${c.index}`);
       if (c.len > CAP) throw new Error(`chunk ${k} overflow`);
       let v = 0;
+      let u = 0;
       for (let i = 0; i < c.len; i++) {
         if (!c.dead[i]) v++;
+        if (c.dead[i] !== TOMB) u += width16(c.codes[i]!);
         if (this.chunkOfCtr(c.ctrs[i]!) !== c) throw new Error(`chunk table out of sync for ${c.ctrs[i]}`);
       }
       if (v !== c.visible) throw new Error(`chunk ${k} visible ${c.visible} != ${v}`);
+      if (u !== c.u16) throw new Error(`chunk ${k} u16 ${c.u16} != ${u}`);
       visible += v;
     });
     if (visible !== this.visible) throw new Error(`visible ${this.visible} != ${visible}`);
@@ -521,6 +647,7 @@ export class Doc {
         const d = dead ? dead[k]! : 0;
         c.dead[i] = d;
         if (!d) c.visible++;
+        if (d !== TOMB) c.u16 += width16(codes[k]!);
         this.chunkIdOf[ctr] = c.id;
       }
       c.len = e - s;
@@ -547,6 +674,7 @@ export class Doc {
       }
       chunk.len += n;
       if (!flag) chunk.visible += n;
+      for (let k = 0; k < n; k++) chunk.u16 += width16(codes[k]!);
       return first;
     }
     // 넘치면 청크 내용 + 삽입 내용을 합쳐 여러 청크로 다시 나눈다
@@ -647,21 +775,26 @@ export class Doc {
 
   private setDead(ids: ElementId[], dead: boolean): void {
     const flag = dead ? TOMB : 0;
+    const track = this.listener !== null && !this.muted;
     if (this.simple) {
       const changed: Array<{ chunk: Chunk; i: number }> = [];
-      let firstOffset = -1;
       for (const id of ids) {
         const ctr = this.ctrOf(id);
         const chunk = this.chunkOfCtr(ctr);
         const i = chunk.find(ctr);
-        if (chunk.dead[i] === flag) continue;
+        if (chunk.dead[i] !== flag) changed.push({ chunk, i });
+      }
+      if (changed.length === 0) return;
+      const runs = track ? this.runsOf(changed, dead) : null;
+      let firstOffset = -1;
+      for (const { chunk, i } of changed) {
         // 숨기기: 숨기기 전 첫 원소의 오프셋 = 변경 구간 시작
         if (dead && firstOffset < 0) firstOffset = this.offsetAtRaw(chunk, i);
         chunk.dead[i] = flag;
         chunk.visible += dead ? -1 : 1;
-        changed.push({ chunk, i });
+        chunk.u16 += dead ? -width16(chunk.codes[i]!) : width16(chunk.codes[i]!);
       }
-      if (changed.length === 0) return;
+      if (runs) this.emitRuns(runs, dead);
       const delta = dead ? -changed.length : changed.length;
       this.visible += delta;
       this.segs[0]!.len += delta;
@@ -702,11 +835,14 @@ export class Doc {
     const shown = items.filter((it) => !it.seg!.hidden);
     let a = 0;
     if (dead && shown.length > 0) a = this.elementDisplay(shown[0]!.chunk, shown[0]!.i).off;
+    const runs = track ? this.runsOf(items, dead) : null;
     for (const it of items) {
       it.chunk.dead[it.i] = flag;
       it.chunk.visible += dead ? -1 : 1;
+      it.chunk.u16 += dead ? -width16(it.chunk.codes[it.i]!) : width16(it.chunk.codes[it.i]!);
       it.seg!.len += dead ? -1 : 1;
     }
+    if (runs) this.emitRuns(runs, dead);
     this.visible += dead ? -items.length : items.length;
     if (shown.length > 0) {
       const last = shown[shown.length - 1]!;
@@ -715,6 +851,76 @@ export class Doc {
       this.updateParagraphs(a, b, dead ? -shown.length : shown.length);
     }
     this._version++;
+  }
+
+  // ── 내부: UTF-16 위치 (CRDT 브리지) ─────────────────
+
+  /** 청크의 i번째 원소 앞에 있는, 묘비가 아닌 원소의 UTF-16 길이 합 */
+  private u16At(chunk: Chunk, i: number): number {
+    let n = 0;
+    for (let c = 0; c < chunk.index; c++) n += this.chunks[c]!.u16;
+    for (let k = 0; k < i; k++) if (chunk.dead[k] !== TOMB) n += width16(chunk.codes[k]!);
+    return n;
+  }
+
+  /** UTF-16 위치 pos에 있는 원소(묘비 제외)와 그 앞의 raw 오프셋. 끝이면 마지막 청크 끝 */
+  private locateU16(pos: number): { chunk: Chunk; index: number; raw: number } {
+    let remaining = pos;
+    let raw = 0;
+    for (const chunk of this.chunks) {
+      if (remaining < chunk.u16) {
+        for (let i = 0; i < chunk.len; i++) {
+          const d = chunk.dead[i];
+          if (d === TOMB) continue;
+          if (remaining === 0) return { chunk, index: i, raw };
+          remaining -= width16(chunk.codes[i]!);
+          if (!d) raw++;
+        }
+      }
+      remaining -= chunk.u16;
+      raw += chunk.visible;
+    }
+    const last = this.chunks[this.chunks.length - 1]!;
+    return { chunk: last, index: last.len, raw };
+  }
+
+  /**
+   * 되살리거나 묘비로 만들 원소들을 저장 순서의 연속 구간으로 묶는다. 두 원소 사이에 다른 살아 있는 원소
+   * (묘비가 아닌 원소)가 없으면 같은 구간. 묘비로 만들 때는 바꾸기 전 위치를 미리 잰다.
+   */
+  private runsOf(items: Array<{ chunk: Chunk; i: number }>, dead: boolean): Run[] {
+    const sorted = [...items].sort((x, y) => x.chunk.index - y.chunk.index || x.i - y.i);
+    const runs: Run[] = [];
+    let k = 0;
+    let cur: Run | null = null;
+    const s0 = sorted[0]!;
+    sweep: for (let c = s0.chunk.index; c < this.chunks.length; c++) {
+      const ch = this.chunks[c]!;
+      for (let e = c === s0.chunk.index ? s0.i : 0; e < ch.len; e++) {
+        const item = sorted[k]!;
+        if (item.chunk === ch && item.i === e) {
+          if (!cur) {
+            cur = { chunk: ch, i: e, at: dead ? this.u16At(ch, e) : 0, len: 0, codes: [] };
+            runs.push(cur);
+          }
+          cur.len += width16(ch.codes[e]!);
+          cur.codes.push(ch.codes[e]!);
+          if (++k >= sorted.length) break sweep;
+        } else if (ch.dead[e] !== TOMB) {
+          cur = null;
+        }
+      }
+    }
+    return runs;
+  }
+
+  /** 묶은 구간을 변경 기록으로 보낸다: 묘비는 뒤에서부터, 되살리기는 앞에서부터 (바뀐 뒤 위치) */
+  private emitRuns(runs: Run[], dead: boolean): void {
+    if (dead) {
+      for (let r = runs.length - 1; r >= 0; r--) this.emit({ kind: 'delete', at: runs[r]!.at, len: runs[r]!.len });
+    } else {
+      for (const run of runs) this.emit({ kind: 'insert', at: this.u16At(run.chunk, run.i), text: fromCodes(run.codes) });
+    }
   }
 
   // ── 내부: 구획 ────────────────────────────────────────
@@ -808,7 +1014,9 @@ export class Doc {
     const rs = this.rawStartOf(seg);
     if (raw === rs) return;
     const { chunk, index } = this.locateRaw(raw);
+    const at = this.listener ? this.u16At(chunk, index) : 0;
     const ctr = this.insertIntoChunk(chunk, index, [BRK_CODE], STRUCT);
+    this.emit({ kind: 'insert', at, text: BRK_CHAR });
     const left: Seg = { id: this.idOf(ctr), len: raw - rs, hidden: seg.hidden };
     seg.len -= left.len;
     this.segs.splice(this.segs.indexOf(seg), 0, left);
@@ -1005,6 +1213,11 @@ function findParaByEnd(paras: ParagraphInfo[], offset: number): number {
   }
   if (paras[lo]!.end !== offset) throw new Error(`paragraph index out of sync at ${offset}`);
   return lo;
+}
+
+/** 원소의 UTF-16 길이. 구획 표식은 U+E000 한 글자 */
+function width16(code: number): number {
+  return code > 0xffff && code !== BRK_CODE ? 2 : 1;
 }
 
 function toCodes(s: string): number[] {
