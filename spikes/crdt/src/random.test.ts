@@ -4,7 +4,7 @@
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { M1, M2, send, syncAll, type Model, type Replica } from './models';
+import { M1, M2, M3, send, syncAll, type Model, type Replica } from './models';
 
 function rng(seed: number) {
   let s = seed >>> 0;
@@ -95,7 +95,7 @@ function fuzz(model: Model, seeds: number, steps: number): Stats {
 
 describe('V4 randomized convergence (3 peers)', () => {
   const out: string[] = [];
-  for (const model of [M1, M2]) {
+  for (const model of [M1, M2, M3]) {
     it(model.name, () => {
       const s = fuzz(model, 200, 150);
       out.push(
