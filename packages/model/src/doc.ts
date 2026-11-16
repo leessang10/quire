@@ -42,9 +42,14 @@ export interface ParagraphInfo {
 
 const CHUNK = 512;
 const CAP = CHUNK * 2;
+/** 처음 불러올 때 청크를 채우는 양. 입력할 여유를 남기고 거의 채워 메모리를 아낀다 */
+const LOAD_FILL = CAP - 64;
 
 class Chunk {
+  /** 청크 배열 안의 위치 (분할 시 바뀜) */
   index = 0;
+  /** 고유 번호 (바뀌지 않음). 카운터 → 청크 표에 저장된다 */
+  id = 0;
   len = 0;
   visible = 0;
   readonly codes = new Uint32Array(CAP);
@@ -61,22 +66,73 @@ class Chunk {
 
 export class Doc {
   private chunks: Chunk[] = [];
-  /** 카운터 → 그 원소가 들어 있는 청크 */
-  private chunkOf: Chunk[] = [];
+  /** 카운터 → 그 원소가 들어 있는 청크의 id. GC가 추적하지 않는 typed array로 둔다 */
+  private chunkIdOf = new Int32Array(1024);
+  /** 청크 id → 청크 (분할로 사라진 청크는 null) */
+  private chunkById: Array<Chunk | null> = [];
   private counter = 0;
   private visible = 0;
   private _version = 0;
   private paras: ParagraphInfo[] = [];
+  /** 마지막 takeParagraphChanges() 이후 바뀐 문단 구간: 앞에서 changeFrom개, 뒤에서 changeSuffix개는 그대로 */
+  private changeFrom = Infinity;
+  private changeSuffix = Infinity;
 
   constructor(readonly peer = 'local') {}
 
   static fromText(text: string, peer?: string): Doc {
     const doc = new Doc(peer);
-    const codes = toCodes(normalizeNewlines(text));
-    codes.push(PARA_CODE); // 스토리는 항상 ¶로 끝난다
-    doc.chunks = doc.buildChunks(codes, null, null, 0);
-    doc.visible = codes.length;
-    doc.paras = doc.scanParagraphs(0, Infinity).paras;
+    const norm = normalizeNewlines(text);
+
+    // 중간 배열 없이 문자열에서 바로 청크를 채운다
+    doc.chunkIdOf = new Int32Array(norm.length + 1 + 1024); // 코드포인트 수 ≤ UTF-16 길이
+    const chunks: Chunk[] = [];
+    let chunk = doc.newChunk();
+    chunks.push(chunk);
+    const paraCtrs: number[] = [];
+    const paraOffsets: number[] = [];
+    let off = 0;
+    const push = (code: number) => {
+      if (chunk.len === LOAD_FILL) {
+        chunk = doc.newChunk();
+        chunk.index = chunks.length;
+        chunks.push(chunk);
+      }
+      const ctr = doc.nextCtr();
+      const i = chunk.len++;
+      chunk.codes[i] = code;
+      chunk.ctrs[i] = ctr;
+      chunk.visible++;
+      doc.chunkIdOf[ctr] = chunk.id;
+      if (code === PARA_CODE) {
+        paraCtrs.push(ctr);
+        paraOffsets.push(off);
+      }
+      off++;
+    };
+    for (let i = 0; i < norm.length; i++) {
+      let c = norm.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff && i + 1 < norm.length) {
+        const d = norm.charCodeAt(i + 1);
+        if (d >= 0xdc00 && d <= 0xdfff) {
+          c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00);
+          i++;
+        }
+      }
+      push(c);
+    }
+    push(PARA_CODE); // 스토리는 항상 ¶로 끝난다
+    doc.chunks = chunks;
+    doc.visible = off;
+
+    // 문단 텍스트는 원문을 나눠서 얻는다 (코드포인트에서 문자열을 다시 만들지 않음)
+    const parts = norm.split(PARA);
+    doc.paras = parts.map((t, k) => ({
+      id: doc.idOf(paraCtrs[k]!),
+      start: k === 0 ? 0 : paraOffsets[k - 1]! + 1,
+      end: paraOffsets[k]!,
+      text: t,
+    }));
     doc._version++;
     return doc;
   }
@@ -109,6 +165,18 @@ export class Doc {
       return --n <= 0;
     });
     return fromCodes(out);
+  }
+
+  /**
+   * 마지막 호출 이후 문단 목록에서 바뀐 구간을 돌려주고 기록을 비운다.
+   * from: 앞에서부터 그대로인 문단 수, suffix: 뒤에서부터 그대로인 문단 수 (그대로인 문단은 같은 객체).
+   * 레이아웃이 문단 목록 전체를 비교하지 않아도 되게 하는 힌트다.
+   */
+  takeParagraphChanges(): { from: number; suffix: number } {
+    const r = { from: this.changeFrom, suffix: this.changeSuffix };
+    this.changeFrom = Infinity;
+    this.changeSuffix = Infinity;
+    return r;
   }
 
   /** 문단 목록. 내부 배열을 그대로 돌려주므로 호출 측에서 수정하면 안 된다 */
@@ -178,7 +246,7 @@ export class Doc {
   /** 안정적 위치 → 현재 오프셋. 기준 원소가 삭제되었으면 그 자리의 오프셋 */
   resolve(pos: Position): number {
     const ctr = this.ctrOf(pos.anchor);
-    const chunk = this.chunkOf[ctr]!;
+    const chunk = this.chunkOfCtr(ctr);
     const i = chunk.find(ctr);
     const off = this.offsetAt(chunk, i);
     return !chunk.dead[i] && pos.side === 'after' ? off + 1 : off;
@@ -198,7 +266,7 @@ export class Doc {
       let v = 0;
       for (let i = 0; i < c.len; i++) {
         if (!c.dead[i]) v++;
-        if (this.chunkOf[c.ctrs[i]!] !== c) throw new Error(`chunkOf out of sync for ${c.ctrs[i]}`);
+        if (this.chunkOfCtr(c.ctrs[i]!) !== c) throw new Error(`chunk table out of sync for ${c.ctrs[i]}`);
       }
       if (v !== c.visible) throw new Error(`chunk ${k} visible ${c.visible} != ${v}`);
       visible += v;
@@ -215,7 +283,7 @@ export class Doc {
   private ctrOf(id: ElementId): number {
     const k = id.lastIndexOf(':');
     const ctr = k >= 0 && id.slice(0, k) === this.peer ? Number(id.slice(k + 1)) : NaN;
-    if (!Number.isInteger(ctr) || !this.chunkOf[ctr]) throw new Error(`unknown element ${id}`);
+    if (!Number.isInteger(ctr) || ctr < 0 || ctr >= this.counter) throw new Error(`unknown element ${id}`);
     return ctr;
   }
 
@@ -226,6 +294,28 @@ export class Doc {
   }
 
   // ── 내부: 청크 ────────────────────────────────────────
+
+  private newChunk(): Chunk {
+    const c = new Chunk();
+    c.id = this.chunkById.length;
+    this.chunkById.push(c);
+    return c;
+  }
+
+  /** 새 카운터를 발급하고 카운터 → 청크 표 용량을 보장한다 */
+  private nextCtr(): number {
+    const ctr = this.counter++;
+    if (ctr >= this.chunkIdOf.length) {
+      const grown = new Int32Array(Math.max(1024, this.chunkIdOf.length * 2));
+      grown.set(this.chunkIdOf);
+      this.chunkIdOf = grown;
+    }
+    return ctr;
+  }
+
+  private chunkOfCtr(ctr: number): Chunk {
+    return this.chunkById[this.chunkIdOf[ctr]!]!;
+  }
 
   /**
    * 코드포인트 열로 청크들을 만든다. ctrs/dead를 주면 기존 원소를 옮기는 것이고,
@@ -240,18 +330,18 @@ export class Doc {
     const out: Chunk[] = [];
     const n = codes.length;
     for (let s = 0; s < n || out.length === 0; s += CHUNK) {
-      const c = new Chunk();
+      const c = this.newChunk();
       c.index = startIndex + out.length;
       const e = Math.min(n, s + CHUNK);
       for (let k = s; k < e; k++) {
         const i = k - s;
-        const ctr = ctrs ? ctrs[k]! : this.counter++;
+        const ctr = ctrs ? ctrs[k]! : this.nextCtr();
         c.codes[i] = codes[k]!;
         c.ctrs[i] = ctr;
         const d = dead ? dead[k]! : 0;
         c.dead[i] = d;
         if (!d) c.visible++;
-        this.chunkOf[ctr] = c;
+        this.chunkIdOf[ctr] = c.id;
       }
       c.len = e - s;
       out.push(c);
@@ -267,11 +357,11 @@ export class Doc {
       chunk.ctrs.copyWithin(index + n, index, chunk.len);
       chunk.dead.copyWithin(index + n, index, chunk.len);
       for (let k = 0; k < n; k++) {
-        const ctr = this.counter++;
+        const ctr = this.nextCtr();
         chunk.codes[index + k] = codes[k]!;
         chunk.ctrs[index + k] = ctr;
         chunk.dead[index + k] = 0;
-        this.chunkOf[ctr] = chunk;
+        this.chunkIdOf[ctr] = chunk.id;
       }
       chunk.len += n;
       chunk.visible += n;
@@ -287,12 +377,13 @@ export class Doc {
     allDead.set(chunk.dead.subarray(0, index), 0);
     for (let k = 0; k < n; k++) {
       allCodes[index + k] = codes[k]!;
-      allCtrs[index + k] = this.counter++;
+      allCtrs[index + k] = this.nextCtr();
     }
     allCodes.set(chunk.codes.subarray(index, chunk.len), index + n);
     allCtrs.set(chunk.ctrs.subarray(index, chunk.len), index + n);
     allDead.set(chunk.dead.subarray(index, chunk.len), index + n);
     const pieces = this.buildChunks(allCodes, allCtrs, allDead, chunk.index);
+    this.chunkById[chunk.id] = null; // 대체된 청크 해제
     this.chunks.splice(chunk.index, 1, ...pieces);
     for (let c = chunk.index; c < this.chunks.length; c++) this.chunks[c]!.index = c;
   }
@@ -353,7 +444,7 @@ export class Doc {
     let firstOffset = -1;
     for (const id of ids) {
       const ctr = this.ctrOf(id);
-      const chunk = this.chunkOf[ctr]!;
+      const chunk = this.chunkOfCtr(ctr);
       const i = chunk.find(ctr);
       if (chunk.dead[i] === flag) continue;
       // 숨기기: 숨기기 전 첫 원소의 오프셋 = 변경 구간 시작
@@ -386,6 +477,9 @@ export class Doc {
     const i = findParaByStart(old, a);
     const { paras: rebuilt, lastParaOffset } = this.scanParagraphs(old[i]!.start, b);
     const j = findParaByEnd(old, lastParaOffset - delta);
+    // 바뀐 구간 기록: [0, i)와 뒤쪽 old.length-(j+1)개 문단은 같은 객체로 남는다
+    this.changeFrom = Math.min(this.changeFrom, i);
+    this.changeSuffix = Math.min(this.changeSuffix, old.length - (j + 1));
     old.splice(i, j - i + 1, ...rebuilt);
     for (let k = i + rebuilt.length; k < old.length; k++) {
       const p = old[k]!;

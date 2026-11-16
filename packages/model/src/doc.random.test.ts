@@ -88,3 +88,38 @@ describe('Doc randomized consistency', () => {
     });
   }
 });
+
+describe('Doc paragraph change hints', () => {
+  it('paragraphs outside the reported range are the same objects as before', () => {
+    const r = rng(77);
+    const doc = Doc.fromText(randomText(r, 2000));
+    const h = new History(0);
+    for (let step = 0; step < 500; step++) {
+      doc.takeParagraphChanges();
+      const before = [...doc.paragraphs()];
+      // 한 번 갱신 사이에 여러 편집이 있을 수 있다
+      const edits = 1 + Math.floor(r() * 3);
+      for (let e = 0; e < edits; e++) {
+        const roll = r();
+        const len = doc.length;
+        if (roll < 0.45) {
+          const at = Math.floor(r() * len);
+          const sel = { anchor: doc.positionAt(at), head: doc.positionAt(at) };
+          h.record({ ops: [{ type: 'insert', ids: doc.insertText(at, randomText(r, 6)) }], before: sel, after: sel, time: step });
+        } else if (roll < 0.85) {
+          const from = Math.floor(r() * len);
+          const sel = { anchor: doc.positionAt(from), head: doc.positionAt(from) };
+          h.record({ ops: [{ type: 'delete', ids: doc.deleteRange(from, from + Math.floor(r() * 20)) }], before: sel, after: sel, time: step });
+        } else if (h.canUndo) {
+          h.undo(doc);
+        }
+      }
+      const { from, suffix } = doc.takeParagraphChanges();
+      const after = doc.paragraphs();
+      const f = Math.min(from, before.length, after.length);
+      for (let k = 0; k < f; k++) expect(after[k]).toBe(before[k]);
+      const s = Math.min(suffix, before.length - f, after.length - f);
+      for (let k = 1; k <= s; k++) expect(after[after.length - k]).toBe(before[before.length - k]);
+    }
+  });
+});

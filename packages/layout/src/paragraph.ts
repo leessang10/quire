@@ -51,6 +51,14 @@ export function cpSlice(pl: ParaLayout, a: number, b: number): string {
 
 const segmenter = new Intl.Segmenter('ko', { granularity: 'grapheme' });
 
+/**
+ * 모든 글자가 그 자체로 grapheme 하나인 텍스트 (결합 문자·서로게이트·ZWJ·이형 선택자 없음).
+ * 이 범위만 쓴 문단은 Intl.Segmenter를 건너뛴다.
+ * 탭, ASCII, Latin-1, 일반 문장부호(ZW* 제외), CJK 기호, 한글 호환 자모, 한글 음절, CJK 통합 한자, 전각 형태
+ */
+const SIMPLE_TEXT =
+  /^[\t\x20-\x7e -ÿ‐-‧‰-⁞　-〿㄰-㆏가-힣一-鿿！-￯]*$/;
+
 /** 줄 앞에 올 수 없는 문자 (금칙, 0단계 최소 목록) */
 const NO_LINE_START = new Set(Array.from('.,!?:;)]}>、。，．・」』】〉》”’…%'));
 
@@ -105,6 +113,20 @@ export function layoutParagraph(
   const gFirst: string[] = []; // grapheme의 첫 글자 (공백·금칙 판단용)
   let cp = 0;
   let x = 0;
+  if (SIMPLE_TEXT.test(display)) {
+    // 빠른 경로: 결합 문자가 없는 텍스트는 UTF-16 단위 하나가 grapheme 하나
+    for (let i = 0; i < display.length; i++) {
+      const ch = display[i]!;
+      gStart.push(i);
+      gFirst.push(ch);
+      stops[i] = 1;
+      xs[i] = x;
+      x += measurer.width(ch);
+    }
+    xs[n] = x;
+    const lines = breakLines(n, xs, gStart, gFirst, width);
+    return { text: display, n, u16: null, xs, stops, preedit: pre, lines };
+  }
   for (const seg of segmenter.segment(display)) {
     const s = seg.segment;
     let len = 0;

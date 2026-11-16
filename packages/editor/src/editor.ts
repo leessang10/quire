@@ -42,7 +42,12 @@ const COLORS = {
   selection: 'rgba(56, 132, 255, 0.28)',
   selectionBlur: 'rgba(0, 0, 0, 0.12)',
   preedit: '#1d1d1f',
+  placeholder: 'rgba(233, 233, 236, 0.85)',
+  placeholderText: '#6e6e73',
 };
+
+/** 렌더링 한 번에 쪽 조립에 쓸 최대 시간 (나머지는 다음 프레임) */
+const RENDER_LAYOUT_BUDGET_MS = 10;
 
 class CanvasMeasurer implements Measurer {
   private ctx: CanvasRenderingContext2D;
@@ -50,6 +55,8 @@ class CanvasMeasurer implements Measurer {
   constructor(font: string) {
     this.ctx = document.createElement('canvas').getContext('2d')!;
     this.ctx.font = font;
+    // 렌더링과 같은 조건으로 측정 (커닝 없음 → 줄 단위로 그려도 위치가 맞음)
+    if ('fontKerning' in this.ctx) this.ctx.fontKerning = 'none';
   }
   width(g: string): number {
     let w = this.cache.get(g);
@@ -89,6 +96,8 @@ export class Editor {
   private readonly fontSize: number;
   private resizeObserver: ResizeObserver;
   private readonly blink: Animation | null;
+  /** 캔버스에서 커닝을 끌 수 있는가 (줄 단위 그리기 가능 여부) */
+  private readonly kerningOff: boolean;
   private renderQueued = false;
   private bgTimer: ReturnType<typeof setTimeout> | null = null;
   private disposers: Array<() => void> = [];
@@ -129,6 +138,7 @@ export class Editor {
     scroller.appendChild(canvas);
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
+    this.kerningOff = 'fontKerning' in this.ctx;
 
     this.spacer = document.createElement('div');
     scroller.appendChild(this.spacer);
@@ -229,7 +239,7 @@ export class Editor {
     const pre = this.preedit ? { offset: this.headOffset(), text: this.preedit } : null;
     // 화면 아래 한 화면 분량까지만 즉시 배치하고 나머지는 백그라운드로
     const syncUntil = this.scroller.scrollTop + this.scroller.clientHeight * 2;
-    this.layout.update(paras, pre, syncUntil);
+    this.layout.update(paras, pre, syncUntil, this.doc.takeParagraphChanges());
     this.stats.layoutMs = performance.now() - t0;
     this.stats.reflowed = this.layout.counts.reflowed;
     this.stats.repositioned = this.layout.counts.repositioned;
@@ -327,10 +337,18 @@ export class Editor {
     const visibleParas = new Set<number>();
     ctx.font = this.font;
     ctx.textBaseline = 'middle';
-    layout.ensureThroughY(top + h);
-    let ref: { para: number; line: number } | null = layout.firstLineBelow(top);
-    for (; ref; ref = layout.stepLine(ref, 1)) {
-      const para = layout.para(ref.para);
+    if (this.kerningOff) ctx.fontKerning = 'none';
+    // 화면 영역이 아직 배치되지 않았으면 시간 예산 안에서만 배치한다 (스크롤바로 멀리 이동한 경우 등).
+    // 못 끝낸 부분은 자리표시로 그리고 다음 프레임에 이어서 한다.
+    const ready = layout.ensureThroughY(top + h, RENDER_LAYOUT_BUDGET_MS);
+    const validCount = layout.validCount;
+    const nextRef = (r: { para: number; line: number }) => {
+      if (r.line + 1 < layout.paras[r.para]!.lines.length) return { para: r.para, line: r.line + 1 };
+      return r.para + 1 < validCount ? { para: r.para + 1, line: 0 } : null;
+    };
+    let ref: { para: number; line: number } | null = layout.firstLineBelow(top, false);
+    for (; ref; ref = nextRef(ref)) {
+      const para = layout.paras[ref.para]!;
       const ln = para.lines[ref.line]!;
       const y = ln.y - top;
       if (y > h) break;
@@ -358,16 +376,41 @@ export class Editor {
         }
       }
 
-      // 글자 (grapheme 단위로 계산된 위치에 그림 — 측정과 그리기 위치를 일치시키기 위해)
+      // 글자
       ctx.fillStyle = COLORS.text;
       const midY = y + ln.height / 2;
-      let i = ln.start;
-      while (i < ln.end) {
-        let j = i + 1;
-        while (j < ln.end && !para.layout.stops[j]) j++;
-        const g = cpSlice(para.layout, i, j);
-        if (g !== ' ' && g !== '\t') ctx.fillText(g, x0 + xs[i]!, midY);
-        i = j;
+      if (this.kerningOff) {
+        // 커닝을 끄면 문자열 폭 = 글자 폭의 합이므로 탭 사이 구간을 한 번에 그린다 (그리기 호출 수 ↓)
+        const text = cpSlice(para.layout, ln.start, ln.end);
+        let segStart = ln.start;
+        let cp = ln.start;
+        let u = 0;
+        let segU = 0;
+        const flush = (endU: number) => {
+          if (endU > segU) ctx.fillText(text.slice(segU, endU), x0 + xs[segStart]!, midY);
+        };
+        while (u < text.length) {
+          const c = text.charCodeAt(u);
+          const w = c >= 0xd800 && c <= 0xdbff && u + 1 < text.length ? 2 : 1;
+          if (c === 9) {
+            flush(u);
+            segStart = cp + 1;
+            segU = u + 1;
+          }
+          u += w;
+          cp++;
+        }
+        flush(text.length);
+      } else {
+        // 커닝을 끌 수 없는 브라우저: grapheme마다 계산된 위치에 그림
+        let i = ln.start;
+        while (i < ln.end) {
+          let j = i + 1;
+          while (j < ln.end && !para.layout.stops[j]) j++;
+          const g = cpSlice(para.layout, i, j);
+          if (g !== ' ' && g !== '\t') ctx.fillText(g, x0 + xs[i]!, midY);
+          i = j;
+        }
       }
 
       // 조합 중 밑줄
@@ -381,9 +424,29 @@ export class Editor {
       }
     }
 
+    if (!ready) {
+      this.drawPendingPlaceholder(px, top, w, h);
+      this.scheduleRender();
+    }
+
     this.updateCaret();
     this.updateMirror(visibleParas);
     this.stats.renderMs = performance.now() - t0;
+  }
+
+  /** 아직 배치되지 않은 영역: 쪽 위에 옅은 막과 진행률을 그린다 */
+  private drawPendingPlaceholder(px: number, top: number, w: number, h: number): void {
+    const { ctx, setup, layout } = this;
+    const from = Math.max(0, layout.validBottom - top);
+    if (from >= h) return;
+    ctx.fillStyle = COLORS.placeholder;
+    ctx.fillRect(px, from, setup.width, h - from);
+    const total = this.doc.paragraphs().length;
+    const pct = total ? Math.floor((layout.validCount / total) * 100) : 100;
+    ctx.fillStyle = COLORS.placeholderText;
+    ctx.textAlign = 'center';
+    ctx.fillText(`쪽 조립 중… ${pct}%`, Math.min(px + setup.width / 2, w / 2), Math.max(from, 0) + (h - from) / 2);
+    ctx.textAlign = 'start';
   }
 
   private updateCaret(): void {
@@ -696,6 +759,8 @@ export class Editor {
     this.focus();
 
     const p = this.docPoint(e);
+    // 아직 쪽 조립이 안 된 영역의 클릭은 무시 (자리표시가 보이는 상태)
+    if (p.y >= this.layout.validBottom) return;
     const offset = this.layout.hitTest(p.x, p.y);
 
     if (e.detail === 2) {
@@ -716,7 +781,7 @@ export class Editor {
     const anchor = this.selection().anchor;
     const onMove = (ev: MouseEvent) => {
       const q = this.docPoint(ev);
-      const head = this.layout.hitTest(q.x, q.y);
+      const head = this.layout.hitTest(q.x, Math.min(q.y, this.layout.validBottom - 1));
       this.setSelection(anchor, head);
       this.scheduleRender();
       this.opts.onChange?.(this);

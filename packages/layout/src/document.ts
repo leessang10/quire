@@ -51,17 +51,88 @@ export interface PlacedLine {
   height: number;
 }
 
-export interface PlacedPara {
-  info: ParaInput;
-  /** 원래(조합 전) 문단 길이 (코드포인트) */
-  length: number;
-  layout: ParaLayout;
-  lines: PlacedLine[];
+interface Geometry {
+  setup: PageSetup;
+  contentHeight: number;
+}
+
+/**
+ * 배치된 문단. 위치는 시작 상태(쪽, y)와 끝 상태만 숫자로 들고 있고,
+ * 줄별 위치(lines)는 읽을 때 계산해 캐시한다. 다시 배치할 때 객체를 새로 만들지 않고 숫자만 바꾼다
+ * → 앞 문단 높이 변화로 문서 전체가 밀려도 문단당 할당이 없다.
+ */
+export class PlacedPara {
   /** 배치 직전·직후 상태 (문단 간격 적용 전). 수렴 판단에 쓴다 */
-  pageBefore: number;
-  yBefore: number;
-  pageAfter: number;
-  yAfter: number;
+  pageBefore = 0;
+  yBefore = 0;
+  pageAfter = 0;
+  yAfter = 0;
+  private first = false;
+  private _lines: PlacedLine[] | null = null;
+
+  constructor(
+    readonly info: ParaInput,
+    /** 원래(조합 전) 문단 길이 (코드포인트) */
+    readonly length: number,
+    readonly layout: ParaLayout,
+    private readonly geo: Geometry,
+  ) {}
+
+  /** 시작 상태를 정하고 끝 상태를 계산한다 (줄 객체는 만들지 않음) */
+  placeAt(page: number, y: number, first: boolean): void {
+    this.pageBefore = page;
+    this.yBefore = y;
+    this.first = first;
+    this._lines = null;
+    const { setup, contentHeight } = this.geo;
+    const lh = setup.lineHeight;
+    if (!first && y > 0) y += setup.paraSpacing;
+    for (let k = this.layout.lines.length; k > 0; k--) {
+      if (y + lh > contentHeight && y > 0) {
+        page++;
+        y = 0;
+      }
+      y += lh;
+    }
+    this.pageAfter = page;
+    this.yAfter = y;
+  }
+
+  /** 문서 기준 마지막 줄 아래쪽 y */
+  get bottom(): number {
+    const { setup } = this.geo;
+    return pageTop(setup, this.pageAfter) + setup.margin + this.yAfter;
+  }
+
+  get lines(): PlacedLine[] {
+    if (this._lines) return this._lines;
+    const { setup, contentHeight } = this.geo;
+    const lh = setup.lineHeight;
+    let page = this.pageBefore;
+    let y = this.yBefore;
+    if (!this.first && y > 0) y += setup.paraSpacing;
+    const src = this.layout.lines;
+    const lines: PlacedLine[] = new Array(src.length);
+    for (let k = 0; k < src.length; k++) {
+      if (y + lh > contentHeight && y > 0) {
+        page++;
+        y = 0;
+      }
+      const ln = src[k]!;
+      lines[k] = {
+        index: k,
+        start: ln.start,
+        end: ln.end,
+        page,
+        x: setup.margin,
+        y: pageTop(setup, page) + setup.margin + y,
+        height: lh,
+      };
+      y += lh;
+    }
+    this._lines = lines;
+    return lines;
+  }
 }
 
 export interface LineRef {
@@ -142,7 +213,7 @@ export class PagedLayout {
   private preedit: { offset: number; text: string } | null = null;
   private preeditPara = -1;
   private readonly contentWidth: number;
-  private readonly contentHeight: number;
+  private readonly geo: Geometry;
 
   constructor(
     readonly setup: PageSetup,
@@ -150,7 +221,7 @@ export class PagedLayout {
     private readonly cache: LayoutCache = new LayoutCache(),
   ) {
     this.contentWidth = setup.width - setup.margin * 2;
-    this.contentHeight = setup.height - setup.margin * 2;
+    this.geo = { setup, contentHeight: setup.height - setup.margin * 2 };
   }
 
   /** 모든 문단이 배치되었는가 */
@@ -184,6 +255,8 @@ export class PagedLayout {
     model: readonly ParaInput[],
     preedit: { offset: number; text: string } | null = null,
     syncUntilY = Infinity,
+    /** 모델이 알려 주는 바뀐 구간 (Doc.takeParagraphChanges). 없으면 문단 목록을 앞뒤에서 비교해 찾는다 */
+    changes: { from: number; suffix: number } | null = null,
   ): void {
     this.counts = { reflowed: 0, repositioned: 0, reused: 0 };
     const old = this.paras;
@@ -191,22 +264,43 @@ export class PagedLayout {
     const newLen = model.length;
     const oldValid = this.validCount;
     const oldPending = this.pending;
+    const prevPi = this.preeditPara;
 
     this.model = model;
     this.preedit = preedit;
     const pi = preedit ? findByStart(model, preedit.offset) : -1;
     this.preeditPara = pi;
 
-    const same = (o: PlacedPara | null, n: ParaInput, idx: number) =>
-      o !== null && o.info === n && o.layout.preedit === null && idx !== pi;
-
-    // 앞쪽 공통 구간 (정확한 구간 안에서만)
-    const lim = Math.min(oldLen, newLen);
-    let lo = 0;
-    while (lo < lim && lo < oldValid && same(old[lo]!, model[lo]!, lo)) lo++;
-    // 뒤쪽 공통 구간
-    let s = 0;
-    while (s < lim - lo && same(old[oldLen - 1 - s]!, model[newLen - 1 - s]!, newLen - 1 - s)) s++;
+    let lo: number;
+    let s: number;
+    if (changes) {
+      // 힌트 사용: O(1)
+      lo = Math.min(changes.from, oldValid, oldLen, newLen);
+      s = Math.min(changes.suffix, oldLen - lo, newLen - lo);
+      // 조합 문자열이 있던/생긴 문단도 다시 배치
+      const delta = newLen - oldLen;
+      for (const [idx, isOld] of [[prevPi, true], [pi, false]] as const) {
+        if (idx < 0) continue;
+        let n = idx;
+        if (isOld) {
+          if (idx >= oldLen - s) n = idx + delta; // 뒤쪽 공통 구간 → 새 인덱스
+          else if (idx >= lo) continue; // 이미 바뀐 구간 안
+        }
+        if (n < lo) lo = Math.min(n, oldValid);
+        if (n >= newLen - s) s = Math.max(0, newLen - n - 1);
+      }
+      s = Math.min(s, oldLen - lo, newLen - lo);
+    } else {
+      const same = (o: PlacedPara | null, n: ParaInput, idx: number) =>
+        o !== null && o.info === n && o.layout.preedit === null && idx !== pi;
+      // 앞쪽 공통 구간 (정확한 구간 안에서만)
+      const lim = Math.min(oldLen, newLen);
+      lo = 0;
+      while (lo < lim && lo < oldValid && same(old[lo]!, model[lo]!, lo)) lo++;
+      // 뒤쪽 공통 구간
+      s = 0;
+      while (s < lim - lo && same(old[oldLen - 1 - s]!, model[newLen - 1 - s]!, newLen - 1 - s)) s++;
+    }
     const hi = newLen - s;
     const oldHi = oldLen - s;
 
@@ -244,9 +338,32 @@ export class PagedLayout {
     return !this.complete;
   }
 
-  /** 문서 y까지 배치를 끝낸다 */
-  ensureThroughY(y: number): void {
-    if (this.pending) this.run((_m, top) => top > y);
+  /**
+   * 문서 y까지 배치를 끝낸다. 시간 예산을 주면 그 안에서만 진행한다.
+   * @returns y까지 배치가 끝났으면 true
+   */
+  ensureThroughY(y: number, budgetMs = Infinity): boolean {
+    if (!this.pending) return true;
+    if (budgetMs === Infinity) {
+      this.run((_m, top) => top > y);
+    } else {
+      const end = performance.now() + budgetMs;
+      let timedOut = false;
+      this.run((m, top) => {
+        if (top > y) return true;
+        if ((m & 15) === 0 && performance.now() > end) timedOut = true;
+        return timedOut;
+      });
+      if (timedOut) return false;
+    }
+    return true;
+  }
+
+  /** 정확하게 배치된 영역의 아래쪽 끝 (문서 y). 모두 배치되었으면 Infinity */
+  get validBottom(): number {
+    if (!this.pending) return Infinity;
+    const v = this.validCount;
+    return v === 0 ? 0 : this.paras[v - 1]!.bottom;
   }
 
   /** 문단 p까지 배치를 끝낸다 */
@@ -305,17 +422,21 @@ export class PagedLayout {
     return { para, line };
   }
 
-  /** 아래쪽 끝이 y보다 큰 첫 줄 (화면 그리기·hit-test 시작점) */
-  firstLineBelow(y: number): LineRef {
-    this.ensureThroughY(y);
+  /**
+   * 아래쪽 끝이 y보다 큰 첫 줄 (화면 그리기·hit-test 시작점).
+   * ensure가 false면 이미 배치된 영역에서만 찾고, y가 그 밖이면 null
+   */
+  firstLineBelow(y: number): LineRef;
+  firstLineBelow(y: number, ensure: false): LineRef | null;
+  firstLineBelow(y: number, ensure = true): LineRef | null {
+    if (ensure) this.ensureThroughY(y);
+    else if (y >= this.validBottom || this.validCount === 0) return null;
     const ps = this.paras;
     let lo = 0;
     let hi = this.validCount - 1;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      const lines = ps[mid]!.lines;
-      const last = lines[lines.length - 1]!;
-      if (last.y + last.height <= y) lo = mid + 1;
+      if (ps[mid]!.bottom <= y) lo = mid + 1;
       else hi = mid;
     }
     const lines = ps[lo]!.lines;
@@ -427,8 +548,11 @@ export class PagedLayout {
           this.staleFrom = until;
           continue;
         }
-        layout = pp.layout;
+        // 줄 나눔은 그대로, 위치만 다시 (할당 없음)
+        pp.placeAt(page, y, m === 0);
         this.counts.repositioned++;
+        this.pending = { next: m + 1, page: pp.pageAfter, y: pp.yAfter };
+        continue;
       } else {
         let pe: Preedit | null = null;
         if (m === this.preeditPara && this.preedit) {
@@ -438,48 +562,17 @@ export class PagedLayout {
         this.counts.reflowed++;
       }
 
-      const placed = this.place(info, layout, m, page, y, pp && pp.info === info ? pp.length : -1);
+      const length =
+        pp && pp.info === info
+          ? pp.length
+          : layout.n - (layout.preedit ? layout.preedit[1] - layout.preedit[0] : 0);
+      const placed = new PlacedPara(info, length, layout, this.geo);
+      placed.placeAt(page, y, m === 0);
       paras[m] = placed;
-      page = placed.pageAfter;
-      y = placed.yAfter;
-      this.pending = { next: m + 1, page, y };
+      this.pending = { next: m + 1, page: placed.pageAfter, y: placed.yAfter };
     }
   }
 
-  private place(
-    info: ParaInput,
-    layout: ParaLayout,
-    index: number,
-    page: number,
-    y: number,
-    knownLength: number,
-  ): PlacedPara {
-    const { setup, contentHeight } = this;
-    const pageBefore = page;
-    const yBefore = y;
-    if (index > 0 && y > 0) y += setup.paraSpacing;
-    const src = layout.lines;
-    const lines: PlacedLine[] = new Array(src.length);
-    for (let k = 0; k < src.length; k++) {
-      const ln = src[k]!;
-      if (y + setup.lineHeight > contentHeight && y > 0) {
-        page++;
-        y = 0;
-      }
-      lines[k] = {
-        index: k,
-        start: ln.start,
-        end: ln.end,
-        page,
-        x: setup.margin,
-        y: pageTop(setup, page) + setup.margin + y,
-        height: setup.lineHeight,
-      };
-      y += setup.lineHeight;
-    }
-    const length = knownLength >= 0 ? knownLength : layout.n - (layout.preedit ? layout.preedit[1] - layout.preedit[0] : 0);
-    return { info, length, layout, lines, pageBefore, yBefore, pageAfter: page, yAfter: y };
-  }
 }
 
 // ── 표시 인덱스 ↔ 문서 오프셋 ──────────────────────────────

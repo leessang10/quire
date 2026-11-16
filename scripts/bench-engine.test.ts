@@ -47,7 +47,7 @@ function scenario(paragraphs: number, where: number) {
   const step = (edit: () => void) => {
     const s = performance.now();
     edit();
-    layout.update(doc.paragraphs(), null, caretY + VIEW * 2);
+    layout.update(doc.paragraphs(), null, caretY + VIEW * 2, doc.takeParagraphChanges());
     const pos = doc.positionAt(caret);
     caretY = layout.caretRect(doc.resolve(pos)).y;
     doc.resolve(pos);

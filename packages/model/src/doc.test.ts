@@ -117,3 +117,21 @@ describe('History', () => {
     expect(doc.resolve(restored.head)).toBe(1);
   });
 });
+
+describe('Doc.fromText', () => {
+  it('matches paragraphs computed from scratch, including astral characters and CRLF', () => {
+    const doc = Doc.fromText('가😀나\r\n\n다라\r마\n');
+    expect(doc.text()).toBe('가😀나\n\n다라\n마\n\n');
+    expect(doc.paragraphs()).toEqual(doc.paragraphsFromScratch());
+    doc.checkInvariants();
+  });
+
+  it('fills more than one chunk', () => {
+    const doc = Doc.fromText('가'.repeat(3000) + '\n' + '나'.repeat(10));
+    expect(doc.length).toBe(3012);
+    expect(doc.paragraphs()).toEqual(doc.paragraphsFromScratch());
+    doc.checkInvariants();
+    doc.insertText(1500, '다');
+    expect(doc.paragraphs()).toEqual(doc.paragraphsFromScratch());
+  });
+});

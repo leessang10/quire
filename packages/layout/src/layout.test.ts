@@ -188,7 +188,9 @@ describe('PagedLayout randomized against fresh layout', () => {
           pre = { offset: Math.floor(r() * doc.length), text: '한' };
         }
         // 일부만 즉시 배치하고, 가끔 백그라운드 진행·질의를 섞는다
-        l.update(doc.paragraphs(), pre, r() * 400);
+        // 절반은 모델의 변경 힌트로, 절반은 앞뒤 비교로 (힌트는 누적되므로 건너뛰어도 더 넓은 범위가 되어 안전)
+        const hint = r() < 0.5 ? doc.takeParagraphChanges() : null;
+        l.update(doc.paragraphs(), pre, r() * 400, hint);
         if (r() < 0.3) l.step(0.01);
         if (r() < 0.3) l.caretRect(Math.floor(r() * doc.length));
         if (r() < 0.2) {
@@ -199,4 +201,20 @@ describe('PagedLayout randomized against fresh layout', () => {
       expect(snapshot(l)).toEqual(snapshot(fresh(doc.paragraphs(), setup, pre)));
     });
   }
+});
+
+describe('layoutParagraph fast path', () => {
+  it('gives the same result as the segmenter path for simple text', () => {
+    // 같은 텍스트에 결합 문자를 붙이면 느린 경로를 탄다. 결합 문자가 없는 앞부분의 결과는 같아야 한다
+    const simple = '가나다 abc, 「한글」 1234 漢字 ＡＢ';
+    const fast = layoutParagraph(simple, 60, mono);
+    const slow = layoutParagraph(simple + 'é', 60, mono);
+    expect(Array.from(fast.stops)).toEqual(Array.from(slow.stops).slice(0, fast.n + 1).map((v, i) => (i === fast.n ? 1 : v)));
+    expect(Array.from(fast.xs)).toEqual(Array.from(slow.xs).slice(0, fast.n + 1));
+  });
+
+  it('keeps combining sequences together (slow path)', () => {
+    const pl = layoutParagraph('éa', 100, mono);
+    expect(Array.from(pl.stops)).toEqual([1, 0, 1, 1]);
+  });
 });
