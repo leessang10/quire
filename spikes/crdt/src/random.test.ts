@@ -6,6 +6,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { M1, M2, M3, M4, M5, send, syncAll, type Model } from './models';
 import { MOVE_HEAVY, NORMAL, randomEdit, rng, type Mix } from './fuzz';
+import { Q } from './quire-model';
 
 interface Stats {
   runs: number;
@@ -50,7 +51,7 @@ function fuzz(model: Model, seeds: number, steps: number, mix: Mix = NORMAL): St
 
 describe('V4 randomized convergence (3 peers)', () => {
   const out: string[] = [];
-  for (const model of [M1, M2, M3, M4, M5]) {
+  for (const model of [M1, M2, M3, M4, M5, Q]) {
     it(model.name, () => {
       const s = fuzz(model, 200, 150);
       out.push(
@@ -61,7 +62,7 @@ describe('V4 randomized convergence (3 peers)', () => {
       expect(s.converged).toBe(s.runs);
     }, 1_800_000);
   }
-  for (const model of [M3, M4]) {
+  for (const model of [M3, M4, Q]) {
     it(`${model.name} (이동 위주)`, () => {
       const s = fuzz(model, 200, 150, MOVE_HEAVY);
       out.push(

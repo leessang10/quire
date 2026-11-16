@@ -9,7 +9,7 @@ const TEXT = `두 편집기는 각자 문서 사본을 가지고 CRDT(Loro)로 �
 
 양쪽에서 동시에 입력해 보세요. 지연을 늘리거나 한쪽을 오프라인으로 두고 편집한 뒤 다시 연결하면, 두 문서가 같은 내용으로 합쳐져야 합니다.
 
-1단계에서는 텍스트 편집만 동기화합니다. 문단 이동·삭제(구획)는 2단계에서 다룹니다.`;
+문단 이동(Alt+Shift+↑/↓ 또는 왼쪽 손잡이 끌기)과 문단 삭제(Ctrl+Shift+K)도 동기화됩니다. 한쪽이 문단을 옮기는 동안 다른 쪽이 그 문단을 고쳐도, 고친 내용은 옮겨진 문단에 들어갑니다.`;
 
 const latencyEl = document.getElementById('latency') as HTMLInputElement;
 const verdictEl = document.getElementById('verdict')!;

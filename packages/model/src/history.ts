@@ -25,8 +25,17 @@ export function applyOp(doc: Doc, op: Op): void {
 }
 
 export function invertOp(op: Op): Op {
-  if (op.type === 'segments') return { type: 'segments', before: op.after, after: op.before };
-  return op.type === 'insert' ? { type: 'delete', ids: op.ids } : { type: 'insert', ids: op.ids };
+  switch (op.type) {
+    case 'insert':
+      return { type: 'delete', ids: op.ids };
+    case 'delete':
+      return { type: 'insert', ids: op.ids };
+    case 'move':
+      // 옮긴 구획들을 옮기기 전 바로 뒤에 있던 구획 앞으로 (그 사이 다른 피어가 옮긴 구획은 건드리지 않음)
+      return { type: 'move', segs: op.segs, before: op.back, back: op.before };
+    case 'hidden':
+      return { type: 'hidden', segs: op.segs, value: !op.value };
+  }
 }
 
 export class History {

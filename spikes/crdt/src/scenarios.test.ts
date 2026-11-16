@@ -1,9 +1,10 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { M1, M2, M3, M4, M5 } from './models';
+import { Q } from './quire-model';
 import { SCENARIOS, runScenario, type Result } from './scenarios';
 
-const MODELS = [M1, M2, M3, M4, M5];
+const MODELS = [M1, M2, M3, M4, M5, Q];
 
 const LABEL: Record<string, string> = {
   pass: '✅ 통과',

@@ -36,14 +36,27 @@ function network(n: number, text = '') {
   return { peers, deliver, settle, queues };
 }
 
+/** Loro 텍스트의 구획 표식 키 (저장 순서) */
+function segKeysOf(b: SyncBridge): string[] {
+  const keys: string[] = [];
+  for (const op of b.loro.getText('body').toDelta()) {
+    const k = op.attributes?.['seg'];
+    if (typeof op.insert === 'string' && typeof k === 'string') keys.push(k);
+  }
+  return keys;
+}
+
 function consistent(b: SyncBridge) {
   // Doc의 살아 있는 원소 열 = Loro 텍스트
   expect(b.doc.rawText()).toBe(b.loro.getText('body').toString());
   expect(b.doc.paragraphs()).toEqual(b.doc.paragraphsFromScratch());
+  expect(b.doc.segmentKeys()).toEqual(segKeysOf(b));
   b.doc.checkInvariants();
 }
 
 const sel = (doc: Doc) => ({ anchor: doc.positionAt(0), head: doc.positionAt(0) });
+/** 문단들 → 화면 텍스트 (각 문단 뒤에 ¶) */
+const t = (...ps: string[]) => ps.map((x) => x + String.fromCharCode(10)).join('');
 
 describe('SyncBridge', () => {
   it('propagates typing to another peer', () => {
@@ -120,10 +133,45 @@ describe('SyncBridge', () => {
     consistent(b);
   });
 
-  it('refuses segment operations while attached', () => {
-    const { peers } = network(1, '가\n나');
-    expect(peers[0]!.doc.moveParagraphs(0, 0, 2)).toEqual([]);
-    expect(peers[0]!.doc.hideParagraphs(0, 0)).toEqual([]);
+  it('syncs paragraph moves, deletes and their undo', () => {
+    const { peers, settle } = network(2, t('가', '나', '다', '라').slice(0, -1));
+    const [a, b] = peers as [SyncBridge, SyncBridge];
+    const h = new History(0);
+    const s = sel(a.doc);
+    h.record({ ops: a.doc.moveParagraphs(0, 0, 3), before: s, after: s, time: 0 });
+    settle();
+    expect(b.doc.text()).toBe(t('나', '다', '가', '라'));
+    h.record({ ops: a.doc.hideParagraphs(3, 3), before: s, after: s, time: 1 });
+    settle();
+    expect(b.doc.text()).toBe(t('나', '다', '가'));
+    // B가 그사이 옮긴 문단은 A의 실행 취소와 무관하게 제자리
+    b.doc.moveParagraphs(1, 1, 0);
+    settle();
+    expect(a.doc.text()).toBe(t('다', '나', '가'));
+    h.undo(a.doc);
+    h.undo(a.doc);
+    settle();
+    expect(a.doc.text()).toBe(t('다', '가', '나', '라'));
+    expect(b.doc.text()).toBe(a.doc.text());
+    consistent(a);
+    consistent(b);
+  });
+
+  it('shows a placeholder paragraph when everything is deleted, and typing into it converges', () => {
+    const { peers, settle } = network(2, t('가', '나').slice(0, -1));
+    const [a, b] = peers as [SyncBridge, SyncBridge];
+    a.doc.hideParagraphs(0, 0);
+    b.doc.hideParagraphs(1, 1);
+    settle();
+    expect(a.doc.text()).toBe(t(''));
+    a.doc.insertText(0, 'X');
+    b.doc.insertText(0, 'Y');
+    settle();
+    expect(a.doc.paragraphs().length).toBe(1);
+    expect([t('XY'), t('YX')]).toContain(a.doc.text());
+    expect(b.doc.text()).toBe(a.doc.text());
+    consistent(a);
+    consistent(b);
   });
 });
 
@@ -143,11 +191,12 @@ describe('SyncBridge randomized convergence (3 peers)', () => {
     return out;
   };
 
-  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 42, 2024]) {
+  for (const seed of [...Array.from({ length: 28 }, (_, k) => k + 1), 42, 2024]) {
     it(`seed ${seed}`, () => {
       const r = rng(seed);
       const { peers, deliver, settle } = network(3, randomText(r, 200));
       const histories = peers.map(() => new History(0));
+      let moves = 0;
       for (let step = 0; step < 300; step++) {
         const k = Math.floor(r() * 3);
         const p = peers[k]!;
@@ -156,13 +205,23 @@ describe('SyncBridge randomized convergence (3 peers)', () => {
         const len = doc.length;
         const roll = r();
         const s = sel(doc);
-        if (roll < 0.4) {
+        const n = doc.paragraphs().length;
+        if (roll < 0.3) {
           const ops: Op[] = [{ type: 'insert', ids: doc.insertText(Math.floor(r() * len), randomText(r, r() < 0.05 ? 300 : 5)) }];
           h.record({ ops, before: s, after: s, time: step });
-        } else if (roll < 0.7) {
+        } else if (roll < 0.52) {
           const from = Math.floor(r() * len);
           const to = Math.min(len - 1, from + Math.floor(r() * 20));
           if (from < to) h.record({ ops: doc.deleteRange(from, to), before: s, after: s, time: step });
+        } else if (roll < 0.64) {
+          // 문단 이동 (여러 문단 함께)
+          const i = Math.floor(r() * n);
+          const j = Math.min(n - 1, i + Math.floor(r() * 2));
+          h.record({ ops: doc.moveParagraphs(i, j, Math.floor(r() * (n + 1))), before: s, after: s, time: step });
+          moves++;
+        } else if (roll < 0.7) {
+          const i = Math.floor(r() * n);
+          h.record({ ops: doc.hideParagraphs(i, i), before: s, after: s, time: step });
         } else if (roll < 0.8) {
           h.undo(doc);
         } else if (roll < 0.85) {
@@ -176,9 +235,14 @@ describe('SyncBridge randomized convergence (3 peers)', () => {
           deliver(from, to, 1 + Math.floor(r() * 3));
           peers[to]!.flush();
         }
-        // 매 단계: 각 피어의 Doc과 Loro는 일치
-        expect(p.doc.rawText()).toBe(p.loro.getText('body').toString());
+        // 매 단계: 모든 피어의 Doc과 Loro는 일치하고, 문단 목록은 처음부터 계산한 것과 같다
+        for (const q of peers) {
+          expect(q.doc.rawText()).toBe(q.loro.getText('body').toString());
+          expect(q.doc.segmentKeys()).toEqual(segKeysOf(q));
+          expect(q.doc.paragraphs()).toEqual(q.doc.paragraphsFromScratch());
+        }
       }
+      expect(moves).toBeGreaterThan(10);
       settle();
       const texts = peers.map((p) => p.doc.text());
       expect(texts[1]).toBe(texts[0]);
