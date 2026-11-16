@@ -325,6 +325,11 @@ class SegmentReplica implements Replica {
   /** 이동 명령으로 옮겨진 구획 (별칭 해석 시 우선) */
   private readonly moved: ReturnType<LoroDoc['getMap']>;
   private readonly undoMgr: UndoManager;
+  /**
+   * 보초 모드 (M4): 텍스트 끝은 늘 [BRK ¶]이고 마지막 구획('tail')은 그 ¶ 하나뿐인 보초다. 보초는 표시하지 않는다.
+   * 사용자 문단은 모두 BRK로 끝나는 보통 구획에 있으므로 문단 삭제에 예외가 없다.
+   */
+  private readonly sentinel: boolean;
 
   /**
    * @param identity 구획 ID를 무엇으로 정하는가.
@@ -338,6 +343,7 @@ class SegmentReplica implements Replica {
     /** 문단 삭제 때 숨긴 구획의 내용도 같은 커밋에서 지운다 (정리 규칙 R2) */
     private readonly clearHidden = false,
   ) {
+    this.sentinel = identity === 'end';
     this.text = doc.getText('body');
     this.order = doc.getMovableList('order');
     this.hidden = doc.getMap('hidden');
@@ -356,7 +362,9 @@ class SegmentReplica implements Replica {
     const segs = this.identity === 'end' ? this.segmentsByEnd(cps) : this.segmentsByStart(cps);
     const order = (this.order.toJSON() as string[]) ?? [];
     const all = this.arrange(segs, order);
-    const disp = all.filter((s) => !s.aliases.some((a) => this.hidden.get(a) === true));
+    const disp = all.filter(
+      (s) => !(this.sentinel && s.id === 'tail') && !s.aliases.some((a) => this.hidden.get(a) === true),
+    );
 
     const paras: VPara[] = [];
     for (const s of disp) {
@@ -583,7 +591,17 @@ class SegmentReplica implements Replica {
     return id;
   }
 
+  /** 보초 모드에서 보이는 문단이 없으면 (가상의 빈 문단에 입력하려는 것) 실제 빈 문단 구획을 만든다 */
+  private materialize(): void {
+    if (!this.sentinel) return;
+    const v = this.view();
+    if (v.paras.length > 0) return;
+    // 보초 구획 바로 앞에 [¶ BRK]: 새 구획은 order에 없으므로 텍스트상 다음 구획(보초) 앞에 놓인다
+    this.text.insert(v.segs[v.segs.length - 1]!.start, PARA + BRK);
+  }
+
   insertText(p: number, at: number, text: string): void {
+    this.materialize();
     this.text.insert(this.view().paras[p]!.textStart + at, text);
     this.doc.commit();
   }
@@ -594,6 +612,7 @@ class SegmentReplica implements Replica {
   }
 
   split(p: number, at: number): void {
+    this.materialize();
     this.text.insert(this.view().paras[p]!.textStart + at, '\n');
     this.doc.commit();
   }
@@ -650,15 +669,15 @@ class SegmentReplica implements Replica {
   }
 
   /**
-   * 문단을 화면에서 없앤다. 보통은 구획으로 떼어 내 숨긴다(동시 편집도 함께 숨겨짐).
-   * 단, 문서의 마지막 ¶를 가진 문단은 숨기지 않는다 — 그 구획이 늘 보이므로 보이는 문단이 하나 이상 남는다.
-   * 그 문단은 텍스트를 지운다 (같은 구획 안의 앞 ¶도 함께 지워 문단 수를 줄임).
+   * 문단을 화면에서 없앤다. 구획으로 떼어 내 숨긴다(동시 편집도 함께 숨겨짐).
+   * 보초 모드(M4)는 예외가 없다. M3는 문서의 마지막 ¶를 가진 문단을 숨기지 않고 텍스트를 지운다
+   * (같은 구획 안의 앞 ¶도 함께 지워 문단 수를 줄임) — 이 예외가 S25의 원인이었다.
    */
   private removePara(p: number): void {
     const v = this.view();
     const P = v.paras[p]!;
-    // 이 문단의 ¶가 문서의 마지막 ¶인 경우만
-    if (P.terminated && P.textStart + P.len === v.cps.length - 1) {
+    // M3: 이 문단의 ¶가 문서의 마지막 ¶인 경우만
+    if (!this.sentinel && P.terminated && P.textStart + P.len === v.cps.length - 1) {
       const prevIsPara = P.textStart > P.seg.start && v.cps[P.textStart - 1] === PARA;
       if (prevIsPara) this.text.delete(P.textStart - 1, P.len + 1);
       else if (P.len > 0) this.text.delete(P.textStart, P.len);
@@ -691,6 +710,8 @@ class SegmentReplica implements Replica {
     for (let t = 0; t + 1 < v.segs.length; t++) {
       const S = v.segs[t]!;
       const T = v.segs[t + 1]!;
+      // 보초 앞 BRK는 지우면 안 된다 (사용자 문단이 표시하지 않는 보초 구획에 합쳐짐)
+      if (this.sentinel && T.id === 'tail') continue;
       if (rank.get(T) !== rank.get(S)! + 1) continue;
       if (this.isHidden(S) || this.isHidden(T)) continue;
       if (S.end > S.start && v.cps[S.end - 1] !== PARA) continue;
@@ -757,12 +778,19 @@ class SegmentReplica implements Replica {
 
   paragraphs(): string[] {
     const v = this.view();
+    // 보초 모드: 보이는 문단이 없으면 가상의 빈 문단 하나 (문서에는 늘 문단이 하나 이상 보인다)
+    if (this.sentinel && v.paras.length === 0) return [''];
     return v.paras.map((q) => v.cps.slice(q.textStart, q.textStart + q.len).join(''));
   }
 
   invariantViolation(): string | null {
     const raw = this.text.toString();
     if (!raw.endsWith('\n')) return `텍스트가 ¶로 끝나지 않음: ${JSON.stringify(raw.slice(-10))}`;
+    if (this.sentinel) {
+      const cps = Array.from(raw);
+      if (cps[cps.length - 2] !== BRK) return `보초 구획이 ¶ 하나가 아님: ${JSON.stringify(raw.slice(-10))}`;
+      return null;
+    }
     if (this.view().paras.length === 0) return '보이는 문단이 없음';
     return null;
   }
@@ -790,10 +818,16 @@ export const M4: Model = {
   name: 'M4 끝 표식 구획',
   createBase(paragraphs) {
     const doc = newDoc(1);
-    doc.getText('body').insert(0, paragraphs.map((p) => p + PARA).join(''));
+    const text = doc.getText('body');
+    // 사용자 문단 + [BRK ¶] 보초
+    const body = paragraphs.map((p) => p + PARA).join('');
+    text.insert(0, body + BRK + PARA);
+    const at = Array.from(body).length;
+    const c = text.getCursor(at)!.pos()!;
     const order = doc.getMovableList('order');
-    order.insert(0, 'tail');
-    order.insert(1, END);
+    order.insert(0, `${c.peer}:${c.counter}`);
+    order.insert(1, 'tail');
+    order.insert(2, END);
     doc.commit();
     return doc.export({ mode: 'snapshot' });
   },

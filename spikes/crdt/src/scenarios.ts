@@ -315,6 +315,42 @@ export const SCENARIOS: Scenario[] = [
     b: (r) => r.deletePara(3),
     expect: [['마바사아', '자차카타', '가나다라']],
   },
+  // ── 마지막 문단·빈 문서 경계 (M4 보초 규칙 검증용) ──
+  {
+    id: 'S27',
+    title: '마지막 문단 삭제 ∥ 그 문단 끝에 입력',
+    intent: '삭제가 이긴다',
+    a: (r) => r.deletePara(3),
+    b: (r) => r.insertText(3, 4, 'X'),
+    expect: [['가나다라', '마바사아', '자차카타']],
+  },
+  {
+    id: 'S28',
+    title: '모든 문단을 나눠서 동시 삭제',
+    intent: 'A는 1·2문단, B는 3·4문단 삭제 → 빈 문단 하나',
+    a: (r) => {
+      r.deletePara(0);
+      r.deletePara(0);
+    },
+    b: (r) => {
+      r.deletePara(2);
+      r.deletePara(2);
+    },
+    expect: [['']],
+  },
+  {
+    id: 'S29',
+    title: '모두 지운 문서에 동시 입력',
+    intent: '둘 다 빈 문서에 입력 → 한 문단에 두 입력 (순서는 무관)',
+    run: (a, b) => {
+      for (let i = 0; i < 4; i++) a.deletePara(0);
+      syncAll(a, b);
+      a.insertText(0, 0, 'X');
+      b.insertText(0, 0, 'Y');
+      syncAll(a, b);
+    },
+    expect: [['XY'], ['YX']],
+  },
   {
     id: 'S26',
     title: '연속 이동 ∥ 편집',

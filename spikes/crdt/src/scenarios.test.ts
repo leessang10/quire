@@ -20,8 +20,10 @@ describe('V4 intent scenarios', () => {
       it(`${model.name} ${s.id} ${s.title}`, () => {
         const r = runScenario(model, s);
         results.push(r);
+        // 의도 보존은 결과로 기록만 하고, 수렴은 반드시 보장되어야 한다.
+        // 예외는 기각한 모델(M2: 문단이 0개인 문서에 입력할 수 없음)만 허용하고 표에 기록한다.
+        if (r.error && model === M2) return;
         expect(r.error).toBeUndefined();
-        // 의도 보존은 결과로 기록만 하고, 수렴은 반드시 보장되어야 한다
         expect(r.converged).toBe(true);
       });
     }
@@ -29,7 +31,9 @@ describe('V4 intent scenarios', () => {
 
   it('writes the comparison table', () => {
     const cell = (r: Result) =>
-      `${LABEL[r.verdict]}${r.verdict === 'pass' ? '' : `<br>\`${JSON.stringify(r.actual)}\``}${r.invariant ? `<br>구조 위반: ${r.invariant}` : ''}`;
+      r.error
+        ? `💥 예외<br>\`${r.error.slice(0, 60)}\``
+        : `${LABEL[r.verdict]}${r.verdict === 'pass' ? '' : `<br>\`${JSON.stringify(r.actual)}\``}${r.invariant ? `<br>구조 위반: ${r.invariant}` : ''}`;
     const rows = SCENARIOS.map((s) => {
       const cells = MODELS.map((m) => cell(results.find((r) => r.scenario === s && r.model === m.name)!));
       return `| ${s.id} | ${s.title} | ${cells.join(' | ')} |`;
