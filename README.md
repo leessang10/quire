@@ -6,7 +6,16 @@
 — 진짜 페이지 레이아웃, 정밀한 한글 조판, IME 완전 제어, 초대형 문서, 블록 이동까지 포함한 협업 —
 를 처음부터 다른 구조로 풀기 위한 프로젝트입니다.
 
-> 상태: **설계 단계** (구현 코드 없음)
+> 상태: **0단계 프로토타입** — [결과 보고](docs/spikes/phase0-baseline.md)
+
+## 실행
+
+```bash
+npm install
+npm run dev     # 플레이그라운드 http://localhost:5173
+npm test        # 단위 테스트
+npm run typecheck
+```
 
 ## 문서
 
