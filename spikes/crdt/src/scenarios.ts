@@ -352,6 +352,22 @@ export const SCENARIOS: Scenario[] = [
     expect: [['XY'], ['YX']],
   },
   {
+    id: 'S30',
+    title: '모두 지운 문서에 입력 ∥ 마지막 삭제 실행 취소',
+    intent: 'A가 마지막 삭제를 되돌리는 동안 B가 빈 문서에 입력 → 되살아난 문단과 입력 문단 둘 다',
+    run: (a, b) => {
+      for (let i = 0; i < 4; i++) a.deletePara(0);
+      syncAll(a, b);
+      a.undo();
+      b.insertText(0, 0, 'X');
+      syncAll(a, b);
+    },
+    expect: [
+      ['하하하하', 'X'],
+      ['X', '하하하하'],
+    ],
+  },
+  {
     id: 'S26',
     title: '연속 이동 ∥ 편집',
     intent: 'A가 1문단을 맨 뒤로, 다시 두 번째로 옮기는 동안 B가 그 문단 편집 → X가 따라감',

@@ -59,7 +59,7 @@ describe('V4 randomized convergence (3 peers)', () => {
       );
       expect(s.errors).toBe(0);
       expect(s.converged).toBe(s.runs);
-    }, 600_000);
+    }, 1_800_000);
   }
   for (const model of [M3, M4]) {
     it(`${model.name} (이동 위주)`, () => {

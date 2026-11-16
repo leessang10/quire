@@ -330,6 +330,13 @@ class SegmentReplica implements Replica {
    * 사용자 문단은 모두 BRK로 끝나는 보통 구획에 있으므로 문단 삭제에 예외가 없다.
    */
   private readonly sentinel: boolean;
+  /**
+   * 자리표시 문단 (M4): 미리 만들어 둔 빈 문단 구획 [¶ BRK]. 사용되기 전에는 보이지 않고,
+   * 보이는 문단이 하나도 없을 때만 텍스트 순서상 첫 자리표시가 빈 문단으로 보인다.
+   * 거기에 입력하면 used를 표시한다(맵 설정이라 두 피어가 동시에 해도 하나) — 두 입력이 같은 문단에 들어간다.
+   */
+  private readonly placeholder: ReturnType<LoroDoc['getMap']>;
+  private readonly used: ReturnType<LoroDoc['getMap']>;
 
   /**
    * @param identity 구획 ID를 무엇으로 정하는가.
@@ -348,6 +355,8 @@ class SegmentReplica implements Replica {
     this.order = doc.getMovableList('order');
     this.hidden = doc.getMap('hidden');
     this.moved = doc.getMap('moved');
+    this.placeholder = doc.getMap('placeholder');
+    this.used = doc.getMap('used');
     this.undoMgr = undoManager(doc);
   }
 
@@ -362,10 +371,22 @@ class SegmentReplica implements Replica {
     const segs = this.identity === 'end' ? this.segmentsByEnd(cps) : this.segmentsByStart(cps);
     const order = (this.order.toJSON() as string[]) ?? [];
     const all = this.arrange(segs, order);
-    const disp = all.filter(
-      (s) => !(this.sentinel && s.id === 'tail') && !s.aliases.some((a) => this.hidden.get(a) === true),
+    let disp = all.filter(
+      (s) => !(this.sentinel && s.id === 'tail') && !this.isHidden(s) && !this.isSpare(s),
     );
+    let paras = this.parasOf(cps, disp);
+    if (this.sentinel && paras.length === 0) {
+      // 보이는 문단이 없으면 텍스트 순서상 첫 자리표시를 빈 문단으로 보인다
+      const spare = segs.find((s) => this.isSpare(s) && !this.isHidden(s));
+      if (spare) {
+        disp = [spare];
+        paras = this.parasOf(cps, disp);
+      }
+    }
+    return { cps, segs, disp, paras, order };
+  }
 
+  private parasOf(cps: string[], disp: Seg[]): VPara[] {
     const paras: VPara[] = [];
     for (const s of disp) {
       let ps = s.start;
@@ -377,7 +398,22 @@ class SegmentReplica implements Replica {
       }
       if (ps < s.end) paras.push({ textStart: ps, len: s.end - ps, terminated: false, seg: s });
     }
-    return { cps, segs, disp, paras, order };
+    return paras;
+  }
+
+  /** 아직 쓰지 않은 자리표시 구획 */
+  private isSpare(s: Seg): boolean {
+    return (
+      s.aliases.some((a) => this.placeholder.get(a) === true) && !s.aliases.some((a) => this.used.get(a) === true)
+    );
+  }
+
+  /** 보초 바로 앞에 새 자리표시 [¶ BRK]를 만든다 */
+  private addSpare(): void {
+    const v = this.view();
+    const at = v.segs[v.segs.length - 1]!.start;
+    this.text.insert(at, PARA + BRK);
+    this.placeholder.set(this.charId(at + 1), true);
   }
 
   /** M4: 구획 = 다음 BRK 묶음(연달아 붙은 BRK)까지. ID = 그 BRK들 (별칭), 마지막 구획은 'tail' */
@@ -591,17 +627,25 @@ class SegmentReplica implements Replica {
     return id;
   }
 
-  /** 보초 모드에서 보이는 문단이 없으면 (가상의 빈 문단에 입력하려는 것) 실제 빈 문단 구획을 만든다 */
-  private materialize(): void {
+  /**
+   * 문단 p가 자리표시로 보이는 빈 문단이면 사용됨으로 표시하고, 다음에 쓸 자리표시를 새로 만든다.
+   * 자리표시가 하나도 없으면(이론상 동시 상태에 따라) 먼저 하나 만든다.
+   */
+  private materialize(p: number): void {
     if (!this.sentinel) return;
-    const v = this.view();
-    if (v.paras.length > 0) return;
-    // 보초 구획 바로 앞에 [¶ BRK]: 새 구획은 order에 없으므로 텍스트상 다음 구획(보초) 앞에 놓인다
-    this.text.insert(v.segs[v.segs.length - 1]!.start, PARA + BRK);
+    let v = this.view();
+    if (v.paras.length === 0) {
+      this.addSpare();
+      v = this.view();
+    }
+    const seg = v.paras[p]?.seg;
+    if (!seg || !this.isSpare(seg)) return;
+    this.used.set(seg.id, true);
+    this.addSpare();
   }
 
   insertText(p: number, at: number, text: string): void {
-    this.materialize();
+    this.materialize(p);
     this.text.insert(this.view().paras[p]!.textStart + at, text);
     this.doc.commit();
   }
@@ -612,7 +656,7 @@ class SegmentReplica implements Replica {
   }
 
   split(p: number, at: number): void {
-    this.materialize();
+    this.materialize(p);
     this.text.insert(this.view().paras[p]!.textStart + at, '\n');
     this.doc.commit();
   }
@@ -676,6 +720,8 @@ class SegmentReplica implements Replica {
   private removePara(p: number): void {
     const v = this.view();
     const P = v.paras[p]!;
+    // 자리표시로 보이는 빈 문단은 지울 것이 없다
+    if (this.sentinel && this.isSpare(P.seg)) return;
     // M3: 이 문단의 ¶가 문서의 마지막 ¶인 경우만
     if (!this.sentinel && P.terminated && P.textStart + P.len === v.cps.length - 1) {
       const prevIsPara = P.textStart > P.seg.start && v.cps[P.textStart - 1] === PARA;
@@ -712,6 +758,8 @@ class SegmentReplica implements Replica {
       const T = v.segs[t + 1]!;
       // 보초 앞 BRK는 지우면 안 된다 (사용자 문단이 표시하지 않는 보초 구획에 합쳐짐)
       if (this.sentinel && T.id === 'tail') continue;
+      // 쓰지 않은 자리표시는 합치지 않는다 (합치면 자리표시의 ¶가 보통 문단이 됨)
+      if (this.isSpare(S) || this.isSpare(T)) continue;
       if (rank.get(T) !== rank.get(S)! + 1) continue;
       if (this.isHidden(S) || this.isHidden(T)) continue;
       if (S.end > S.start && v.cps[S.end - 1] !== PARA) continue;
@@ -759,7 +807,8 @@ class SegmentReplica implements Replica {
 
   /** 숨긴 구획을 건너뛰고 볼 때, 텍스트상으로도 화면상으로도 이웃한 보이는 구획을 하나로 센 수 */
   private visibleRuns(v: SegView): number {
-    const vis = v.segs.filter((s) => !this.isHidden(s));
+    // 화면에 나오는 구획만 (보초·쓰지 않은 자리표시 제외)
+    const vis = v.segs.filter((s) => !this.isHidden(s) && !(this.sentinel && (s.id === 'tail' || this.isSpare(s))));
     const rank = new Map(v.disp.map((s, k) => [s, k]));
     let runs = vis.length;
     for (let i = 0; i + 1 < vis.length; i++) {
@@ -819,11 +868,13 @@ export const M4: Model = {
   createBase(paragraphs) {
     const doc = newDoc(1);
     const text = doc.getText('body');
-    // 사용자 문단 + [BRK ¶] 보초
+    // 사용자 문단 + [¶ BRK] 자리표시 + [BRK ¶] 보초 → [문단들 BRK][¶ BRK][¶]
     const body = paragraphs.map((p) => p + PARA).join('');
-    text.insert(0, body + BRK + PARA);
+    text.insert(0, body + BRK + PARA + BRK + PARA);
     const at = Array.from(body).length;
     const c = text.getCursor(at)!.pos()!;
+    const ph = text.getCursor(at + 2)!.pos()!;
+    doc.getMap('placeholder').set(`${ph.peer}:${ph.counter}`, true);
     const order = doc.getMovableList('order');
     order.insert(0, `${c.peer}:${c.counter}`);
     order.insert(1, 'tail');
