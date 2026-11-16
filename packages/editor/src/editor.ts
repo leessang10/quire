@@ -3,23 +3,7 @@
  * 설계: docs/design/03, 04, 08
  */
 import { Doc, History, type Op, type Position, type Selection } from '@quire/model';
-import {
-  LayoutCache,
-  caretRect,
-  firstLineBelow,
-  hitTest,
-  layoutDocument,
-  lineAt,
-  nextStop,
-  offsetInLine,
-  pageTop,
-  paraIndexAt,
-  prevStop,
-  stepLine,
-  type DocLayout,
-  type Measurer,
-  type PageSetup,
-} from '@quire/layout';
+import { LayoutCache, PagedLayout, cpSlice, pageTop, type Measurer, type PageSetup } from '@quire/layout';
 import { TextareaInput, type InputIntent, type InputLogEntry } from './input';
 
 export interface EditorOptions {
@@ -44,6 +28,10 @@ export interface EditorStats {
   reflowed: number;
   repositioned: number;
   reused: number;
+  /** 아직 배치되지 않은 문단 수 (백그라운드 쪽 조립 대기) */
+  pendingParas: number;
+  /** 백그라운드 쪽 조립에 쓴 누적 시간 */
+  backgroundMs: number;
 }
 
 const COLORS = {
@@ -76,10 +64,10 @@ class CanvasMeasurer implements Measurer {
 export class Editor {
   doc: Doc;
   history = new History();
-  layout!: DocLayout;
+  layout!: PagedLayout;
   stats: EditorStats = {
     layoutMs: 0, renderMs: 0, pages: 0, paragraphs: 0, lines: 0, characters: 0, cacheHits: 0, cacheMisses: 0,
-    reflowed: 0, repositioned: 0, reused: 0,
+    reflowed: 0, repositioned: 0, reused: 0, pendingParas: 0, backgroundMs: 0,
   };
 
   private sel: Selection;
@@ -100,7 +88,9 @@ export class Editor {
   private readonly setup: PageSetup;
   private readonly fontSize: number;
   private resizeObserver: ResizeObserver;
+  private readonly blink: Animation | null;
   private renderQueued = false;
+  private bgTimer: ReturnType<typeof setTimeout> | null = null;
   private disposers: Array<() => void> = [];
 
   constructor(private readonly opts: EditorOptions) {
@@ -150,7 +140,19 @@ export class Editor {
     });
     scroller.appendChild(caret);
     this.caretEl = caret;
-    ensureCaretStyle();
+    // 깜박임: Web Animations API로 처리해 재시작할 때 강제 리플로가 생기지 않게 한다
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    this.blink = reduceMotion
+      ? null
+      : caret.animate(
+          [
+            { opacity: 1, offset: 0 },
+            { opacity: 1, offset: 0.5 },
+            { opacity: 0, offset: 0.5001 },
+            { opacity: 0, offset: 1 },
+          ],
+          { duration: 1060, iterations: Infinity },
+        );
 
     // 접근성 미러 (04 §3) — 0단계 최소 구현: 화면에 보이는 문단만
     const mirror = document.createElement('div');
@@ -174,6 +176,7 @@ export class Editor {
     this.resizeObserver = new ResizeObserver(() => this.refresh());
     this.resizeObserver.observe(scroller);
 
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
     this.relayout();
     this.render();
   }
@@ -187,7 +190,9 @@ export class Editor {
   setText(text: string): void {
     this.doc = Doc.fromText(text);
     this.cache.clear();
-    this.layout = undefined as unknown as DocLayout; // 다른 문서의 배치를 재사용하지 않도록
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
+    this.stats.backgroundMs = 0;
+    this.scroller.scrollTop = 0;
     const start = this.doc.positionAt(0);
     this.sel = { anchor: start, head: start };
     this.history = new History();
@@ -204,6 +209,7 @@ export class Editor {
   }
 
   destroy(): void {
+    if (this.bgTimer !== null) clearTimeout(this.bgTimer);
     this.resizeObserver.disconnect();
     for (const d of this.disposers) d();
     this.input.destroy();
@@ -221,26 +227,49 @@ export class Editor {
     const t0 = performance.now();
     const paras = this.doc.paragraphs();
     const pre = this.preedit ? { offset: this.headOffset(), text: this.preedit } : null;
-    this.layout = layoutDocument(paras, this.setup, this.measurer, this.cache, pre, this.layout ?? null);
-    const t1 = performance.now();
+    // 화면 아래 한 화면 분량까지만 즉시 배치하고 나머지는 백그라운드로
+    const syncUntil = this.scroller.scrollTop + this.scroller.clientHeight * 2;
+    this.layout.update(paras, pre, syncUntil);
+    this.stats.layoutMs = performance.now() - t0;
+    this.stats.reflowed = this.layout.counts.reflowed;
+    this.stats.repositioned = this.layout.counts.repositioned;
+    this.stats.reused = this.layout.counts.reused;
+    this.updateDerived();
+    this.scheduleBackground();
+  }
 
+  /** 쪽 수, 스크롤 높이 등 레이아웃에서 파생되는 값 */
+  private updateDerived(): void {
     const s = this.stats;
-    s.layoutMs = t1 - t0;
+    const paras = this.doc.paragraphs();
     s.pages = this.layout.pageCount;
     s.paragraphs = paras.length;
-    let lineCount = 0;
-    for (const p of this.layout.paras) lineCount += p.lines.length;
-    s.lines = lineCount;
     s.characters = this.doc.length - paras.length;
     s.cacheHits = this.cache.hits;
     s.cacheMisses = this.cache.misses;
-    s.reflowed = this.layout.counts.reflowed;
-    s.repositioned = this.layout.counts.repositioned;
-    s.reused = this.layout.counts.reused;
-
+    s.pendingParas = paras.length - this.layout.validCount;
+    if (this.layout.complete) {
+      let lines = 0;
+      for (const p of this.layout.paras) lines += p!.lines.length;
+      s.lines = lines;
+    }
     const viewH = this.scroller.clientHeight;
     this.spacer.style.height = `${Math.max(0, this.layout.totalHeight - viewH)}px`;
     this.spacer.style.width = `${this.setup.width + this.setup.gap * 2}px`;
+  }
+
+  /** 남은 쪽 조립을 짧은 조각으로 나눠 유휴 시간에 진행 (02 §7) */
+  private scheduleBackground(): void {
+    if (this.bgTimer !== null || this.layout.complete) return;
+    this.bgTimer = setTimeout(() => {
+      this.bgTimer = null;
+      const t0 = performance.now();
+      const more = this.layout.step(8);
+      this.stats.backgroundMs += performance.now() - t0;
+      this.updateDerived();
+      if (more) this.scheduleBackground();
+      this.opts.onChange?.(this);
+    }, 0);
   }
 
   private scheduleRender(): void {
@@ -298,30 +327,32 @@ export class Editor {
     const visibleParas = new Set<number>();
     ctx.font = this.font;
     ctx.textBaseline = 'middle';
-    let ref: { para: number; line: number } | null = firstLineBelow(layout, top);
-    for (; ref; ref = stepLine(layout, ref, 1)) {
-      const para = layout.paras[ref.para]!;
+    layout.ensureThroughY(top + h);
+    let ref: { para: number; line: number } | null = layout.firstLineBelow(top);
+    for (; ref; ref = layout.stepLine(ref, 1)) {
+      const para = layout.para(ref.para);
       const ln = para.lines[ref.line]!;
       const y = ln.y - top;
       if (y > h) break;
       if (y + ln.height < 0) continue;
       visibleParas.add(ref.para);
-      const { cps, xs, preedit } = para.layout;
+      const { xs, preedit } = para.layout;
+      const pStart = para.info.start;
       const x0 = px + ln.x - xs[ln.start]!;
 
       // 선택 영역
       if (selFrom !== selTo) {
-        const lineDocStart = para.start + ln.start;
+        const lineDocStart = pStart + ln.start;
         const isLast = ln.index === para.lines.length - 1;
-        const lineDocEnd = para.start + ln.end + (isLast ? 1 : 0); // 마지막 줄은 ¶ 포함
+        const lineDocEnd = pStart + ln.end + (isLast ? 1 : 0); // 마지막 줄은 ¶ 포함
         const a = Math.max(selFrom, lineDocStart);
         const b = Math.min(selTo, lineDocEnd);
         if (a < b) {
-          const da = a - para.start;
-          const db = Math.min(b - para.start, ln.end);
+          const da = a - pStart;
+          const db = Math.min(b - pStart, ln.end);
           const sx = x0 + xs[da]!;
           let ex = x0 + xs[db]!;
-          if (isLast && b > para.start + ln.end) ex += this.fontSize * 0.5; // ¶ 표시 폭
+          if (isLast && b > pStart + ln.end) ex += this.fontSize * 0.5; // ¶ 표시 폭
           ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
           ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
         }
@@ -334,7 +365,7 @@ export class Editor {
       while (i < ln.end) {
         let j = i + 1;
         while (j < ln.end && !para.layout.stops[j]) j++;
-        const g = cps.slice(i, j).join('');
+        const g = cpSlice(para.layout, i, j);
         if (g !== ' ' && g !== '\t') ctx.fillText(g, x0 + xs[i]!, midY);
         i = j;
       }
@@ -357,7 +388,7 @@ export class Editor {
 
   private updateCaret(): void {
     const head = this.headOffset();
-    const r = caretRect(this.layout, head);
+    const r = this.layout.caretRect(head);
     const x = this.pageLeft() + r.x;
     const { anchor } = this.selection();
     const collapsed = anchor === head;
@@ -369,9 +400,7 @@ export class Editor {
       height: `${r.height - 6}px`,
     });
     // 깜박임 재시작
-    this.caretEl.classList.remove('quire-caret-blink');
-    void this.caretEl.offsetWidth;
-    this.caretEl.classList.add('quire-caret-blink');
+    if (this.blink) this.blink.currentTime = 0;
     this.input.place(x, r.y, r.height);
   }
 
@@ -390,7 +419,7 @@ export class Editor {
   }
 
   private scrollCaretIntoView(): void {
-    const r = caretRect(this.layout, this.headOffset());
+    const r = this.layout.caretRect(this.headOffset());
     const s = this.scroller;
     const pad = r.height;
     if (r.y - pad < s.scrollTop) s.scrollTop = Math.max(0, r.y - pad);
@@ -574,19 +603,19 @@ export class Editor {
       switch (e.key) {
         case 'Backspace':
           if (from !== to) this.deleteRange(from, to);
-          else if (head > 0) this.deleteRange(prevStop(this.layout, head), head, 'delete');
+          else if (head > 0) this.deleteRange(this.layout.prevStop(head), head, 'delete');
           break;
         case 'Delete':
           if (from !== to) this.deleteRange(from, to);
-          else if (head < this.doc.maxCaret) this.deleteRange(head, nextStop(this.layout, head), 'delete');
+          else if (head < this.doc.maxCaret) this.deleteRange(head, this.layout.nextStop(head), 'delete');
           break;
         case 'ArrowLeft':
           if (from !== to && !shift) this.moveTo(from, false);
-          else this.moveTo(prevStop(this.layout, head), shift);
+          else this.moveTo(this.layout.prevStop(head), shift);
           break;
         case 'ArrowRight':
           if (from !== to && !shift) this.moveTo(to, false);
-          else this.moveTo(Math.min(this.doc.maxCaret, nextStop(this.layout, head)), shift);
+          else this.moveTo(Math.min(this.doc.maxCaret, this.layout.nextStop(head)), shift);
           break;
         case 'ArrowUp':
           this.moveVertical(-1, shift);
@@ -601,13 +630,13 @@ export class Editor {
           this.moveVertical(Math.max(1, Math.floor(this.scroller.clientHeight / this.setup.lineHeight) - 1), shift);
           break;
         case 'Home': {
-          const ref = lineAt(this.layout, head);
-          this.moveTo(offsetInLine(this.layout, ref, -Number.MAX_SAFE_INTEGER), shift);
+          const ref = this.layout.lineAt(head);
+          this.moveTo(this.layout.offsetInLine(ref, -Number.MAX_SAFE_INTEGER), shift);
           break;
         }
         case 'End': {
-          const ref = lineAt(this.layout, head);
-          this.moveTo(offsetInLine(this.layout, ref, Number.MAX_SAFE_INTEGER), shift);
+          const ref = this.layout.lineAt(head);
+          this.moveTo(this.layout.offsetInLine(ref, Number.MAX_SAFE_INTEGER), shift);
           break;
         }
         case 'Tab':
@@ -622,18 +651,18 @@ export class Editor {
 
   private moveVertical(dir: number, extend: boolean): void {
     const head = this.headOffset();
-    const r = caretRect(this.layout, head);
+    const r = this.layout.caretRect(head);
     if (this.goalX === null) this.goalX = r.x;
-    const target = stepLine(this.layout, r.ref, dir);
+    const target = this.layout.stepLine(r.ref, dir);
     let offset: number;
-    if (target) offset = offsetInLine(this.layout, target, this.goalX);
+    if (target) offset = this.layout.offsetInLine(target, this.goalX);
     else offset = dir < 0 ? 0 : this.doc.maxCaret;
     this.moveTo(offset, extend, true);
   }
 
   /** 단어(어절) 경계. dir=-1이면 이전, 1이면 다음 */
   private wordBoundary(offset: number, dir: -1 | 1): number {
-    const para = this.doc.paragraphs()[paraIndexAt(this.layout, offset)]!;
+    const para = this.doc.paragraphs()[this.layout.paraIndexAt(offset)]!;
     const d = offset - para.start;
     if (dir < 0 && d === 0) return Math.max(0, offset - 1);
     if (dir > 0 && d >= Array.from(para.text).length) return Math.min(this.doc.maxCaret, offset + 1);
@@ -667,13 +696,13 @@ export class Editor {
     this.focus();
 
     const p = this.docPoint(e);
-    const offset = hitTest(this.layout, p.x, p.y);
+    const offset = this.layout.hitTest(p.x, p.y);
 
     if (e.detail === 2) {
       const [a, b] = this.wordAt(offset);
       this.setSelection(a, b);
     } else if (e.detail >= 3) {
-      const para = this.doc.paragraphs()[paraIndexAt(this.layout, offset)]!;
+      const para = this.doc.paragraphs()[this.layout.paraIndexAt(offset)]!;
       this.setSelection(para.start, para.end);
     } else if (e.shiftKey) {
       this.setSelection(this.selection().anchor, offset);
@@ -687,7 +716,7 @@ export class Editor {
     const anchor = this.selection().anchor;
     const onMove = (ev: MouseEvent) => {
       const q = this.docPoint(ev);
-      const head = hitTest(this.layout, q.x, q.y);
+      const head = this.layout.hitTest(q.x, q.y);
       this.setSelection(anchor, head);
       this.scheduleRender();
       this.opts.onChange?.(this);
@@ -703,7 +732,7 @@ export class Editor {
   }
 
   private wordAt(offset: number): [number, number] {
-    const para = this.doc.paragraphs()[paraIndexAt(this.layout, offset)]!;
+    const para = this.doc.paragraphs()[this.layout.paraIndexAt(offset)]!;
     const d = offset - para.start;
     for (const b of wordBounds(para.text)) {
       if (d >= b.start && d < b.end) return [para.start + b.start, para.start + b.end];
@@ -733,17 +762,5 @@ function wordBounds(text: string): Array<{ start: number; end: number; isWord: b
   return out;
 }
 
-let caretStyleInjected = false;
-function ensureCaretStyle(): void {
-  if (caretStyleInjected) return;
-  caretStyleInjected = true;
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes quire-blink { 0%, 50% { opacity: 1 } 50.01%, 100% { opacity: 0 } }
-    .quire-caret-blink { animation: quire-blink 1.06s step-end infinite; }
-    @media (prefers-reduced-motion: reduce) { .quire-caret-blink { animation: none; } }
-  `;
-  document.head.appendChild(style);
-}
 
 export type { Position };

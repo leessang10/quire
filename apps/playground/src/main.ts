@@ -24,16 +24,32 @@ const host = document.getElementById('editor')!;
 const statsEl = document.getElementById('stats')!;
 const logEl = document.getElementById('log')!;
 
+// 로그는 모아 두었다가 프레임당 한 번만 DOM에 반영한다 (입력 처리 시간에 영향을 주지 않도록)
 const MAX_LOG = 300;
+let logBuffer: InputLogEntry[] = [];
+let logQueued = false;
 function onInputLog(e: InputLogEntry) {
-  const li = document.createElement('li');
-  if (e.type.startsWith('composition')) li.className = 'composition';
-  const t = document.createElement('span');
-  t.className = 't';
-  t.textContent = e.type;
-  li.append(`${e.time.toFixed(0).padStart(7)} `, t, ` ${e.detail}`);
-  logEl.prepend(li);
-  while (logEl.childElementCount > MAX_LOG) logEl.lastElementChild!.remove();
+  logBuffer.push(e);
+  if (logQueued) return;
+  logQueued = true;
+  requestAnimationFrame(() => {
+    logQueued = false;
+    const entries = logBuffer.slice(-MAX_LOG);
+    logBuffer = [];
+    const frag = document.createDocumentFragment();
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i]!;
+      const li = document.createElement('li');
+      if (entry.type.startsWith('composition')) li.className = 'composition';
+      const t = document.createElement('span');
+      t.className = 't';
+      t.textContent = entry.type;
+      li.append(`${entry.time.toFixed(0).padStart(7)} `, t, ` ${entry.detail}`);
+      frag.appendChild(li);
+    }
+    logEl.prepend(frag);
+    while (logEl.childElementCount > MAX_LOG) logEl.lastElementChild!.remove();
+  });
 }
 
 let statsQueued = false;
@@ -45,7 +61,9 @@ function showStats() {
     const s = editor.stats;
     const sel = editor.selection();
     const rows: Array<[string, string]> = [
-      ['쪽', s.pages.toLocaleString()],
+      ['쪽', `${s.pendingParas > 0 ? '≈ ' : ''}${s.pages.toLocaleString()}`],
+      ['쪽 조립 대기 문단', s.pendingParas.toLocaleString()],
+      ['백그라운드 조립 누적', `${s.backgroundMs.toFixed(0)} ms`],
       ['문단', s.paragraphs.toLocaleString()],
       ['줄', s.lines.toLocaleString()],
       ['글자', s.characters.toLocaleString()],
