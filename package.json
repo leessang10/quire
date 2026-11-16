@@ -4,13 +4,14 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "spikes/*"
   ],
   "scripts": {
     "dev": "npm run dev -w @quire/playground",
     "build": "npm run build -w @quire/playground",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p spikes/crdt/tsconfig.json",
     "bench": "vitest run --config vitest.bench.config.ts"
   },
   "devDependencies": {
