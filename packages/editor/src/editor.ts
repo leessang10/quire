@@ -44,7 +44,17 @@ const COLORS = {
   preedit: '#1d1d1f',
   placeholder: 'rgba(233, 233, 236, 0.85)',
   placeholderText: '#6e6e73',
+  grip: '#a1a1a6',
+  gripActive: '#3884ff',
+  dragSource: 'rgba(56, 132, 255, 0.10)',
+  dropLine: '#3884ff',
 };
+
+/** 문단 손잡이 영역: 본문 왼쪽 여백 안 [margin - GRIP_LEFT, margin - GRIP_RIGHT) */
+const GRIP_LEFT = 32;
+const GRIP_RIGHT = 4;
+/** 끄는 중 화면 위·아래 끝에서 이 거리 안이면 자동 스크롤 */
+const AUTOSCROLL_EDGE = 40;
 
 /** 렌더링 한 번에 쪽 조립에 쓸 최대 시간 (나머지는 다음 프레임) */
 const RENDER_LAYOUT_BUDGET_MS = 10;
@@ -101,6 +111,13 @@ export class Editor {
   private renderQueued = false;
   private bgTimer: ReturnType<typeof setTimeout> | null = null;
   private disposers: Array<() => void> = [];
+  /** 마우스가 올라가 있는 문단 (손잡이를 그릴 문단), 없으면 -1 */
+  private hoverPara = -1;
+  private hoverGrip = false;
+  /** 문단 끌기: 끄는 문단 i..j, 놓을 자리 to (그 문단 앞, -1이면 제자리), 마지막 포인터 위치 */
+  private drag: { i: number; j: number; to: number; clientX: number; clientY: number } | null = null;
+  private autoScroll = 0;
+  private autoScrollRaf = 0;
 
   constructor(private readonly opts: EditorOptions) {
     this.fontSize = opts.fontSize ?? 16;
@@ -180,6 +197,8 @@ export class Editor {
 
     // ── 이벤트 ──
     this.listen(scroller, 'mousedown', (e) => this.onMouseDown(e as MouseEvent));
+    this.listen(scroller, 'mousemove', (e) => this.onHover(e as MouseEvent));
+    this.listen(scroller, 'mouseleave', () => this.setHover(-1, false));
     this.listen(scroller, 'scroll', () => this.scheduleRender());
     this.listen(this.input.el, 'focus', () => { this.focused = true; this.scheduleRender(); });
     this.listen(this.input.el, 'blur', () => { this.focused = false; this.scheduleRender(); });
@@ -358,6 +377,12 @@ export class Editor {
       const pStart = para.info.start;
       const x0 = px + ln.x - xs[ln.start]!;
 
+      // 끌고 있는 문단
+      if (this.drag && ref.para >= this.drag.i && ref.para <= this.drag.j) {
+        ctx.fillStyle = COLORS.dragSource;
+        ctx.fillRect(px + ln.x - 6, y, setup.width - setup.margin * 2 + 12, ln.height);
+      }
+
       // 선택 영역
       if (selFrom !== selTo) {
         const lineDocStart = pStart + ln.start;
@@ -424,6 +449,8 @@ export class Editor {
       }
     }
 
+    this.drawParagraphDrag(px, top);
+
     if (!ready) {
       this.drawPendingPlaceholder(px, top, w, h);
       this.scheduleRender();
@@ -432,6 +459,43 @@ export class Editor {
     this.updateCaret();
     this.updateMirror(visibleParas);
     this.stats.renderMs = performance.now() - t0;
+  }
+
+  /** 문단 손잡이(⋮⋮)와 끌어서 놓을 자리 표시 */
+  private drawParagraphDrag(px: number, top: number): void {
+    const { ctx, setup, layout } = this;
+    const g = this.drag ? this.drag.i : this.hoverPara;
+    if (g >= 0 && g < layout.validCount) {
+      const ln = layout.paras[g]!.lines[0]!;
+      const cx = px + setup.margin - (GRIP_LEFT + GRIP_RIGHT) / 2;
+      const cy = ln.y - top + ln.height / 2;
+      ctx.fillStyle = this.drag || this.hoverGrip ? COLORS.gripActive : COLORS.grip;
+      for (let r = -1; r <= 1; r++) {
+        for (const c of [-2.5, 2.5]) {
+          ctx.beginPath();
+          ctx.arc(cx + c, cy + r * 5, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    if (!this.drag || this.drag.to < 0) return;
+    const n = this.doc.paragraphs().length;
+    const to = this.drag.to;
+    let yLine: number;
+    if (to < n) {
+      if (to >= layout.validCount) return;
+      yLine = layout.paras[to]!.lines[0]!.y - setup.paraSpacing / 2;
+    } else {
+      if (n - 1 >= layout.validCount) return;
+      yLine = layout.paras[n - 1]!.bottom + setup.paraSpacing / 2;
+    }
+    const x = px + setup.margin - 8;
+    const y = yLine - top;
+    ctx.fillStyle = COLORS.dropLine;
+    ctx.fillRect(x, y - 1, setup.width - setup.margin * 2 + 16, 2);
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   /** 아직 배치되지 않은 영역: 쪽 위에 옅은 막과 진행률을 그린다 */
@@ -784,7 +848,7 @@ export class Editor {
 
   // ── 마우스 ────────────────────────────────────────────
 
-  private docPoint(e: MouseEvent): { x: number; y: number } {
+  private docPoint(e: { clientX: number; clientY: number }): { x: number; y: number } {
     const rect = this.scroller.getBoundingClientRect();
     return {
       x: e.clientX - rect.left + this.scroller.scrollLeft - this.pageLeft(),
@@ -804,6 +868,13 @@ export class Editor {
     const p = this.docPoint(e);
     // 아직 쪽 조립이 안 된 영역의 클릭은 무시 (자리표시가 보이는 상태)
     if (p.y >= this.layout.validBottom) return;
+    if (e.detail === 1 && this.inGrip(p.x)) {
+      const ref = this.layout.firstLineBelow(p.y, false);
+      if (ref) {
+        this.startParagraphDrag(ref.para, e);
+        return;
+      }
+    }
     const offset = this.layout.hitTest(p.x, p.y);
 
     if (e.detail === 2) {
@@ -837,6 +908,134 @@ export class Editor {
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     }
+  }
+
+  // ── 문단 끌기 ─────────────────────────────────────────
+
+  /** 쪽 왼쪽 기준 x가 문단 손잡이 영역인가 */
+  private inGrip(x: number): boolean {
+    const m = this.setup.margin;
+    return x >= m - GRIP_LEFT && x < m - GRIP_RIGHT;
+  }
+
+  private setHover(para: number, grip: boolean): void {
+    const cursor = this.drag ? 'grabbing' : grip ? 'grab' : 'text';
+    if (this.scroller.style.cursor !== cursor) this.scroller.style.cursor = cursor;
+    if (para === this.hoverPara && grip === this.hoverGrip) return;
+    this.hoverPara = para;
+    this.hoverGrip = grip;
+    this.scheduleRender();
+  }
+
+  /** 문단 위에 마우스가 있으면 그 문단의 손잡이를 보인다 */
+  private onHover(e: MouseEvent): void {
+    if (this.drag || e.buttons) return;
+    const p = this.docPoint(e);
+    const { margin, width } = this.setup;
+    let para = -1;
+    if (p.x >= margin - GRIP_LEFT && p.x <= width - margin && p.y < this.layout.validBottom) {
+      const ref = this.layout.firstLineBelow(p.y, false);
+      if (ref && p.y >= this.layout.paras[ref.para]!.lines[0]!.y - this.setup.paraSpacing) para = ref.para;
+    }
+    this.setHover(para, para >= 0 && this.inGrip(p.x));
+  }
+
+  /**
+   * 문단 k의 손잡이를 잡았다. 선택 영역이 걸친 문단들 안이면 그 문단들을 함께, 아니면 문단 k만 끈다.
+   * 놓으면 moveParagraphs로 구획 순서만 바꾼다 (글자는 옮기지 않음).
+   */
+  private startParagraphDrag(k: number, e: MouseEvent): void {
+    const [from, to] = this.range();
+    const [si, sj] = this.selectedParagraphs();
+    const withSelection = from !== to && k >= si && k <= sj;
+    const [i, j] = withSelection ? [si, sj] : [k, k];
+    this.drag = { i, j, to: -1, clientX: e.clientX, clientY: e.clientY };
+    this.setHover(k, true);
+    this.scheduleRender();
+
+    const onMove = (ev: MouseEvent) => this.updateDrop(ev.clientX, ev.clientY);
+    const finish = (commit: boolean) => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('keydown', onKey, true);
+      this.endParagraphDrag(commit, withSelection);
+    };
+    const onUp = () => finish(true);
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape') return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      finish(false);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('keydown', onKey, true);
+  }
+
+  /** 포인터 위치로 놓을 자리를 정하고, 화면 끝 근처면 자동 스크롤한다 */
+  private updateDrop(clientX: number, clientY: number): void {
+    const d = this.drag;
+    if (!d) return;
+    d.clientX = clientX;
+    d.clientY = clientY;
+    const to = this.dropIndexAt(this.docPoint({ clientX, clientY }).y);
+    d.to = to >= d.i && to <= d.j + 1 ? -1 : to; // 제자리면 표시 안 함
+    const rect = this.scroller.getBoundingClientRect();
+    const edge = (dist: number) => Math.ceil(((AUTOSCROLL_EDGE - dist) / AUTOSCROLL_EDGE) * 20);
+    this.autoScroll =
+      clientY < rect.top + AUTOSCROLL_EDGE
+        ? -edge(clientY - rect.top)
+        : clientY > rect.bottom - AUTOSCROLL_EDGE
+          ? edge(rect.bottom - clientY)
+          : 0;
+    if (this.autoScroll && !this.autoScrollRaf) this.autoScrollRaf = requestAnimationFrame(this.autoScrollTick);
+    this.scheduleRender();
+  }
+
+  private readonly autoScrollTick = (): void => {
+    this.autoScrollRaf = 0;
+    if (!this.drag || !this.autoScroll) return;
+    this.scroller.scrollTop += this.autoScroll;
+    this.updateDrop(this.drag.clientX, this.drag.clientY);
+  };
+
+  /** 문서 y에 놓으면 들어갈 자리: 그 문단 앞이면 문단 번호, 뒤면 다음 번호 */
+  private dropIndexAt(y: number): number {
+    const layout = this.layout;
+    const ref = layout.firstLineBelow(Math.max(0, y));
+    const para = layout.para(ref.para);
+    const lines = para.lines;
+    if (y >= para.bottom) return ref.para + 1;
+    if (y < lines[0]!.y) return ref.para;
+    if (lines.length === 1) return y < lines[0]!.y + lines[0]!.height / 2 ? ref.para : ref.para + 1;
+    return ref.line < lines.length / 2 ? ref.para : ref.para + 1;
+  }
+
+  private endParagraphDrag(commit: boolean, withSelection: boolean): void {
+    const d = this.drag;
+    this.drag = null;
+    this.autoScroll = 0;
+    if (this.autoScrollRaf) cancelAnimationFrame(this.autoScrollRaf);
+    this.autoScrollRaf = 0;
+    this.setHover(this.hoverPara, this.hoverGrip);
+    if (!d || !commit || d.to < 0) {
+      this.scheduleRender();
+      return;
+    }
+    const before: Selection = { ...this.sel };
+    const ops = this.doc.moveParagraphs(d.i, d.j, d.to);
+    if (ops.length === 0) {
+      this.scheduleRender();
+      return;
+    }
+    if (!withSelection) {
+      // 선택과 무관한 문단을 옮겼으면 캐럿을 옮긴 문단 앞으로
+      const at = d.to > d.j ? d.to - (d.j - d.i + 1) : d.to;
+      this.setSelection(this.doc.paragraphs()[at]!.start);
+    }
+    this.hoverPara = -1;
+    this.history.seal();
+    this.commit(ops, before);
   }
 
   private wordAt(offset: number): [number, number] {
