@@ -61,9 +61,10 @@ describe('layoutDocument', () => {
       { id: 'b', start: 11, text: '가나다라마바사아자차카타' }, // 3줄
     ];
     const layout = layoutDocument(paras, setup, mono, new LayoutCache());
-    expect(layout.lines.map((l) => l.page)).toEqual([0, 0, 0, 0, 1]);
+    const lines = layout.paras.flatMap((p) => p.lines);
+    expect(lines.map((l) => l.page)).toEqual([0, 0, 0, 0, 1]);
     expect(layout.pageCount).toBe(2);
-    expect(layout.lines[4]!.y).toBe(5 + 65 + 10); // gap + (height+gap) + margin
+    expect(lines[4]!.y).toBe(5 + 65 + 10); // gap + (height+gap) + margin
   });
 
   it('round-trips caret offset through caretRect and hitTest', () => {
@@ -97,5 +98,38 @@ describe('layoutDocument', () => {
     layoutDocument(paras, setup, mono, cache);
     expect(cache.hits).toBe(1);
     expect(cache.misses).toBe(1);
+  });
+
+  it('incremental layout matches a fresh layout and reuses untouched paragraphs', () => {
+    const texts = Array.from({ length: 30 }, (_, i) => `${i}번 문단 가나다라마바사`);
+    const toInput = (ts: string[]) => {
+      let start = 0;
+      return ts.map((text, i) => {
+        const p = { id: `p${i}`, start, text };
+        start += Array.from(text).length + 1;
+        return p;
+      });
+    };
+    const strip = (l: ReturnType<typeof layoutDocument>) =>
+      l.paras.map((p) => ({ id: p.id, start: p.start, lines: p.lines }));
+
+    const cache = new LayoutCache();
+    const before = layoutDocument(toInput(texts), setup, mono, cache);
+
+    // 같은 높이로 바뀌는 편집: 뒤 문단은 그대로 재사용
+    const edited = [...texts];
+    edited[10] = edited[10]!.replace('가', '하');
+    const inc = layoutDocument(toInput(edited), setup, mono, cache, null, before);
+    expect(strip(inc)).toEqual(strip(layoutDocument(toInput(edited), setup, mono, new LayoutCache())));
+    expect(inc.counts).toEqual({ reflowed: 1, repositioned: 0, reused: 29 });
+
+    // 높이가 바뀌는 편집: 뒤 문단은 줄 나눔을 재사용하고 위치만 다시 놓음
+    const grown = [...edited];
+    grown[3] = grown[3]! + ' 더 긴 내용을 붙여서 줄 수를 늘립니다';
+    const inc2 = layoutDocument(toInput(grown), setup, mono, cache, null, inc);
+    expect(strip(inc2)).toEqual(strip(layoutDocument(toInput(grown), setup, mono, new LayoutCache())));
+    expect(inc2.counts.reflowed).toBe(1);
+    expect(inc2.counts.reused).toBe(3);
+    expect(inc2.counts.repositioned).toBe(26);
   });
 });

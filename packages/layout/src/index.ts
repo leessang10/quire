@@ -7,11 +7,14 @@ export {
   displayToDoc,
   docToDisplay,
   paraIndexAt,
-  lineIndexAt,
+  lineAt,
+  stepLine,
+  getLine,
+  firstLineBelow,
   caretRect,
   offsetInLine,
   hitTest,
   prevStop,
   nextStop,
 } from './document';
-export type { PageSetup, ParaInput, PlacedPara, PlacedLine, DocLayout, CaretRect } from './document';
+export type { PageSetup, ParaInput, PlacedPara, PlacedLine, DocLayout, CaretRect, LineRef } from './document';

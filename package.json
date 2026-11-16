@@ -10,7 +10,8 @@
     "dev": "npm run dev -w @quire/playground",
     "build": "npm run build -w @quire/playground",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "bench": "vitest run --config vitest.bench.config.ts"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

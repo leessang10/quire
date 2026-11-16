@@ -51,6 +51,7 @@ function showStats() {
       ['글자', s.characters.toLocaleString()],
       ['레이아웃', `${s.layoutMs.toFixed(1)} ms`],
       ['렌더링', `${s.renderMs.toFixed(1)} ms`],
+      ['문단 재계산/재배치/재사용', `${s.reflowed} / ${s.repositioned.toLocaleString()} / ${s.reused.toLocaleString()}`],
       ['캐시 적중/실패', `${s.cacheHits.toLocaleString()} / ${s.cacheMisses.toLocaleString()}`],
       ['선택', sel.anchor === sel.head ? `${sel.head}` : `${sel.anchor} → ${sel.head}`],
       ['실행 취소', editor.history.canUndo ? '가능' : '-'],

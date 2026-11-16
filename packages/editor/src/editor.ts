@@ -6,14 +6,16 @@ import { Doc, History, type Op, type Position, type Selection } from '@quire/mod
 import {
   LayoutCache,
   caretRect,
+  firstLineBelow,
   hitTest,
   layoutDocument,
-  lineIndexAt,
+  lineAt,
   nextStop,
   offsetInLine,
   pageTop,
   paraIndexAt,
   prevStop,
+  stepLine,
   type DocLayout,
   type Measurer,
   type PageSetup,
@@ -38,6 +40,10 @@ export interface EditorStats {
   characters: number;
   cacheHits: number;
   cacheMisses: number;
+  /** 마지막 레이아웃에서 줄을 다시 나눈 / 위치만 다시 놓은 / 그대로 쓴 문단 수 */
+  reflowed: number;
+  repositioned: number;
+  reused: number;
 }
 
 const COLORS = {
@@ -73,6 +79,7 @@ export class Editor {
   layout!: DocLayout;
   stats: EditorStats = {
     layoutMs: 0, renderMs: 0, pages: 0, paragraphs: 0, lines: 0, characters: 0, cacheHits: 0, cacheMisses: 0,
+    reflowed: 0, repositioned: 0, reused: 0,
   };
 
   private sel: Selection;
@@ -180,6 +187,7 @@ export class Editor {
   setText(text: string): void {
     this.doc = Doc.fromText(text);
     this.cache.clear();
+    this.layout = undefined as unknown as DocLayout; // 다른 문서의 배치를 재사용하지 않도록
     const start = this.doc.positionAt(0);
     this.sel = { anchor: start, head: start };
     this.history = new History();
@@ -211,19 +219,24 @@ export class Editor {
 
   private relayout(): void {
     const t0 = performance.now();
-    const paras = this.doc.paragraphs().map((p) => ({ id: p.id, start: p.start, text: p.text }));
+    const paras = this.doc.paragraphs();
     const pre = this.preedit ? { offset: this.headOffset(), text: this.preedit } : null;
-    this.layout = layoutDocument(paras, this.setup, this.measurer, this.cache, pre);
+    this.layout = layoutDocument(paras, this.setup, this.measurer, this.cache, pre, this.layout ?? null);
     const t1 = performance.now();
 
     const s = this.stats;
     s.layoutMs = t1 - t0;
     s.pages = this.layout.pageCount;
     s.paragraphs = paras.length;
-    s.lines = this.layout.lines.length;
+    let lineCount = 0;
+    for (const p of this.layout.paras) lineCount += p.lines.length;
+    s.lines = lineCount;
     s.characters = this.doc.length - paras.length;
     s.cacheHits = this.cache.hits;
     s.cacheMisses = this.cache.misses;
+    s.reflowed = this.layout.counts.reflowed;
+    s.repositioned = this.layout.counts.repositioned;
+    s.reused = this.layout.counts.reused;
 
     const viewH = this.scroller.clientHeight;
     this.spacer.style.height = `${Math.max(0, this.layout.totalHeight - viewH)}px`;
@@ -282,25 +295,24 @@ export class Editor {
     const { anchor, head } = this.selection();
     const selFrom = Math.min(anchor, head);
     const selTo = Math.max(anchor, head);
-    const lines = layout.lines;
-    let li = this.firstLineAtY(top);
     const visibleParas = new Set<number>();
     ctx.font = this.font;
     ctx.textBaseline = 'middle';
-    for (; li < lines.length; li++) {
-      const ln = lines[li]!;
+    let ref: { para: number; line: number } | null = firstLineBelow(layout, top);
+    for (; ref; ref = stepLine(layout, ref, 1)) {
+      const para = layout.paras[ref.para]!;
+      const ln = para.lines[ref.line]!;
       const y = ln.y - top;
       if (y > h) break;
       if (y + ln.height < 0) continue;
-      visibleParas.add(ln.para);
-      const para = layout.paras[ln.para]!;
+      visibleParas.add(ref.para);
       const { cps, xs, preedit } = para.layout;
       const x0 = px + ln.x - xs[ln.start]!;
 
       // 선택 영역
       if (selFrom !== selTo) {
         const lineDocStart = para.start + ln.start;
-        const isLast = ln.index === para.lineCount - 1;
+        const isLast = ln.index === para.lines.length - 1;
         const lineDocEnd = para.start + ln.end + (isLast ? 1 : 0); // 마지막 줄은 ¶ 포함
         const a = Math.max(selFrom, lineDocStart);
         const b = Math.min(selTo, lineDocEnd);
@@ -341,18 +353,6 @@ export class Editor {
     this.updateCaret();
     this.updateMirror(visibleParas);
     this.stats.renderMs = performance.now() - t0;
-  }
-
-  private firstLineAtY(y: number): number {
-    const lines = this.layout.lines;
-    let lo = 0;
-    let hi = lines.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (lines[mid]!.y + lines[mid]!.height <= y) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
   }
 
   private updateCaret(): void {
@@ -601,13 +601,13 @@ export class Editor {
           this.moveVertical(Math.max(1, Math.floor(this.scroller.clientHeight / this.setup.lineHeight) - 1), shift);
           break;
         case 'Home': {
-          const ln = this.layout.lines[lineIndexAt(this.layout, head)]!;
-          this.moveTo(this.layout.paras[ln.para]!.start + ln.start, shift);
+          const ref = lineAt(this.layout, head);
+          this.moveTo(offsetInLine(this.layout, ref, -Number.MAX_SAFE_INTEGER), shift);
           break;
         }
         case 'End': {
-          const li = lineIndexAt(this.layout, head);
-          this.moveTo(offsetInLine(this.layout, li, Number.MAX_SAFE_INTEGER), shift);
+          const ref = lineAt(this.layout, head);
+          this.moveTo(offsetInLine(this.layout, ref, Number.MAX_SAFE_INTEGER), shift);
           break;
         }
         case 'Tab':
@@ -624,11 +624,10 @@ export class Editor {
     const head = this.headOffset();
     const r = caretRect(this.layout, head);
     if (this.goalX === null) this.goalX = r.x;
-    const target = r.line + dir;
+    const target = stepLine(this.layout, r.ref, dir);
     let offset: number;
-    if (target < 0) offset = 0;
-    else if (target >= this.layout.lines.length) offset = this.doc.maxCaret;
-    else offset = offsetInLine(this.layout, target, this.goalX);
+    if (target) offset = offsetInLine(this.layout, target, this.goalX);
+    else offset = dir < 0 ? 0 : this.doc.maxCaret;
     this.moveTo(offset, extend, true);
   }
 

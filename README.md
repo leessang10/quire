@@ -14,6 +14,7 @@
 npm install
 npm run dev     # 플레이그라운드 http://localhost:5173
 npm test        # 단위 테스트
+npm run bench   # 엔진 벤치마크 (모델 + 레이아웃, DOM 없음)
 npm run typecheck
 ```
 
