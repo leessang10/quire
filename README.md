@@ -1,0 +1,22 @@
+# Quire
+
+캔버스 렌더링과 자체 조판 엔진을 갖춘 웹 문서 에디터.
+
+`contenteditable` 기반 에디터(ProseMirror, Lexical, Slate 등)가 구조적으로 해결할 수 없는 문제
+— 진짜 페이지 레이아웃, 정밀한 한글 조판, IME 완전 제어, 초대형 문서, 블록 이동까지 포함한 협업 —
+를 처음부터 다른 구조로 풀기 위한 프로젝트입니다.
+
+> 상태: **설계 단계** (구현 코드 없음)
+
+## 문서
+
+| 문서 | 내용 |
+|---|---|
+| [00. 개요](docs/design/00-overview.md) | 목표, 비목표, 해결할 9가지 한계, 전체 아키텍처 |
+| [01. 문서 모델](docs/design/01-document-model.md) | 스토리, 블록, 위치, 범위 레이어, 연산 |
+| [02. 레이아웃 엔진](docs/design/02-layout-engine.md) | 셰이핑, 줄바꿈, 쪽 나눔, 증분 레이아웃 |
+| [03. 입력과 선택](docs/design/03-input-and-selection.md) | IME, EditContext, 선택 모델, 명령 |
+| [04. 렌더링과 접근성](docs/design/04-rendering-and-accessibility.md) | 캔버스 렌더러, 접근성 미러, 찾기, 클립보드 |
+| [05. 협업과 이력](docs/design/05-collaboration-and-history.md) | CRDT, 사용자별 실행 취소, 변경 추적, 버전 |
+| [06. 로드맵](docs/design/06-roadmap.md) | 단계별 범위, 0단계 검증 기준, 성능 목표, 위험 |
+| [ADR](docs/adr/) | 아키텍처 결정 기록 |
