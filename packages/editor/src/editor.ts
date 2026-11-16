@@ -518,7 +518,7 @@ export class Editor {
     const [from, to] = this.range();
     const ops: Op[] = [];
     if (from !== to) {
-      ops.push({ type: 'delete', ids: this.doc.deleteRange(from, to) });
+      ops.push(...this.doc.deleteRange(from, to));
       mergeKey = undefined;
     }
     if (text) ops.push({ type: 'insert', ids: this.doc.insertText(from, text) });
@@ -530,9 +530,41 @@ export class Editor {
   private deleteRange(from: number, to: number, mergeKey?: string): void {
     if (from === to) return;
     const before: Selection = { ...this.sel };
-    const ids = this.doc.deleteRange(from, to);
+    const ops = this.doc.deleteRange(from, to);
     this.setSelection(from);
-    this.commit([{ type: 'delete', ids }], before, mergeKey);
+    this.commit(ops, before, mergeKey);
+  }
+
+  /** 선택 영역이 걸친 문단들. [첫 문단, 끝 문단] (화면 인덱스) */
+  private selectedParagraphs(): [number, number] {
+    const [from, to] = this.range();
+    return [this.doc.paragraphIndexAt(from), this.doc.paragraphIndexAt(to)];
+  }
+
+  /** 선택한 문단들을 한 칸 위(-1)/아래(+1)로 옮긴다. 글자는 그대로, 구획 순서만 바뀐다 */
+  private moveParagraphs(dir: -1 | 1): void {
+    const [i, j] = this.selectedParagraphs();
+    const n = this.doc.paragraphs().length;
+    if (dir < 0 ? i === 0 : j === n - 1) return;
+    const before: Selection = { ...this.sel };
+    const ops = this.doc.moveParagraphs(i, j, dir < 0 ? i - 1 : j + 2);
+    // 선택 영역은 원소 ID 기준이므로 옮겨진 문단을 그대로 따라간다
+    this.history.seal();
+    this.commit(ops, before);
+  }
+
+  /** 선택한 문단들을 삭제(숨김)한다 */
+  private deleteParagraphs(): void {
+    const [i, j] = this.selectedParagraphs();
+    const before: Selection = { ...this.sel };
+    const ops = this.doc.hideParagraphs(i, j);
+    if (ops.length === 0) return;
+    // 캐럿은 다음 문단(없으면 앞 문단) 시작으로
+    const paras = this.doc.paragraphs();
+    const k = Math.min(i, paras.length - 1);
+    this.setSelection(paras[k]!.start);
+    this.history.seal();
+    this.commit(ops, before);
   }
 
   private commit(ops: Op[], before: Selection, mergeKey?: string): void {
@@ -625,6 +657,17 @@ export class Editor {
     const head = this.headOffset();
     const [from, to] = this.range();
     let handled = true;
+
+    if (e.altKey && shift && !mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      this.moveParagraphs(e.key === 'ArrowUp' ? -1 : 1);
+      e.preventDefault();
+      return;
+    }
+    if (mod && shift && !e.altKey && e.key.toLowerCase() === 'k') {
+      this.deleteParagraphs();
+      e.preventDefault();
+      return;
+    }
 
     if (mod && !e.altKey) {
       switch (e.key.toLowerCase()) {

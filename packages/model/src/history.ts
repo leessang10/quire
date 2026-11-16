@@ -2,12 +2,9 @@
  * 연산, 트랜잭션, 실행 취소 (0단계: 단일 사용자)
  * 설계: docs/design/01-document-model.md §5, 05-collaboration-and-history.md §4
  */
-import type { Doc, ElementId, Position } from './doc';
+import type { Doc, Op, Position } from './doc';
 
-/** 연산은 "어떤 원소들이 보이게/안 보이게 되었는가"로 기록한다 */
-export type Op =
-  | { type: 'insert'; ids: ElementId[] }
-  | { type: 'delete'; ids: ElementId[] };
+export type { Op } from './doc';
 
 export interface Selection {
   anchor: Position;
@@ -24,11 +21,11 @@ export interface Transaction {
 }
 
 export function applyOp(doc: Doc, op: Op): void {
-  if (op.type === 'insert') doc.revive(op.ids);
-  else doc.hide(op.ids);
+  doc.apply(op);
 }
 
 export function invertOp(op: Op): Op {
+  if (op.type === 'segments') return { type: 'segments', before: op.after, after: op.before };
   return op.type === 'insert' ? { type: 'delete', ids: op.ids } : { type: 'insert', ids: op.ids };
 }
 

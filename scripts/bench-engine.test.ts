@@ -31,7 +31,8 @@ function stats(t: number[]) {
   return `p50 ${q(0.5).padStart(7)}  p95 ${q(0.95).padStart(7)}  max ${q(1).padStart(7)} ms`;
 }
 
-function scenario(paragraphs: number, where: number) {
+/** moves > 0이면 측정 전에 문단 이동 moves번 + 문단 삭제(숨김) moves/5번을 해서 구획을 만든다 */
+function scenario(paragraphs: number, where: number, moves = 0) {
   const doc = makeDoc(paragraphs);
   let t = performance.now();
   const layout = new PagedLayout(setup, measurer);
@@ -41,6 +42,24 @@ function scenario(paragraphs: number, where: number) {
   let slices = 0;
   while (layout.step(8)) slices++;
   const background = performance.now() - t;
+
+  const moveMs: number[] = [];
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 0x100000000);
+  for (let k = 0; k < moves; k++) {
+    const n = doc.paragraphs().length;
+    const i = Math.floor(rnd() * n);
+    const s = performance.now();
+    doc.moveParagraphs(i, i, Math.floor(rnd() * (n + 1)));
+    layout.update(doc.paragraphs(), null, VIEW * 2, doc.takeParagraphChanges());
+    moveMs.push(performance.now() - s);
+    layout.step(8);
+    if (k % 5 === 4) {
+      const h = Math.floor(rnd() * (n - 1));
+      doc.hideParagraphs(h, h);
+      layout.update(doc.paragraphs(), null, VIEW * 2, doc.takeParagraphChanges());
+    }
+  }
 
   let caret = Math.floor(doc.length * where);
   let caretY = layout.caretRect(caret).y;
@@ -75,7 +94,9 @@ function scenario(paragraphs: number, where: number) {
   console.log(
     [
       '',
-      `■ ${paragraphs.toLocaleString()} 문단 / ${layout.pageCount} 쪽 / 캐럿 위치 ${Math.round(where * 100)}%  (heap ${mem.toFixed(0)} MB)`,
+      `■ ${paragraphs.toLocaleString()} 문단 / ${layout.pageCount} 쪽 / 캐럿 위치 ${Math.round(where * 100)}%  (heap ${mem.toFixed(0)} MB)` +
+        (moves ? ` / 이동 ${moves}회 후 구획 ${doc.segmentCount}개` : ''),
+      ...(moves ? [`  문단 이동          ${stats(moveMs)}`] : []),
       `  첫 화면 배치       ${firstScreen.toFixed(1)} ms   (나머지 백그라운드 ${background.toFixed(0)} ms, 8ms 조각 ${slices}개)`,
       `  글자 입력          ${stats(typing)}`,
       `  Enter              ${stats(enter)}`,
@@ -90,4 +111,7 @@ it('engine benchmark', () => {
   scenario(10_000, 0.001);
   scenario(100_000, 0.5); // 06 §2 V5 기준 (10만 문단)
   scenario(100_000, 0.001);
+  // 구획이 여러 개인 문서 (문단 이동·삭제 후)
+  scenario(10_000, 0.5, 50);
+  scenario(100_000, 0.5, 50);
 }, 600_000);

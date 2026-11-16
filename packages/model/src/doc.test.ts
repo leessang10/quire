@@ -110,8 +110,8 @@ describe('History', () => {
     const h = new History();
     const pos = doc.positionAt(1); // 나 앞
     const sel = { anchor: pos, head: pos };
-    const ids = doc.deleteRange(1, 2);
-    h.record({ ops: [{ type: 'delete', ids }], before: sel, after: sel, time: 0 });
+    const ops = doc.deleteRange(1, 2);
+    h.record({ ops, before: sel, after: sel, time: 0 });
     const restored = h.undo(doc)!;
     expect(doc.text()).toBe('가나다\n');
     expect(doc.resolve(restored.head)).toBe(1);

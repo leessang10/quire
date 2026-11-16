@@ -61,10 +61,9 @@ describe('Doc randomized consistency', () => {
           const to = Math.min(len - 1, from + Math.floor(r() * 40));
           if (from >= to) continue;
           const sel = { anchor: doc.positionAt(from), head: doc.positionAt(from) };
-          const ids = doc.deleteRange(from, to);
+          const ops: Op[] = doc.deleteRange(from, to);
           expected = cpSplice(expected, from, to - from, '');
-          const op: Op = { type: 'delete', ids };
-          h.record({ ops: [op], before: sel, after: sel, time: step });
+          h.record({ ops, before: sel, after: sel, time: step });
           snapshots.push(expected);
         } else if (roll < 0.9) {
           if (!h.canUndo) continue;
@@ -109,7 +108,7 @@ describe('Doc paragraph change hints', () => {
         } else if (roll < 0.85) {
           const from = Math.floor(r() * len);
           const sel = { anchor: doc.positionAt(from), head: doc.positionAt(from) };
-          h.record({ ops: [{ type: 'delete', ids: doc.deleteRange(from, from + Math.floor(r() * 20)) }], before: sel, after: sel, time: step });
+          h.record({ ops: doc.deleteRange(from, from + Math.floor(r() * 20)), before: sel, after: sel, time: step });
         } else if (h.canUndo) {
           h.undo(doc);
         }
