@@ -367,6 +367,39 @@ export const SCENARIOS: Scenario[] = [
       ['X', '하하하하'],
     ],
   },
+  // ── 빈 구획 (별칭 규칙 검증용) ──
+  {
+    id: 'S31',
+    title: '병합 후 앞 문단 글자 삭제 ∥ 그 앞 문단 삭제',
+    intent:
+      '1문단을 맨 뒤로 옮긴 문서에서 A는 마바사아+자차카타를 합치고 마바사아를 지우는 동안 B는 마바사아 문단 삭제 → 가나다라는 남는다',
+    run: (a, b) => {
+      a.move(0, 3);
+      syncAll(a, b);
+      a.merge(0);
+      a.deleteText(0, 0, 4);
+      b.deletePara(0);
+      syncAll(a, b);
+    },
+    expect: [['자차카타', '하하하하', '가나다라']],
+  },
+  {
+    id: 'S32',
+    title: '병합 후 앞 문단 글자 삭제 ∥ 그 앞 문단 이동',
+    intent: '같은 상황에서 B는 마바사아를 맨 뒤로 → 가나다라는 제자리(맨 뒤 근처)',
+    run: (a, b) => {
+      a.move(0, 3);
+      syncAll(a, b);
+      a.merge(0);
+      a.deleteText(0, 0, 4);
+      b.move(0, 3);
+      syncAll(a, b);
+    },
+    expect: [
+      ['자차카타', '하하하하', '가나다라'],
+      ['자차카타', '가나다라', '하하하하'],
+    ],
+  },
   {
     id: 'S26',
     title: '연속 이동 ∥ 편집',

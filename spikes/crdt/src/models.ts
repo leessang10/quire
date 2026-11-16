@@ -416,7 +416,11 @@ class SegmentReplica implements Replica {
     this.placeholder.set(this.charId(at + 1), true);
   }
 
-  /** M4: 구획 = 다음 BRK 묶음(연달아 붙은 BRK)까지. ID = 그 BRK들 (별칭), 마지막 구획은 'tail' */
+  /**
+   * M4: 구획 = 다음 BRK까지. ID = 그 BRK, 마지막 구획은 'tail'.
+   * 연달아 붙은 BRK 사이의 빈 구획도 그대로 한 구획이다(아무것도 표시하지 않음). M3처럼 별칭으로 묶으면,
+   * 내용이 모두 지워진 구획이 이웃 구획과 한 구획이 되어 그 구획의 숨김·이동이 이웃에 번진다 (S31: 이웃 문단 유실).
+   */
   private segmentsByEnd(cps: string[]): Seg[] {
     const segs: Seg[] = [];
     let start = 0;
@@ -426,11 +430,9 @@ class SegmentReplica implements Replica {
         i++;
         continue;
       }
-      const end = i;
-      const ids: string[] = [];
-      while (i < cps.length && cps[i] === BRK) ids.push(this.charId(i++));
-      segs.push({ id: ids[0]!, aliases: ids, start, end });
-      start = i;
+      const id = this.charId(i);
+      segs.push({ id, aliases: [id], start, end: i });
+      start = ++i;
     }
     segs.push({ id: 'tail', aliases: ['tail'], start, end: cps.length });
     return segs;
@@ -734,10 +736,9 @@ class SegmentReplica implements Replica {
     if (this.clearHidden) {
       // 구획 ID(BRK)와 숨김 표시는 남기고 내용만 지운다. 동시에 이 문단에 들어온 입력은 같은 구획에 들어가므로
       // 숨겨진 채로 남는다. 같은 커밋이라 실행 취소는 숨김과 내용을 함께 되돌린다.
-      // 마지막 글자(¶) 하나는 남긴다: 구획이 비면 앞뒤 BRK가 맞붙어 별칭 규칙에 따라 이웃 구획과 한 구획이 되고,
-      // 그 구획 전체가 숨겨진다 (첫 시험에서 동시 이동·병합과 만나 앞 문단이 사라짐).
+      // 구획이 비어도 된다 (별칭 규칙이 없으므로 이웃 구획과 합쳐지지 않음).
       const s = this.view().segs.find((x) => x.aliases.includes(sid))!;
-      if (s.end - 1 > s.start) this.text.delete(s.start, s.end - 1 - s.start);
+      if (s.end > s.start) this.text.delete(s.start, s.end - s.start);
     }
   }
 
@@ -807,9 +808,12 @@ class SegmentReplica implements Replica {
 
   /** 숨긴 구획을 건너뛰고 볼 때, 텍스트상으로도 화면상으로도 이웃한 보이는 구획을 하나로 센 수 */
   private visibleRuns(v: SegView): number {
-    // 화면에 나오는 구획만 (보초·쓰지 않은 자리표시 제외)
-    const vis = v.segs.filter((s) => !this.isHidden(s) && !(this.sentinel && (s.id === 'tail' || this.isSpare(s))));
-    const rank = new Map(v.disp.map((s, k) => [s, k]));
+    // 화면에 나오는 구획만 (숨긴 구획·빈 구획·보초·쓰지 않은 자리표시 제외)
+    const vis = v.segs.filter(
+      (s) => s.end > s.start && !this.isHidden(s) && !(this.sentinel && (s.id === 'tail' || this.isSpare(s))),
+    );
+    const shown = v.disp.filter((s) => s.end > s.start);
+    const rank = new Map(shown.map((s, k) => [s, k]));
     let runs = vis.length;
     for (let i = 0; i + 1 < vis.length; i++) {
       const S = vis[i]!;
