@@ -4,7 +4,7 @@
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { M1, M2, M3, send, syncAll, type Model, type Replica } from './models';
+import { M1, M2, M3, M4, send, syncAll, type Model, type Replica } from './models';
 
 function rng(seed: number) {
   let s = seed >>> 0;
@@ -16,35 +16,40 @@ function rng(seed: number) {
 
 const ALPHA = Array.from('가나다라마바사아자차');
 
-function randomEdit(r: () => number, x: Replica): string {
+/** 편집 종류별 누적 확률 경계: 입력, 삭제, 분할, 병합, 이동, 문단 삭제 (나머지는 실행 취소) */
+type Mix = [number, number, number, number, number, number];
+const NORMAL: Mix = [0.35, 0.5, 0.65, 0.78, 0.9, 0.95];
+const MOVE_HEAVY: Mix = [0.25, 0.35, 0.45, 0.55, 0.9, 0.95];
+
+function randomEdit(r: () => number, x: Replica, mix: Mix = NORMAL): string {
   const paras = x.paragraphs();
   const n = paras.length;
   if (n === 0) return 'skip';
   const p = Math.floor(r() * n);
   const len = Array.from(paras[p]!).length;
   const roll = r();
-  if (roll < 0.35) {
+  if (roll < mix[0]) {
     x.insertText(p, Math.floor(r() * (len + 1)), ALPHA[Math.floor(r() * ALPHA.length)]!.repeat(1 + Math.floor(r() * 3)));
     return 'insert';
   }
-  if (roll < 0.5 && len > 0) {
+  if (roll < mix[1] && len > 0) {
     const at = Math.floor(r() * len);
     x.deleteText(p, at, Math.min(len - at, 1 + Math.floor(r() * 3)));
     return 'delete';
   }
-  if (roll < 0.65) {
+  if (roll < mix[2]) {
     x.split(p, Math.floor(r() * (len + 1)));
     return 'split';
   }
-  if (roll < 0.78 && p + 1 < n) {
+  if (roll < mix[3] && p + 1 < n) {
     x.merge(p);
     return 'merge';
   }
-  if (roll < 0.9 && n > 1) {
+  if (roll < mix[4] && n > 1) {
     x.move(p, Math.floor(r() * n));
     return 'move';
   }
-  if (roll < 0.95 && n > 1) {
+  if (roll < mix[5] && n > 1) {
     x.deletePara(p);
     return 'deletePara';
   }
@@ -60,7 +65,7 @@ interface Stats {
   examples: string[];
 }
 
-function fuzz(model: Model, seeds: number, steps: number): Stats {
+function fuzz(model: Model, seeds: number, steps: number, mix: Mix = NORMAL): Stats {
   const stats: Stats = { runs: 0, converged: 0, invariantViolations: 0, errors: 0, examples: [] };
   for (let seed = 1; seed <= seeds; seed++) {
     const r = rng(seed);
@@ -70,7 +75,7 @@ function fuzz(model: Model, seeds: number, steps: number): Stats {
     try {
       for (let step = 0; step < steps; step++) {
         const x = peers[Math.floor(r() * peers.length)]!;
-        randomEdit(r, x);
+        randomEdit(r, x, mix);
         if (r() < 0.25) {
           const a = peers[Math.floor(r() * peers.length)]!;
           const b = peers[Math.floor(r() * peers.length)]!;
@@ -95,7 +100,7 @@ function fuzz(model: Model, seeds: number, steps: number): Stats {
 
 describe('V4 randomized convergence (3 peers)', () => {
   const out: string[] = [];
-  for (const model of [M1, M2, M3]) {
+  for (const model of [M1, M2, M3, M4]) {
     it(model.name, () => {
       const s = fuzz(model, 200, 150);
       out.push(
@@ -105,6 +110,19 @@ describe('V4 randomized convergence (3 peers)', () => {
       expect(s.errors).toBe(0);
       expect(s.converged).toBe(s.runs);
     }, 600_000);
+  }
+  for (const model of [M3, M4]) {
+    it(`${model.name} (이동 위주)`, () => {
+      const s = fuzz(model, 200, 150, MOVE_HEAVY);
+      out.push(
+        `- ${model.name} (이동 35%): 실행 ${s.runs}, 수렴 ${s.converged}, 구조 위반 ${s.invariantViolations}, 오류 ${s.errors}` +
+          (s.examples.length ? `
+  - 예: ${s.examples.join(' / ')}` : ''),
+      );
+      expect(s.errors).toBe(0);
+      expect(s.converged).toBe(s.runs);
+      // 시험 구현은 연산마다 화면 순서를 처음부터 다시 계산하고, 이동이 많으면 BRK가 쌓여 회당 20분 가까이 걸린다
+    }, 1_800_000);
   }
   it('writes summary', () => {
     mkdirSync(new URL('../results/', import.meta.url), { recursive: true });

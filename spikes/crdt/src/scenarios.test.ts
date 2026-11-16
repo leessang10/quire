@@ -1,7 +1,9 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { M1, M2, M3 } from './models';
+import { M1, M2, M3, M4 } from './models';
 import { SCENARIOS, runScenario, type Result } from './scenarios';
+
+const MODELS = [M1, M2, M3, M4];
 
 const LABEL: Record<string, string> = {
   pass: '✅ 통과',
@@ -13,7 +15,7 @@ const LABEL: Record<string, string> = {
 describe('V4 intent scenarios', () => {
   const results: Result[] = [];
 
-  for (const model of [M1, M2, M3]) {
+  for (const model of MODELS) {
     for (const s of SCENARIOS) {
       it(`${model.name} ${s.id} ${s.title}`, () => {
         const r = runScenario(model, s);
@@ -26,22 +28,20 @@ describe('V4 intent scenarios', () => {
   }
 
   it('writes the comparison table', () => {
+    const cell = (r: Result) =>
+      `${LABEL[r.verdict]}${r.verdict === 'pass' ? '' : `<br>\`${JSON.stringify(r.actual)}\``}${r.invariant ? `<br>구조 위반: ${r.invariant}` : ''}`;
     const rows = SCENARIOS.map((s) => {
-      const r1 = results.find((r) => r.scenario === s && r.model === M1.name)!;
-      const r2 = results.find((r) => r.scenario === s && r.model === M2.name)!;
-      const r3 = results.find((r) => r.scenario === s && r.model === M3.name)!;
-      const cell = (r: Result) =>
-        `${LABEL[r.verdict]}${r.verdict === 'pass' ? '' : `<br>\`${JSON.stringify(r.actual)}\``}${r.invariant ? `<br>구조 위반: ${r.invariant}` : ''}`;
-      return `| ${s.id} | ${s.title} | ${cell(r1)} | ${cell(r2)} | ${cell(r3)} |`;
+      const cells = MODELS.map((m) => cell(results.find((r) => r.scenario === s && r.model === m.name)!));
+      return `| ${s.id} | ${s.title} | ${cells.join(' | ')} |`;
     });
     const count = (m: string, v: string) => results.filter((r) => r.model === m && r.verdict === v).length;
-    const summary = [M1, M2, M3].map(
+    const summary = MODELS.map(
       (m) =>
         `- ${m.name}: 통과 ${count(m.name, 'pass')}, 위치 어긋남 ${count(m.name, 'misplaced')}, 유실 ${count(m.name, 'lost')}, 중복 ${count(m.name, 'duplicated')} / ${SCENARIOS.length}`,
     );
     const md = [
-      '| # | 시나리오 | M1 평평한 텍스트 | M2 문단 리스트 | M3 평평한 텍스트 + 구획 순서 |',
-      '|---|---|---|---|---|',
+      `| # | 시나리오 | ${MODELS.map((m) => m.name).join(' | ')} |`,
+      `|---|---|${MODELS.map(() => '---').join('|')}|`,
       ...rows,
       '',
       ...summary,

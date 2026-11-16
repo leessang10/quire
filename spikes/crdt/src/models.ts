@@ -307,7 +307,16 @@ class SegmentReplica implements Replica {
   private readonly moved: ReturnType<LoroDoc['getMap']>;
   private readonly undoMgr: UndoManager;
 
-  constructor(readonly doc: LoroDoc) {
+  /**
+   * @param identity 구획 ID를 무엇으로 정하는가.
+   *   'start' (M3): 구획을 시작하는 BRK. 문단을 떼어 내면 그 뒤 나머지 부분이 새 ID를 받는다.
+   *   'end'   (M4): 구획을 끝내는 BRK (마지막 구획은 'tail'). 문단을 떼어 내도 그 뒤 나머지 부분은 원래 ID와
+   *                 order 위치를 유지하고, 앞부분과 떼어 낸 문단만 새 ID를 받는다.
+   */
+  constructor(
+    readonly doc: LoroDoc,
+    private readonly identity: 'start' | 'end' = 'start',
+  ) {
     this.text = doc.getText('body');
     this.order = doc.getMovableList('order');
     this.hidden = doc.getMap('hidden');
@@ -323,6 +332,47 @@ class SegmentReplica implements Replica {
 
   private view(): SegView {
     const cps = Array.from(this.text.toString());
+    const segs = this.identity === 'end' ? this.segmentsByEnd(cps) : this.segmentsByStart(cps);
+    const order = (this.order.toJSON() as string[]) ?? [];
+    const all = this.arrange(segs, order);
+    const disp = all.filter((s) => !s.aliases.some((a) => this.hidden.get(a) === true));
+
+    const paras: VPara[] = [];
+    for (const s of disp) {
+      let ps = s.start;
+      for (let i = s.start; i < s.end; i++) {
+        if (cps[i] === PARA) {
+          paras.push({ textStart: ps, len: i - ps, terminated: true, seg: s });
+          ps = i + 1;
+        }
+      }
+      if (ps < s.end) paras.push({ textStart: ps, len: s.end - ps, terminated: false, seg: s });
+    }
+    return { cps, segs, disp, paras, order };
+  }
+
+  /** M4: 구획 = 다음 BRK 묶음(연달아 붙은 BRK)까지. ID = 그 BRK들 (별칭), 마지막 구획은 'tail' */
+  private segmentsByEnd(cps: string[]): Seg[] {
+    const segs: Seg[] = [];
+    let start = 0;
+    let i = 0;
+    while (i < cps.length) {
+      if (cps[i] !== BRK) {
+        i++;
+        continue;
+      }
+      const end = i;
+      const ids: string[] = [];
+      while (i < cps.length && cps[i] === BRK) ids.push(this.charId(i++));
+      segs.push({ id: ids[0]!, aliases: ids, start, end });
+      start = i;
+    }
+    segs.push({ id: 'tail', aliases: ['tail'], start, end: cps.length });
+    return segs;
+  }
+
+  /** M3: 구획 = BRK 다음부터. ID = 시작 BRK, 첫 구획은 'root' */
+  private segmentsByStart(cps: string[]): Seg[] {
     const segs: Seg[] = [];
     let cur: Seg = { id: 'root', aliases: ['root'], start: 0, end: 0 };
     for (let i = 0; i < cps.length; i++) {
@@ -341,23 +391,7 @@ class SegmentReplica implements Replica {
     }
     cur.end = cps.length;
     segs.push(cur);
-
-    const order = (this.order.toJSON() as string[]) ?? [];
-    const all = this.arrange(segs, order);
-    const disp = all.filter((s) => !s.aliases.some((a) => this.hidden.get(a) === true));
-
-    const paras: VPara[] = [];
-    for (const s of disp) {
-      let ps = s.start;
-      for (let i = s.start; i < s.end; i++) {
-        if (cps[i] === PARA) {
-          paras.push({ textStart: ps, len: i - ps, terminated: true, seg: s });
-          ps = i + 1;
-        }
-      }
-      if (ps < s.end) paras.push({ textStart: ps, len: s.end - ps, terminated: false, seg: s });
-    }
-    return { cps, segs, disp, paras, order };
+    return segs;
   }
 
   /**
@@ -383,10 +417,18 @@ class SegmentReplica implements Replica {
     });
     listed.sort((x, y) => x.k - y.k);
     const all = listed.map((x) => x.seg);
-    // order에 없는 구획: 텍스트 순서상 앞 구획 바로 뒤에
-    for (const t of unlisted) {
-      const at = t === 0 ? -1 : all.indexOf(segs[t - 1]!);
-      all.splice(at + 1, 0, segs[t]!);
+    if (this.identity === 'end') {
+      // order에 없는 구획: 텍스트 순서상 다음 구획 바로 앞에 (뒤에서부터 처리)
+      for (const t of [...unlisted].reverse()) {
+        const at = t + 1 < segs.length ? all.indexOf(segs[t + 1]!) : all.length;
+        all.splice(at < 0 ? all.length : at, 0, segs[t]!);
+      }
+    } else {
+      // order에 없는 구획: 텍스트 순서상 앞 구획 바로 뒤에
+      for (const t of unlisted) {
+        const at = t === 0 ? -1 : all.indexOf(segs[t - 1]!);
+        all.splice(at + 1, 0, segs[t]!);
+      }
     }
     return all;
   }
@@ -397,6 +439,19 @@ class SegmentReplica implements Replica {
     const all = this.displayOrderWithHidden(v);
     const k = all.findIndex((s) => s.aliases.includes(segId));
     if (all[k]!.aliases.some((a) => v.order.includes(a))) return;
+    if (this.identity === 'end') {
+      // 화면에서 뒤에 있는 가장 가까운 구획 바로 앞에 (없으면 END 앞)
+      let at = v.order.indexOf(END);
+      for (let j = k + 1; j < all.length; j++) {
+        const idxs = all[j]!.aliases.map((a) => v.order.indexOf(a)).filter((x) => x >= 0);
+        if (idxs.length) {
+          at = Math.min(...idxs);
+          break;
+        }
+      }
+      this.order.insert(at, segId);
+      return;
+    }
     let at = 0;
     for (let j = k - 1; j >= 0; j--) {
       const idx = Math.max(...all[j]!.aliases.map((a) => v.order.indexOf(a)));
@@ -430,8 +485,15 @@ class SegmentReplica implements Replica {
     this.order.insert(this.listIndex(afterId) + 1, newId);
   }
 
+  /** 새 구획 newId를 order에서 구획 beforeId 바로 앞에 넣는다 */
+  private listBefore(beforeId: string, newId: string): void {
+    this.ensureListed(beforeId);
+    this.order.insert(this.listIndex(beforeId), newId);
+  }
+
   /** 문단 p가 혼자인 구획을 만들고 그 구획 ID를 돌려준다 */
   private isolate(p: number): string {
+    if (this.identity === 'end') return this.isolateByEnd(p);
     let v = this.view();
     const P = v.paras[p]!;
     const s = P.seg;
@@ -452,8 +514,42 @@ class SegmentReplica implements Replica {
     return s.id;
   }
 
+  /**
+   * M4: 문단 뒤에 BRK를 넣으면 [앞부분+문단]이 그 BRK를 ID로 받고 나머지는 원래 ID를 유지한다.
+   * 문단 앞에도 BRK를 넣으면 [앞부분]이 새 ID를 받는다. 새 ID는 모두 원래 구획 바로 앞에 놓는다.
+   */
+  private isolateByEnd(p: number): string {
+    const v = this.view();
+    const P = v.paras[p]!;
+    const s = P.seg;
+    const endPos = P.textStart + P.len + (P.terminated ? 1 : 0);
+    let pid = s.id;
+    if (endPos < s.end) {
+      this.text.insert(endPos, BRK);
+      pid = this.charId(endPos);
+      this.listBefore(s.id, pid);
+    }
+    if (P.textStart > s.start) {
+      this.text.insert(P.textStart, BRK);
+      this.listBefore(pid, this.charId(P.textStart));
+    }
+    this.ensureListed(pid);
+    return pid;
+  }
+
   /** 문단 p가 구획의 첫 문단이 되게 하고 그 구획 ID를 돌려준다 */
   private startSegmentAt(p: number): string {
+    if (this.identity === 'end') {
+      const v = this.view();
+      const P = v.paras[p]!;
+      if (P.textStart > P.seg.start) {
+        // 앞부분이 새 ID를 받고 이 문단부터는 원래 구획 ID 그대로
+        this.text.insert(P.textStart, BRK);
+        this.listBefore(P.seg.id, this.charId(P.textStart));
+      }
+      this.ensureListed(P.seg.id);
+      return P.seg.id;
+    }
     const v = this.view();
     const P = v.paras[p]!;
     if (P.textStart === P.seg.start) {
@@ -583,6 +679,24 @@ export const M3: Model = {
     const doc = newDoc(peer);
     doc.import(snapshot);
     return new SegmentReplica(doc);
+  },
+};
+
+export const M4: Model = {
+  name: 'M4 끝 표식 구획',
+  createBase(paragraphs) {
+    const doc = newDoc(1);
+    doc.getText('body').insert(0, paragraphs.map((p) => p + PARA).join(''));
+    const order = doc.getMovableList('order');
+    order.insert(0, 'tail');
+    order.insert(1, END);
+    doc.commit();
+    return doc.export({ mode: 'snapshot' });
+  },
+  replica(snapshot, peer) {
+    const doc = newDoc(peer);
+    doc.import(snapshot);
+    return new SegmentReplica(doc, 'end');
   },
 };
 
