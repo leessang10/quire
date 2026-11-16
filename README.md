@@ -19,4 +19,6 @@
 | [04. 렌더링과 접근성](docs/design/04-rendering-and-accessibility.md) | 캔버스 렌더러, 접근성 미러, 찾기, 클립보드 |
 | [05. 협업과 이력](docs/design/05-collaboration-and-history.md) | CRDT, 사용자별 실행 취소, 변경 추적, 버전 |
 | [06. 로드맵](docs/design/06-roadmap.md) | 단계별 범위, 0단계 검증 기준, 성능 목표, 위험 |
+| [07. 파일 포맷](docs/design/07-file-format.md) | 저장 층, `.quire` 컨테이너, `document.json`, 마이그레이션 |
+| [08. 앱 통합](docs/design/08-integration.md) | 공개 API, React 래퍼, Next.js, 서버 실행 |
 | [ADR](docs/adr/) | 아키텍처 결정 기록 |
