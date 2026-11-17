@@ -177,3 +177,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .ck-run { order: -1; }
   .ck-editor { height: 260px; }
 }
+
+/* ── 셰이핑 검증 (shaping.html) ── */
+.sh-main { padding: 16px; overflow: auto; }
+.sh-main h2 { font-size: 15px; margin: 20px 0 6px; }
+.sh-table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.sh-table th, .sh-table td { border: 1px solid var(--line); padding: 3px 8px; text-align: right; }
+.sh-table th:first-child, .sh-table td:first-child { text-align: left; }
+.sh-main canvas { display: block; margin-top: 16px; background: var(--panel); border: 1px solid var(--line); max-width: 100%; }

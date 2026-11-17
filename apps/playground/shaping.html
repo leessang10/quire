@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quire 셰이핑 검증</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body class="ck-body">
+    <header class="bar">
+      <strong class="brand">Quire</strong>
+      <span class="phase">셰이핑 검증 (ADR-0002): HarfBuzz vs 캔버스 measureText, 같은 글꼴 파일</span>
+      <div class="actions"><a class="link" href="/">편집기로</a></div>
+    </header>
+    <main class="sh-main">
+      <p class="ck-muted" id="status" aria-live="polite">준비 중…</p>
+      <p class="ck-muted">글꼴은 <code>node spikes/shaping/prepare-fonts.mjs</code>로 <code>public/spike-fonts/</code>에 복사한 Windows 글꼴(맑은 고딕, Calibri)이다.</p>
+      <div id="out"></div>
+      <canvas id="draw" width="900" height="200" aria-label="그리기 비교"></canvas>
+    </main>
+    <script type="module" src="/src/shaping.ts"></script>
+  </body>
+</html>

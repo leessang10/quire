@@ -15,6 +15,7 @@ export default defineConfig({
         collab: resolve(__dirname, 'collab.html'),
         live: resolve(__dirname, 'live.html'),
         checklist: resolve(__dirname, 'checklist.html'),
+        shaping: resolve(__dirname, 'shaping.html'),
       },
     },
   },
