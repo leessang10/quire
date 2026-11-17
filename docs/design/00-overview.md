@@ -84,7 +84,9 @@ Word·한글(HWP) 수준의 조판 품질과 Google Docs 수준의 실시간 협
 | `@quire/layout` | 문단 레이아웃, 쪽 조립, 레이아웃 트리 | 없음 |
 | `@quire/view` | 캔버스 렌더러, 입력 층, 선택, 접근성 미러 | 있음 |
 | `@quire/commands` | 편집 명령, 키맵 | 없음 |
-| `@quire/editor` | 위를 묶은 공개 API | 있음 |
+| `@quire/editor` | 위를 묶은 공개 API (프레임워크 무관) | 있음 |
+| `@quire/react` | React 컴포넌트와 훅 (08) | 있음 |
+| `@quire/server` | PDF·썸네일·검증 등 서버 실행 (08) | 없음 |
 | `apps/playground` | 개발·검증용 앱 | 있음 |
 
 ## 6. 열린 질문

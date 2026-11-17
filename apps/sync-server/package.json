@@ -1,0 +1,13 @@
+{
+  "name": "@quire/sync-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-transform-types --no-warnings --import ./src/resolve.ts src/server.ts"
+  },
+  "dependencies": {
+    "loro-crdt": "1.17.1",
+    "@quire/sync": "*"
+  }
+}

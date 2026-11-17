@@ -6,7 +6,17 @@
 — 진짜 페이지 레이아웃, 정밀한 한글 조판, IME 완전 제어, 초대형 문서, 블록 이동까지 포함한 협업 —
 를 처음부터 다른 구조로 풀기 위한 프로젝트입니다.
 
-> 상태: **설계 단계** (구현 코드 없음)
+> 상태: **0단계 프로토타입** — [편집기·성능 결과](docs/spikes/phase0-baseline.md), [동기화(CRDT) 비교 결과](docs/spikes/phase0-crdt.md)
+
+## 실행
+
+```bash
+npm install
+npm run dev     # 플레이그라운드 http://localhost:5173
+npm test        # 단위 테스트
+npm run bench   # 엔진 벤치마크 (모델 + 레이아웃, DOM 없음)
+npm run typecheck
+```
 
 ## 문서
 
@@ -19,4 +29,6 @@
 | [04. 렌더링과 접근성](docs/design/04-rendering-and-accessibility.md) | 캔버스 렌더러, 접근성 미러, 찾기, 클립보드 |
 | [05. 협업과 이력](docs/design/05-collaboration-and-history.md) | CRDT, 사용자별 실행 취소, 변경 추적, 버전 |
 | [06. 로드맵](docs/design/06-roadmap.md) | 단계별 범위, 0단계 검증 기준, 성능 목표, 위험 |
+| [07. 파일 포맷](docs/design/07-file-format.md) | 저장 층, `.quire` 컨테이너, `document.json`, 마이그레이션 |
+| [08. 앱 통합](docs/design/08-integration.md) | 공개 API, React 래퍼, Next.js, 서버 실행 |
 | [ADR](docs/adr/) | 아키텍처 결정 기록 |

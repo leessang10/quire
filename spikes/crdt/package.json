@@ -1,0 +1,15 @@
+{
+  "name": "@quire/spike-crdt",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "0단계 V4: 동기화 의도 보존 비교 (M1 평평한 텍스트 vs M2 이동 가능한 문단 리스트)",
+  "dependencies": {
+    "loro-crdt": "1.17.1",
+    "@quire/model": "*",
+    "@quire/sync": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5"
+  }
+}

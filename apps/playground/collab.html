@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quire 협업 데모</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <strong class="brand">Quire</strong>
+      <span class="phase">협업 데모 · CRDT 통합 4단계 (동기화는 피어마다 Worker에서)</span>
+      <div class="actions">
+        <label class="ctl">지연 <input id="latency" type="number" min="0" max="5000" step="50" value="300" /> ms</label>
+        <a class="link" href="/">편집기로</a>
+      </div>
+    </header>
+    <main class="collab">
+      <section class="peer" data-peer="0">
+        <div class="peer-head">
+          <strong>피어 A</strong>
+          <label class="ctl"><input type="checkbox" class="offline" /> 오프라인</label>
+          <span class="peer-status" aria-live="off"></span>
+        </div>
+        <div class="peer-editor" aria-label="피어 A 편집기"></div>
+      </section>
+      <section class="peer" data-peer="1">
+        <div class="peer-head">
+          <strong>피어 B</strong>
+          <label class="ctl"><input type="checkbox" class="offline" /> 오프라인</label>
+          <span class="peer-status" aria-live="off"></span>
+        </div>
+        <div class="peer-editor" aria-label="피어 B 편집기"></div>
+      </section>
+    </main>
+    <footer class="collab-foot" id="verdict" aria-live="polite"></footer>
+    <script type="module" src="/src/collab.ts"></script>
+  </body>
+</html>

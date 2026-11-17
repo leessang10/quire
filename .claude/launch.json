@@ -1,0 +1,41 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "playground",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "playground-node",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "node_modules/vite/bin/vite.js",
+        "apps/playground",
+        "--port",
+        "5173",
+        "--strictPort"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "sync-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--experimental-transform-types",
+        "--no-warnings",
+        "--import",
+        "./apps/sync-server/src/resolve.ts",
+        "apps/sync-server/src/server.ts",
+        "8787",
+        "--data=.quire-data",
+        "--idle=10000"
+      ],
+      "port": 8787
+    }
+  ]
+}

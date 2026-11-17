@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quire Playground</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <strong class="brand">Quire</strong>
+      <span class="phase">0단계 프로토타입</span>
+      <div class="actions">
+        <button data-doc="sample">예제 문서</button>
+        <button data-doc="100">100쪽 생성</button>
+        <button data-doc="1000">1,000쪽 생성</button>
+        <button data-doc="10000">10,000쪽 생성</button>
+        <button data-doc="empty">빈 문서</button>
+        <a class="link" href="/collab.html">협업 데모</a>
+        <a class="link" href="/live.html">실시간 편집</a>
+      </div>
+    </header>
+    <main class="layout">
+      <section id="editor" class="editor" aria-label="편집기"></section>
+      <aside class="panel">
+        <h2>상태</h2>
+        <dl id="stats" class="stats"></dl>
+        <div class="log-head">
+          <h2>입력 이벤트</h2>
+          <button id="clear-log">지우기</button>
+        </div>
+        <ol id="log" class="log" aria-live="off"></ol>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

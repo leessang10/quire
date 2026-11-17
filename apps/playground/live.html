@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quire 실시간 편집</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <strong class="brand">Quire</strong>
+      <span class="phase">실시간 편집 · 중계 서버 + Worker (탭을 여러 개 열어 보세요)</span>
+      <div class="actions">
+        <span class="live-status" id="live-status" aria-live="polite">연결 중…</span>
+        <a class="link" id="download" download>.quire 내려받기</a>
+        <button type="button" id="open">.quire 열기…</button>
+        <input type="file" id="open-file" accept=".quire" hidden />
+        <a class="link" href="/collab.html">협업 데모</a>
+        <a class="link" href="/">편집기로</a>
+      </div>
+    </header>
+    <main class="live">
+      <div class="live-editor" id="editor" aria-label="편집기"></div>
+    </main>
+    <p class="live-note" id="live-note" role="status" hidden></p>
+    <script type="module" src="/src/live.ts"></script>
+  </body>
+</html>
