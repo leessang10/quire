@@ -15,7 +15,10 @@
 export type InputIntent =
   | { kind: 'insertText'; text: string }
   | { kind: 'insertParagraph' }
-  | { kind: 'compositionStart' }
+  /** 문서의 [from, to)(화면 오프셋)를 text로 (IME가 주변 텍스트를 고침: 자동 수정, 재변환) */
+  | { kind: 'replaceText'; from: number; to: number; text: string }
+  /** replace: 조합이 이 범위의 기존 글자를 가져가 시작한다 (한자 재변환 등). 없으면 선택 영역 */
+  | { kind: 'compositionStart'; replace?: [number, number] }
   | { kind: 'compositionUpdate'; text: string }
   | { kind: 'compositionEnd'; text: string }
   | { kind: 'key'; event: KeyboardEvent }
@@ -40,6 +43,11 @@ export interface InputBackend {
   commitComposition(): void;
   /** 캐럿 위치 (스크롤 영역 좌표): IME 후보 창 위치 */
   place(left: number, top: number, height: number): void;
+  /**
+   * 캐럿 주변 텍스트 (03 §2): text = 캐럿이 있는 문단, base = 그 문단 첫 글자의 화면 오프셋, anchor·head = 문단 안 코드포인트
+   * 위치. IME의 재변환·문맥 처리에 쓴다. 조합 중에는 부르지 않는다.
+   */
+  sync?(text: string, base: number, anchor: number, head: number): void;
   destroy(): void;
 }
 

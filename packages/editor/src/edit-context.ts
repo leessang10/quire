@@ -6,16 +6,20 @@
  * 동작
  * - 보이지 않는 div에 EditContext를 붙이고 캐럿 위치에 둔다. 후보 창 위치는 updateSelectionBounds·
  *   updateCharacterBounds로 알린다 (textarea처럼 요소 위치에 기대지 않음).
- * - EditContext의 텍스트 버퍼는 조합 중이 아닐 때 비운다 (경로 B의 textarea와 같음). 버퍼 = 이번 조합·입력분이므로
- *   위치 변환이 필요 없다. 주변 텍스트를 IME에 주지는 않는다 (아래 한계).
- * - textupdate: 조합 중이면 조합 범위의 글자를 preedit로(문서에 넣지 않음), 아니면 insertText.
- * - compositionstart/end는 EditContext에서 온다. 확정 글자는 마지막 preedit(또는 이벤트 data)다.
+ * - **버퍼 = 캐럿이 있는 문단** (주변 텍스트, sync). 편집기가 그릴 때마다 맞춘다(조합 중 제외). IME가 이미 확정된 글자를
+ *   다시 고칠 수 있다: 한자 재변환(Windows 한국어 IME는 한자 키에 조합을 먼저 확정한 뒤, 확정된 글자를 다시 조합한다),
+ *   자동 수정. 버퍼 위치(UTF-16)는 base(문단 첫 글자의 화면 오프셋) + 코드포인트 수로 문서 위치가 된다.
+ * - textupdate
+ *   - 조합 중이 아니면: 버퍼의 [start, end)를 text로 → replaceText (보통은 캐럿에 입력).
+ *   - 조합의 첫 textupdate가 덮는 범위 = 조합이 가져가는 기존 글자(선택 영역, 재변환 대상) → compositionStart(replace).
+ *     조합 중인 글자는 문서에 넣지 않고(preedit) compositionend에서 한 번 넣는다.
  * - Enter·Tab은 textupdate가 오지 않으므로 keydown에서 처리한다. 조합 중 Enter(key가 'Process'일 수 있어 code로
- *   본다)는 조합 확정 뒤에 문단을 나눈다.
+ *   본다)는 조합 확정 뒤에 문단을 나눈다. Windows 한국어 IME + Chromium은 같은 Enter를 확정 뒤 keydown으로 한 번 더
+ *   보내므로(실제 IME로 확인), keyup 전에 오는 반복 아닌 Enter keydown은 버린다.
  * - Backspace·Delete·방향키 등은 keydown → 'key' 의도로 편집기가 처리하고 preventDefault한다 (EditContext가
  *   버퍼를 따로 지우지 않게).
  *
- * 한계: 주변 텍스트가 없어 IME의 재변환·문맥 예측은 쓰지 못한다. 글자별 경계는 모두 캐럿 사각형으로 알린다.
+ * 한계: 버퍼는 문단 하나라 IME가 문단 밖을 볼 수 없다. 글자별 경계는 모두 캐럿 사각형으로 알린다.
  */
 import type { InputBackend, InputIntent, InputLogEntry } from './input';
 
@@ -58,18 +62,48 @@ export function editContextSupported(): boolean {
   return typeof globalThis !== 'undefined' && 'EditContext' in globalThis;
 }
 
+/** s 앞 u16개 UTF-16 단위의 코드포인트 수 */
+function cpCount(s: string, u16: number): number {
+  let n = 0;
+  for (let i = 0; i < u16 && i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < u16) i++;
+    n++;
+  }
+  return n;
+}
+
+/** s의 코드포인트 cp개에 해당하는 UTF-16 길이 */
+function u16Of(s: string, cp: number): number {
+  let i = 0;
+  for (let k = 0; k < cp && i < s.length; k++) {
+    const c = s.charCodeAt(i);
+    i += c >= 0xd800 && c <= 0xdbff && i + 1 < s.length ? 2 : 1;
+  }
+  return i;
+}
+
 export class EditContextInput implements InputBackend {
   readonly kind = 'editcontext' as const;
   readonly el: HTMLElement;
   readonly ec: EditContextLike;
   composing = false;
+  /** EditContext 버퍼의 사본 (textupdate가 바꾸기 전의 위치를 알기 위해) */
+  private shadow = '';
+  /** 버퍼 첫 글자의 화면 오프셋 */
+  private base = 0;
   private pendingParagraph = false;
-  /** 조합 시작 때 버퍼 위치와 길이: preedit = 조합 범위의 글자 */
+  /**
+   * 조합 중 눌린 Enter가 아직 떼어지지 않았다 (keyup 전). Windows 한국어 IME + Chromium은 이 Enter를
+   * keydown(Process, 229) → compositionend → keydown(Enter, 13)으로 두 번 보낸다. 두 번째는 같은 누름이므로 버린다.
+   */
+  private compositionEnterDown = false;
+  /** 조합: 시작 의도를 냈는가, 버퍼 안 조합 구간 [compStart, compEnd) (UTF-16) */
+  private compStarted = false;
   private compStart = 0;
-  private baseLen = 0;
+  private compEnd = 0;
   private preedit = '';
   private caret: { left: number; top: number; height: number } = { left: 0, top: 0, height: 20 };
-  private clearTimer: ReturnType<typeof setTimeout> | null = null;
   private disposers: Array<() => void> = [];
   private readonly rect: (x: number, y: number, w: number, h: number) => DOMRect;
 
@@ -109,9 +143,20 @@ export class EditContextInput implements InputBackend {
       const enter = e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter';
       if (e.isComposing || e.keyCode === 229 || this.composing) {
         // 조합 중 Enter: IME가 확정한 뒤 문단을 나눈다
-        if (enter) this.pendingParagraph = true;
+        if (enter) {
+          this.pendingParagraph = true;
+          this.compositionEnterDown = true;
+        }
         return;
       }
+      if (enter && this.compositionEnterDown && !e.repeat) {
+        // 조합을 확정한 그 Enter의 두 번째 keydown: 문단은 이미 나눴다
+        this.compositionEnterDown = false;
+        e.preventDefault();
+        this.log('skip', 'Enter keydown after composition Enter');
+        return;
+      }
+      this.compositionEnterDown = false;
       if (enter && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         this.onIntent({ kind: 'insertParagraph' });
@@ -119,32 +164,48 @@ export class EditContextInput implements InputBackend {
       }
       this.onIntent({ kind: 'key', event: e });
     });
+    this.on(el, 'keyup', (ev) => {
+      const e = ev as KeyboardEvent;
+      if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') this.compositionEnterDown = false;
+    });
+    this.on(el, 'blur', () => {
+      this.compositionEnterDown = false;
+    });
 
     this.on(this.ec, 'textupdate', (ev) => {
       const e = ev as TextUpdateLike;
-      const text = e.text ?? e.updateText ?? '';
-      this.log('textupdate', `range=${e.updateRangeStart}-${e.updateRangeEnd} text=${fmt(text)} sel=${e.selectionStart} buffer=${fmt(this.ec.text)} composing=${this.composing}`);
+      const text = (e.text ?? e.updateText ?? '').replace(/\r\n?/g, '\n');
+      const before = this.shadow;
+      const s = Math.min(e.updateRangeStart, e.updateRangeEnd);
+      const en = Math.max(e.updateRangeStart, e.updateRangeEnd);
+      this.shadow = before.slice(0, s) + text + before.slice(en);
+      this.log('textupdate', `range=${s}-${en} text=${fmt(text)} sel=${e.selectionStart} buffer=${fmt(this.ec.text)} composing=${this.composing}`);
+      const from = this.base + cpCount(before, s);
+      const to = this.base + cpCount(before, en);
       if (this.composing) {
-        const len = this.ec.text.length - this.baseLen;
-        this.preedit = this.ec.text.slice(this.compStart, this.compStart + Math.max(0, len));
+        if (!this.compStarted) {
+          // 조합이 가져가는 기존 글자(선택 영역, 재변환 대상)를 문서에서 빼고 조합을 시작한다
+          this.compStarted = true;
+          this.compStart = s;
+          this.compEnd = s + text.length;
+          this.onIntent({ kind: 'compositionStart', replace: [from, to] });
+        } else {
+          if (s < this.compStart) this.compStart = s;
+          this.compEnd = en <= this.compEnd ? this.compEnd + text.length - (en - s) : s + text.length;
+        }
+        this.preedit = this.shadow.slice(this.compStart, this.compEnd);
         this.onIntent({ kind: 'compositionUpdate', text: this.preedit });
         return;
       }
-      if (text) this.onIntent({ kind: 'insertText', text: text.replace(/\r\n?/g, '\n') });
-      this.clearSoon();
+      if (from === to && !text) return;
+      this.onIntent({ kind: 'replaceText', from, to, text });
     });
 
     this.on(this.ec, 'compositionstart', (ev) => {
       this.log('compositionstart', `data=${fmt((ev as CompositionEvent).data)} buffer=${fmt(this.ec.text)}`);
-      if (this.clearTimer !== null) {
-        clearTimeout(this.clearTimer);
-        this.clearTimer = null;
-      }
       this.composing = true;
-      this.compStart = Math.min(this.ec.selectionStart, this.ec.selectionEnd);
-      this.baseLen = this.ec.text.length - Math.abs(this.ec.selectionEnd - this.ec.selectionStart);
+      this.compStarted = false;
       this.preedit = '';
-      this.onIntent({ kind: 'compositionStart' });
     });
 
     this.on(this.ec, 'compositionend', (ev) => {
@@ -152,6 +213,8 @@ export class EditContextInput implements InputBackend {
       this.log('compositionend', `data=${fmt(data)} preedit=${fmt(this.preedit)}`);
       if (!this.composing) return;
       this.composing = false;
+      if (!this.compStarted) this.onIntent({ kind: 'compositionStart' });
+      this.compStarted = false;
       const text = data || this.preedit;
       this.preedit = '';
       this.onIntent({ kind: 'compositionEnd', text });
@@ -159,7 +222,6 @@ export class EditContextInput implements InputBackend {
         this.pendingParagraph = false;
         this.onIntent({ kind: 'insertParagraph' });
       }
-      this.clearSoon();
     });
 
     this.on(this.ec, 'characterboundsupdate', (ev) => {
@@ -184,17 +246,33 @@ export class EditContextInput implements InputBackend {
     this.el.focus({ preventScroll: true });
   }
 
+  /** 캐럿 주변 텍스트를 버퍼에 맞춘다 (바뀐 것만 EditContext에 알림) */
+  sync(text: string, base: number, anchor: number, head: number): void {
+    if (this.composing) return;
+    this.base = base;
+    if (this.shadow !== text || this.ec.text !== text) {
+      this.ec.updateText(0, this.ec.text.length, text);
+      this.shadow = text;
+    }
+    const a = u16Of(text, Math.min(anchor, head));
+    const b = u16Of(text, Math.max(anchor, head));
+    if (this.ec.selectionStart !== a || this.ec.selectionEnd !== b) this.ec.updateSelection(a, b);
+  }
+
   commitComposition(): void {
     if (!this.composing) return;
     // 포커스를 잃으면 IME가 조합을 끝낸다 (compositionend)
     this.el.blur();
     if (this.composing) {
       this.composing = false;
+      if (!this.compStarted) this.onIntent({ kind: 'compositionStart' });
+      this.compStarted = false;
       const text = this.preedit;
       this.preedit = '';
       this.onIntent({ kind: 'compositionEnd', text });
     }
-    this.reset();
+    // IME가 조합을 어떻게 끝냈는지 모르므로 다음 sync에서 버퍼를 통째로 다시 쓴다
+    this.shadow = '\u0000';
     this.focus();
   }
 
@@ -213,7 +291,6 @@ export class EditContextInput implements InputBackend {
   }
 
   destroy(): void {
-    if (this.clearTimer !== null) clearTimeout(this.clearTimer);
     for (const d of this.disposers) d();
     (this.el as unknown as { editContext: EditContextLike | null }).editContext = null;
     this.el.remove();
@@ -223,20 +300,6 @@ export class EditContextInput implements InputBackend {
   private caretRect(): DOMRect {
     const b = this.el.getBoundingClientRect();
     return this.rect(b.left, b.top, Math.max(1, b.width), b.height || this.caret.height);
-  }
-
-  private reset(): void {
-    if (this.ec.text.length > 0) this.ec.updateText(0, this.ec.text.length, '');
-    this.ec.updateSelection(0, 0);
-  }
-
-  /** 조합 중이 아니면 버퍼를 비운다. 한글은 음절마다 조합이 끝나고 바로 다시 시작하므로 한 박자 늦춘다 */
-  private clearSoon(): void {
-    if (this.clearTimer !== null) clearTimeout(this.clearTimer);
-    this.clearTimer = setTimeout(() => {
-      this.clearTimer = null;
-      if (!this.composing) this.reset();
-    }, 0);
   }
 
   private on(target: EventTarget, type: string, fn: (e: Event) => void): void {

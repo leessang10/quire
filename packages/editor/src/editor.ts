@@ -655,6 +655,15 @@ export class Editor {
     // 깜박임 재시작
     if (this.blink) this.blink.currentTime = 0;
     this.input.place(x, r.y, r.height);
+    if (this.input.sync && !this.input.composing) {
+      // 캐럿이 있는 문단을 입력 층에 (IME 재변환·문맥용, 03 §2)
+      const paras = this.doc.paragraphs();
+      const p = paras[this.doc.paragraphIndexAt(head)];
+      if (p) {
+        const clamp = (o: number) => Math.max(p.start, Math.min(p.end, o)) - p.start;
+        this.input.sync(p.text, p.start, clamp(anchor), clamp(head));
+      }
+    }
   }
 
   private updateMirror(paras: Set<number>): void {
@@ -805,9 +814,17 @@ export class Editor {
         this.replaceSelection('\n');
         break;
       case 'compositionStart': {
-        const [from, to] = this.range();
+        // 조합이 가져가는 기존 글자: 선택 영역, 또는 입력 층이 알려 준 범위(한자 재변환 등)
+        const [from, to] = i.replace ?? this.range();
+        if (i.replace) this.setSelection(from, to);
         if (from !== to) this.deleteRange(from, to);
         this.preedit = '';
+        break;
+      }
+      case 'replaceText': {
+        // IME가 주변 텍스트를 고침 (보통은 캐럿에 입력: from = to = 캐럿)
+        this.setSelection(i.from, i.to);
+        this.replaceSelection(i.text, i.from === i.to ? 'type' : undefined);
         break;
       }
       case 'compositionUpdate':

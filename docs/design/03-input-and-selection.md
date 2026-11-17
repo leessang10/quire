@@ -36,11 +36,15 @@ interface InputBackend {
 
 - 편집기 옵션 `input`: `auto`(기본, EditContext가 있으면 A) · `editcontext` · `textarea`. 플레이그라운드는 `?input=`과 상태 패널의 선택 상자로 고른다.
 - 보이지 않는 `div`(role=textbox)에 EditContext를 붙이고 캐럿 위치에 둔다. 후보 창 위치는 `updateSelectionBounds`, `updateCharacterBounds`(글자마다 캐럿 사각형), `updateControlBounds`(스크롤 영역)로 알린다.
-- **버퍼는 경로 B의 textarea처럼 조합 중이 아닐 때 비운다.** 버퍼 = 이번 입력분이라 문서 위치로 바꿀 필요가 없다. 한글은 음절마다 조합이 끝나고 곧바로 다시 시작하므로 비우기를 한 박자 늦추고, 새 조합이 시작되면 취소한다. preedit는 조합 시작 때의 버퍼 위치부터 늘어난 길이만큼의 글자다.
-- `textupdate`: 조합 중이면 `compositionUpdate`(문서에 넣지 않음), 아니면 `insertText`. `compositionstart`·`compositionend`는 EditContext에서 오고, 확정 글자는 이벤트 data(없으면 마지막 preedit)다.
+- **버퍼 = 캐럿이 있는 문단** (`InputBackend.sync`). 편집기가 캐럿을 그릴 때마다(조합 중 제외) 문단 텍스트와 선택을 맞추고, 바뀐 것만 EditContext에 알린다. 버퍼 위치(UTF-16)는 문단 첫 글자의 화면 오프셋 + 코드포인트 수로 문서 위치가 된다.
+  - 처음 구현은 textarea처럼 확정할 때마다 버퍼를 비웠다. 실제 Windows 한국어 IME에서 **한자 변환이 되지 않았다**: 한자 키를 누르면 IME가 조합을 먼저 확정하고(`compositionend`), 확정된 글자를 버퍼에서 다시 조합해 바꾸는데, 버퍼가 비어 있어 바꿀 글자가 없었다.
+- `textupdate`
+  - 조합 중이 아니면 버퍼의 [start, end)를 text로 바꾸는 `replaceText`(보통은 캐럿에 입력, 자동 수정이면 앞 글자 교체).
+  - 조합의 첫 `textupdate`가 덮는 범위 = 조합이 가져가는 기존 글자(선택 영역, 한자 재변환 대상) → `compositionStart(replace)`. 편집기는 그 범위를 지우고 조합을 시작한다. 조합 중 글자는 `compositionUpdate`(문서에 넣지 않음)이고, 확정 글자는 이벤트 data(없으면 마지막 preedit)다.
+- **조합 중 Enter가 두 번 오는 IME**: Windows 한국어 IME + Chromium은 조합을 확정하는 Enter를 keydown(`Process`, 229) → `compositionend` → keydown(`Enter`, 13)으로 보낸다 (체크리스트로 찾음). 첫 번째로 확정 뒤 문단을 나누고, 같은 누름의 두 번째 keydown(keyup 전, 반복 아님)은 버린다.
 - **Enter는 `textupdate`가 오지 않는다** (MDN EditContext 안내). keydown에서 `insertParagraph`로 바꾸고 preventDefault한다. 조합 중 Enter는 key가 `Process`(keyCode 229)일 수 있어 `code`로 알아보고, 조합이 확정된 뒤 문단을 나눈다.
 - Backspace·Delete·방향키·단축키는 경로 B와 같이 keydown → `key` 의도로 편집기가 처리하고 preventDefault한다. EditContext 버퍼가 따로 지워지지 않는다.
-- 한계: 주변 텍스트를 IME에 주지 않는다 (재변환·문맥 예측 불가). 글자별 경계를 모두 캐럿 사각형으로 알리므로, 여러 글자 조합(일본어·중국어)의 후보 창은 조합 시작 위치에 붙는다. 실제 IME로는 아직 확인하지 않았다 (V1·V2).
+- 한계: 버퍼가 문단 하나라 IME가 문단 밖을 보지 못한다. 글자별 경계를 모두 캐럿 사각형으로 알리므로, 여러 글자 조합(일본어·중국어)의 후보 창은 조합 시작 위치에 붙는다.
 
 ### 경로 B의 주변 텍스트 동기화
 
