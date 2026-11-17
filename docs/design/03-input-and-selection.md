@@ -32,6 +32,16 @@ interface InputBackend {
 }
 ```
 
+### 경로 A 구현 (0단계, `packages/editor/src/edit-context.ts`)
+
+- 편집기 옵션 `input`: `auto`(기본, EditContext가 있으면 A) · `editcontext` · `textarea`. 플레이그라운드는 `?input=`과 상태 패널의 선택 상자로 고른다.
+- 보이지 않는 `div`(role=textbox)에 EditContext를 붙이고 캐럿 위치에 둔다. 후보 창 위치는 `updateSelectionBounds`, `updateCharacterBounds`(글자마다 캐럿 사각형), `updateControlBounds`(스크롤 영역)로 알린다.
+- **버퍼는 경로 B의 textarea처럼 조합 중이 아닐 때 비운다.** 버퍼 = 이번 입력분이라 문서 위치로 바꿀 필요가 없다. 한글은 음절마다 조합이 끝나고 곧바로 다시 시작하므로 비우기를 한 박자 늦추고, 새 조합이 시작되면 취소한다. preedit는 조합 시작 때의 버퍼 위치부터 늘어난 길이만큼의 글자다.
+- `textupdate`: 조합 중이면 `compositionUpdate`(문서에 넣지 않음), 아니면 `insertText`. `compositionstart`·`compositionend`는 EditContext에서 오고, 확정 글자는 이벤트 data(없으면 마지막 preedit)다.
+- **Enter는 `textupdate`가 오지 않는다** (MDN EditContext 안내). keydown에서 `insertParagraph`로 바꾸고 preventDefault한다. 조합 중 Enter는 key가 `Process`(keyCode 229)일 수 있어 `code`로 알아보고, 조합이 확정된 뒤 문단을 나눈다.
+- Backspace·Delete·방향키·단축키는 경로 B와 같이 keydown → `key` 의도로 편집기가 처리하고 preventDefault한다. EditContext 버퍼가 따로 지워지지 않는다.
+- 한계: 주변 텍스트를 IME에 주지 않는다 (재변환·문맥 예측 불가). 글자별 경계를 모두 캐럿 사각형으로 알리므로, 여러 글자 조합(일본어·중국어)의 후보 창은 조합 시작 위치에 붙는다. 실제 IME로는 아직 확인하지 않았다 (V1·V2).
+
 ### 경로 B의 주변 텍스트 동기화
 
 - 모바일 키보드는 자동 수정·예측을 위해 입력 요소 안의 앞뒤 텍스트를 읽는다. textarea에 **캐럿 주변 문단 일부**를 채워 두고, 사용자가 이동할 때마다 갱신한다.

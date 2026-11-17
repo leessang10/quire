@@ -71,6 +71,7 @@ function showStats() {
       ['렌더링', `${s.renderMs.toFixed(1)} ms`],
       ['문단 재계산/재배치/재사용', `${s.reflowed} / ${s.repositioned.toLocaleString()} / ${s.reused.toLocaleString()}`],
       ['캐시 적중/실패', `${s.cacheHits.toLocaleString()} / ${s.cacheMisses.toLocaleString()}`],
+      ['입력 층', editor.inputKind === 'editcontext' ? 'A. EditContext' : 'B. 숨긴 textarea'],
       ['선택', sel.anchor === sel.head ? `${sel.head}` : `${sel.anchor} → ${sel.head}`],
       ['실행 취소', editor.history.canUndo ? '가능' : '-'],
     ];
@@ -86,7 +87,17 @@ function showStats() {
   });
 }
 
-const editor = new Editor({ host, text: SAMPLE, onInputLog, onChange: showStats });
+// 입력 층 (03 §2): ?input=auto|editcontext|textarea
+const params = new URLSearchParams(location.search);
+const inputMode = (['auto', 'editcontext', 'textarea'] as const).find((m) => m === params.get('input')) ?? 'auto';
+const modeSelect = document.getElementById('input-mode') as HTMLSelectElement;
+modeSelect.value = inputMode;
+modeSelect.addEventListener('change', () => {
+  params.set('input', modeSelect.value);
+  location.search = params.toString();
+});
+
+const editor = new Editor({ host, text: SAMPLE, onInputLog, onChange: showStats, input: inputMode });
 editor.focus();
 showStats();
 
