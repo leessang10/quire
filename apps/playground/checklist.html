@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quire 실제 환경 확인</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body class="ck-body">
+    <header class="bar">
+      <strong class="brand">Quire</strong>
+      <span class="phase">0단계 실제 환경 확인 (V1 IME · V2 후보 창 · V3 스크린리더)</span>
+      <div class="actions">
+        <a class="link" href="/">편집기로</a>
+      </div>
+    </header>
+
+    <section class="ck-env" aria-labelledby="env-title">
+      <h2 id="env-title">환경</h2>
+      <label>OS·브라우저 <input id="env-platform" size="28" /></label>
+      <label>입력기
+        <select id="env-ime">
+          <option>Microsoft 한국어 IME</option>
+          <option>macOS 2벌식</option>
+          <option>iOS 기본 키보드</option>
+          <option>Gboard</option>
+          <option>삼성 키보드</option>
+          <option>기타</option>
+        </select>
+      </label>
+      <label>스크린리더
+        <select id="env-reader">
+          <option>없음</option>
+          <option>NVDA</option>
+          <option>VoiceOver</option>
+          <option>JAWS</option>
+          <option>TalkBack</option>
+        </select>
+      </label>
+      <label>입력 층
+        <select id="env-input">
+          <option value="auto">자동</option>
+          <option value="editcontext">A. EditContext</option>
+          <option value="textarea">B. 숨긴 textarea</option>
+        </select>
+      </label>
+      <span class="ck-muted" id="env-input-note"></span>
+    </section>
+
+    <main class="ck-main">
+      <nav class="ck-list" aria-label="시나리오">
+        <ol id="scenario-list"></ol>
+        <p class="ck-summary" id="summary" aria-live="polite"></p>
+        <div class="ck-export">
+          <button type="button" id="copy-md">결과를 Markdown으로 복사</button>
+          <button type="button" id="download-json">JSON 내려받기</button>
+          <button type="button" id="clear-env">이 환경 결과 지우기</button>
+        </div>
+      </nav>
+
+      <section class="ck-run" aria-labelledby="sc-title">
+        <p class="ck-muted" id="sc-meta"></p>
+        <h2 id="sc-title"></h2>
+        <ol class="ck-steps" id="sc-steps"></ol>
+        <p><strong>기대:</strong> <span id="sc-expect"></span></p>
+        <p class="ck-look" id="sc-look" hidden></p>
+        <div class="ck-row">
+          <button type="button" id="reset">처음 상태로</button>
+          <span class="ck-muted" id="reset-note"></span>
+        </div>
+        <div class="ck-editor" id="editor" aria-label="시험용 편집기"></div>
+        <div class="ck-judge" id="judge" aria-live="polite"></div>
+        <p class="ck-muted">표시: · = 공백, ⏎ = 문단 나눔. 자동 비교는 참고용이고, 판정은 직접 고른다.</p>
+        <div class="ck-row ck-verdict" role="group" aria-label="판정">
+          <button type="button" data-status="pass">통과</button>
+          <button type="button" data-status="fail">실패</button>
+          <button type="button" data-status="skip">해당 없음</button>
+          <button type="button" id="next">다음 ›</button>
+        </div>
+        <label class="ck-note">메모 (본 것, 들은 것, 다르게 동작한 점)
+          <textarea id="note" rows="3"></textarea>
+        </label>
+        <details class="ck-log">
+          <summary>입력 이벤트 (처음 상태로 돌린 뒤부터, 결과와 함께 저장)</summary>
+          <ol id="log"></ol>
+        </details>
+      </section>
+    </main>
+    <script type="module" src="/src/checklist.ts"></script>
+  </body>
+</html>

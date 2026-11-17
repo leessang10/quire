@@ -301,6 +301,14 @@ export class Editor {
     return { anchor: this.doc.resolve(this.sel.anchor), head: this.doc.resolve(this.sel.head) };
   }
 
+  /** 선택 영역을 바꾼다 (화면 오프셋). 조합 중이면 먼저 확정한다 */
+  select(anchor: number, head: number = anchor): void {
+    this.input.commitComposition();
+    this.setSelection(anchor, head);
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
   destroy(): void {
     if (this.bgTimer !== null) clearTimeout(this.bgTimer);
     this.resizeObserver.disconnect();

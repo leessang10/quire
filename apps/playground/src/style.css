@@ -134,3 +134,46 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .live-status[data-state='offline'] { color: #b45309; }
 .live-note { margin: 0; padding: 6px 16px; font-size: 13px; background: #fff7ed; color: #9a3412; border-top: 1px solid #fed7aa; }
 .input-mode { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+
+/* ── 실제 환경 확인 (checklist.html) ── */
+.ck-body { overflow: auto; }
+.ck-muted { color: var(--muted); font-size: 13px; }
+.ck-env { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.ck-env h2 { font-size: 14px; margin: 0; }
+.ck-env label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.ck-env input, .ck-env select, .ck-note textarea { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); }
+.ck-main { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 16px; padding: 16px; flex: 1; min-height: 0; }
+.ck-list ol { list-style: none; margin: 0; padding: 0; }
+.ck-group { font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 4px; }
+.ck-group:first-child { margin-top: 0; }
+.ck-item { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; border: 1px solid transparent; background: transparent; padding: 5px 8px; border-radius: 6px; }
+.ck-item:hover { border-color: var(--line); }
+.ck-item.current { background: var(--panel); border-color: var(--accent); }
+.ck-item.na { color: var(--muted); }
+.ck-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--muted); }
+.ck-dot.pass { background: #1a7f37; border-color: #1a7f37; }
+.ck-dot.fail { background: #cf222e; border-color: #cf222e; }
+.ck-dot.skip { background: var(--line); border-color: var(--line); }
+.ck-summary { font-size: 13px; color: var(--muted); }
+.ck-export { display: flex; flex-direction: column; gap: 6px; }
+.ck-run { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.ck-run h2 { margin: 0; font-size: 18px; }
+.ck-run p { margin: 0; }
+.ck-steps { margin: 0; padding-left: 20px; }
+.ck-look { color: #8a4b00; }
+.ck-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ck-editor { height: 320px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; position: relative; display: flex; }
+.ck-judge { font-size: 13px; padding: 6px 10px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.ck-judge.ok { border-color: #1a7f37; color: #1a7f37; }
+.ck-judge.diff { border-color: #d0a000; color: #6b5300; }
+.ck-verdict button[aria-pressed='true'][data-status='pass'] { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+.ck-verdict button[aria-pressed='true'][data-status='fail'] { background: #cf222e; color: #fff; border-color: #cf222e; }
+.ck-verdict button[aria-pressed='true'][data-status='skip'] { background: var(--line); }
+.ck-note { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.ck-log { font-size: 12px; }
+.ck-log ol { font-family: var(--mono); margin: 6px 0 0; padding-left: 0; list-style: none; max-height: 200px; overflow: auto; }
+@media (max-width: 720px) {
+  .ck-main { grid-template-columns: 1fr; padding: 12px 16px; }
+  .ck-run { order: -1; }
+  .ck-editor { height: 260px; }
+}

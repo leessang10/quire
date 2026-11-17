@@ -14,6 +14,7 @@ export default defineConfig({
         main: resolve(__dirname, 'index.html'),
         collab: resolve(__dirname, 'collab.html'),
         live: resolve(__dirname, 'live.html'),
+        checklist: resolve(__dirname, 'checklist.html'),
       },
     },
   },
