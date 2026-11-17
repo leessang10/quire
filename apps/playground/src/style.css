@@ -125,3 +125,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .collab { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
   .peer { border-right: 0; border-bottom: 1px solid var(--line); }
 }
+
+/* ── 실시간 편집 (중계 서버) ── */
+.live { flex: 1; min-height: 0; display: flex; }
+.live-editor { flex: 1; min-width: 0; min-height: 0; }
+.live-status { color: var(--muted); font-size: 13px; }
+.live-status[data-state='online'] { color: #1a7f37; }
+.live-status[data-state='offline'] { color: #b45309; }

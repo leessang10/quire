@@ -11,6 +11,7 @@
  */
 import type { Position } from '@quire/model';
 import type { SyncBridge } from './bridge';
+import { PresenceStore } from './presence-store';
 
 export interface PresenceUser {
   name: string;
@@ -37,35 +38,10 @@ export interface PresenceOptions {
   timeoutMs?: number;
 }
 
-interface State {
-  name: string;
-  color: string;
-  /** 인코딩한 Loro 커서 */
-  anchor: Uint8Array;
-  head: Uint8Array;
-}
-
-/** 전송 단위: 키, 일련번호, 상태(null = 떠남) */
-interface Entry {
-  k: string;
-  s: number;
-  v: { name: string; color: string; a: number[]; h: number[] } | null;
-}
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
 export class Presence {
   readonly key: string;
   private readonly opts: PresenceOptions;
-  private readonly timeout: number;
-  /** 다시 시작한 피어의 번호가 이전 것보다 크도록 시각에서 시작한다 */
-  private seq = Date.now() * 1000;
-  private local: State | null = null;
-  private readonly states = new Map<string, State>();
-  /** 키별 마지막으로 받은 일련번호 (떠난 피어 포함: 늦게 온 옛 상태를 버린다) */
-  private readonly seqs = new Map<string, number>();
-  private readonly seen = new Map<string, number>();
+  private readonly store: PresenceStore;
   /** 다음 flush 뒤에 보낼 로컬 상태 */
   private held = false;
   /** 피어별 마지막으로 푼 자리 (풀 수 없을 때 대신 쓴다) */
@@ -75,7 +51,6 @@ export class Presence {
   private destroyed = false;
   /** remotes() 결과 캐시: 문서 판·프레즌스 판이 같으면 다시 풀지 않는다 */
   private cache: { docVersion: number; stateVersion: number; list: RemoteSelection[] } | null = null;
-  private stateVersion = 0;
 
   constructor(
     private readonly bridge: SyncBridge,
@@ -83,13 +58,14 @@ export class Presence {
   ) {
     this.opts = opts;
     this.key = bridge.loro.peerIdStr;
-    this.timeout = opts.timeoutMs ?? 30000;
+    const timeout = opts.timeoutMs ?? 30000;
+    this.store = new PresenceStore(this.key, timeout);
     this.offFlush = bridge.onFlush(() => {
       if (!this.held) return;
       this.held = false;
-      this.send();
+      this.opts.onUpdate?.(this.store.encodeLocal());
     });
-    this.timer = setInterval(() => this.tick(), this.timeout / 2);
+    this.timer = setInterval(() => this.tick(), timeout / 2);
   }
 
   /** 이 피어의 선택 영역 (화면 오프셋) */
@@ -97,54 +73,34 @@ export class Presence {
     if (this.destroyed) return;
     const { name, color } = this.opts.user;
     const a = this.bridge.cursorAt(anchor);
-    this.local = { name, color, anchor: a, head: anchor === head ? a : this.bridge.cursorAt(head) };
-    this.seq++;
+    const bytes = this.store.setLocal({ name, color, anchor: a, head: anchor === head ? a : this.bridge.cursorAt(head) });
     if (this.bridge.pendingExport) this.held = true;
-    else this.send();
+    else this.opts.onUpdate?.(bytes);
   }
 
   /** 다른 피어의 프레즌스 업데이트를 받는다 */
   receive(bytes: Uint8Array): void {
     if (this.destroyed) return;
-    let entries: Entry[];
-    try {
-      entries = JSON.parse(decoder.decode(bytes)) as Entry[];
-    } catch {
-      return;
-    }
-    const now = Date.now();
-    let changed = false;
-    for (const e of entries) {
-      if (e.k === this.key || !(e.s > (this.seqs.get(e.k) ?? -1))) continue;
-      this.seqs.set(e.k, e.s);
-      if (e.v) {
-        this.states.set(e.k, { name: e.v.name, color: e.v.color, anchor: Uint8Array.from(e.v.a), head: Uint8Array.from(e.v.h) });
-        this.seen.set(e.k, now);
-      } else {
-        this.forget(e.k);
-      }
-      changed = true;
-    }
-    if (changed) {
-      this.stateVersion++;
+    if (this.store.receive(bytes)) {
+      this.pruneLast();
       this.opts.onChange?.();
     }
   }
 
   /** 새로 참여한 피어에게 보낼 전체 상태 (이 피어 것만; 각 피어가 자기 상태를 보낸다) */
   encodeAll(): Uint8Array {
-    return this.encode();
+    return this.store.encodeLocal();
   }
 
   /** 다른 피어들의 선택 영역을 지금 문서 기준 화면 오프셋으로 */
   remotes(): RemoteSelection[] {
     const doc = this.bridge.doc;
     const c = this.cache;
-    if (c && c.docVersion === doc.version && c.stateVersion === this.stateVersion) return c.list;
+    if (c && c.docVersion === doc.version && c.stateVersion === this.store.version) return c.list;
     const out: RemoteSelection[] = [];
     const max = doc.maxCaret;
-    for (const key of [...this.states.keys()].sort()) {
-      const s = this.states.get(key)!;
+    for (const key of [...this.store.states.keys()].sort()) {
+      const s = this.store.states.get(key)!;
       let anchor = this.bridge.resolveCursor(s.anchor);
       let head = s.head === s.anchor ? anchor : this.bridge.resolveCursor(s.head);
       const prev = this.last.get(key);
@@ -158,57 +114,28 @@ export class Presence {
       this.last.set(key, { anchor: doc.positionAt(anchor), head: doc.positionAt(head) });
       out.push({ key, name: s.name, color: s.color, anchor, head });
     }
-    this.cache = { docVersion: doc.version, stateVersion: this.stateVersion, list: out };
+    this.cache = { docVersion: doc.version, stateVersion: this.store.version, list: out };
     return out;
   }
 
   /** 떠날 때: 다른 피어에게서 이 피어를 지운다 */
   destroy(): void {
     if (this.destroyed) return;
-    this.local = null;
-    this.seq++;
-    this.send();
+    this.opts.onUpdate?.(this.store.setLocal(null));
     this.destroyed = true;
     clearInterval(this.timer);
     this.offFlush();
   }
 
-  private encode(): Uint8Array {
-    const s = this.local;
-    const e: Entry = {
-      k: this.key,
-      s: this.seq,
-      v: s ? { name: s.name, color: s.color, a: Array.from(s.anchor), h: Array.from(s.head) } : null,
-    };
-    return encoder.encode(JSON.stringify([e]));
-  }
-
-  private send(): void {
-    this.opts.onUpdate?.(this.encode());
-  }
-
-  private forget(key: string): void {
-    this.states.delete(key);
-    this.seen.delete(key);
-    this.last.delete(key);
+  private pruneLast(): void {
+    for (const k of this.last.keys()) if (!this.store.states.has(k)) this.last.delete(k);
   }
 
   /** 주기: 자기 상태를 다시 보내고, 오래 소식 없는 피어를 지운다 */
   private tick(): void {
-    if (this.local && !this.held) {
-      this.seq++;
-      this.send();
-    }
-    const now = Date.now();
-    let changed = false;
-    for (const [k, t] of this.seen) {
-      if (now - t > this.timeout) {
-        this.forget(k);
-        changed = true;
-      }
-    }
-    if (changed) {
-      this.stateVersion++;
+    if (this.store.hasLocal && !this.held) this.opts.onUpdate?.(this.store.refresh());
+    if (this.store.expire().length) {
+      this.pruneLast();
       this.opts.onChange?.();
     }
   }

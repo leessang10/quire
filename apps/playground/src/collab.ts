@@ -1,9 +1,10 @@
 /**
  * 협업 데모: 한 페이지의 두 편집기를 가짜 네트워크(지연, 오프라인)로 잇는다.
- * 각 편집기는 자기 Doc + SyncBridge(Loro)와 프레즌스(상대의 캐럿·선택)를 가진다. 09 §2, §7.
+ * 각 편집기는 메인 스레드에 Doc만 두고, Loro·내보내기·가져오기·프레즌스는 피어마다 Worker에서 돈다 (09 §8).
+ * Worker가 내보낸 업데이트는 메인을 거쳐(여기서 지연·오프라인을 흉내 낸다) 상대 Worker로 간다.
  */
 import { Editor } from '@quire/editor';
-import { Presence, SyncBridge } from '@quire/sync';
+import { startSyncWorker, type WorkerClient } from '@quire/sync';
 
 const TEXT = `두 편집기는 각자 문서 사본을 가지고 CRDT(Loro)로 변경을 주고받습니다.
 
@@ -18,8 +19,7 @@ const verdictEl = document.getElementById('verdict')!;
 const sections = [...document.querySelectorAll<HTMLElement>('.peer')];
 
 interface Peer {
-  bridge: SyncBridge;
-  presence: Presence;
+  client: WorkerClient;
   editor: Editor;
   /** 오프라인 동안 보내지 못한 마지막 프레즌스 (최신 것만 의미 있다) */
   heldPresence: Uint8Array | null;
@@ -52,7 +52,7 @@ function transmit(to: number, update: Uint8Array) {
     inFlight--;
     const p = peers[to]!;
     p.received += update.length;
-    p.bridge.receive(update);
+    p.client.deliver('doc', update);
     status();
   }, Math.max(0, Number(latencyEl.value) || 0));
 }
@@ -66,7 +66,11 @@ function sendPresence(from: number, bytes: Uint8Array) {
     return;
   }
   // 문서 업데이트와 같은 지연으로 보내 순서를 지킨다 (캐럿이 가리키는 글자가 먼저 도착)
-  setTimeout(() => peers[to]!.presence.receive(bytes), Math.max(0, Number(latencyEl.value) || 0));
+  inFlight++;
+  setTimeout(() => {
+    inFlight--;
+    peers[to]!.client.deliver('presence', bytes);
+  }, Math.max(0, Number(latencyEl.value) || 0));
 }
 
 function reconnect() {
@@ -86,7 +90,7 @@ function reconnect() {
 /** 상대 캐럿을 지금 문서 기준으로 다시 풀어 그린다 */
 function showRemotes(k: number) {
   const p = peers[k];
-  if (p) p.editor.setRemoteCarets(p.presence.remotes());
+  if (p) p.editor.setRemoteCarets(p.client.remotes());
 }
 
 function status() {
@@ -97,7 +101,7 @@ function status() {
   }
   if (peers.length < 2) return;
   const [a, b] = peers as [Peer, Peer];
-  const idle = inFlight === 0 && !a.held.length && !b.held.length;
+  const idle = inFlight === 0 && !a.held.length && !b.held.length && !a.client.pending && !b.client.pending;
   const same = a.editor.getText() === b.editor.getText();
   verdictEl.textContent = !idle ? '전송 중…' : same ? '✓ 두 문서가 같습니다' : '… 합치는 중 (다음 묶음에서 반영)';
   verdictEl.dataset.state = !idle ? 'busy' : same ? 'same' : 'busy';
@@ -108,25 +112,20 @@ const USERS = [
   { name: '피어 B', color: '#c2410c' },
 ];
 
-function makePeer(k: number, bridge: SyncBridge) {
+function makePeer(k: number, client: WorkerClient) {
   const section = sections[k]!;
   const host = section.querySelector<HTMLElement>('.peer-editor')!;
-  const presence = new Presence(bridge, {
-    user: USERS[k]!,
-    onUpdate: (u) => sendPresence(k, u),
-    onChange: () => showRemotes(k),
-  });
   const editor = new Editor({
     host,
-    doc: bridge.doc,
+    doc: client.doc,
     onChange: () => {
       showRemotes(k);
       status();
     },
-    onSelectionChange: (anchor, head) => presence.setSelection(anchor, head),
+    onSelectionChange: (anchor, head) => client.setSelection(anchor, head),
   });
   const peer: Peer = {
-    bridge, presence, editor, heldPresence: null, offline: false, held: [], sent: 0, received: 0,
+    client, editor, heldPresence: null, offline: false, held: [], sent: 0, received: 0,
     statusEl: section.querySelector('.peer-status')!,
   };
   section.querySelector<HTMLInputElement>('.offline')!.addEventListener('change', (e) => {
@@ -137,24 +136,31 @@ function makePeer(k: number, bridge: SyncBridge) {
   peers[k] = peer;
 }
 
-// 피어 A가 문서를 만들고, 피어 B는 A의 스냅샷으로 참여한다
-const bridgeA = SyncBridge.create(TEXT, {
-  peer: 1,
-  onUpdate: (u) => send(0, u),
-  onRemoteChange: () => peers[0]?.editor.docChanged(),
-});
-const bridgeB = SyncBridge.fromSnapshot(bridgeA.snapshot(), {
-  peer: 2,
-  onUpdate: (u) => send(1, u),
-  onRemoteChange: () => peers[1]?.editor.docChanged(),
-});
-makePeer(0, bridgeA);
-makePeer(1, bridgeB);
-for (const p of peers) {
-  const { anchor, head } = p.editor.selection();
-  p.presence.setSelection(anchor, head);
-}
-peers[0]!.editor.focus();
-status();
+const newWorker = () => new Worker(new URL('./sync-worker.ts', import.meta.url), { type: 'module' });
 
-Object.assign(window, { peers });
+function clientOptions(k: number) {
+  return {
+    onRemoteChange: () => peers[k]?.editor.docChanged(),
+    onPresence: () => showRemotes(k),
+    onNet: (kind: 'doc' | 'presence', bytes: Uint8Array) => (kind === 'doc' ? send(k, bytes) : sendPresence(k, bytes)),
+  };
+}
+
+// 피어 A의 Worker가 문서를 만들고, 피어 B의 Worker는 A의 스냅샷으로 참여한다
+void (async () => {
+  const clientA = await startSyncWorker(newWorker(), { mode: 'relay', peer: 1, user: USERS[0]!, text: TEXT }, clientOptions(0));
+  const snapshot = await clientA.snapshot();
+  const clientB = await startSyncWorker(newWorker(), { mode: 'relay', peer: 2, user: USERS[1]!, snapshot }, clientOptions(1));
+  makePeer(0, clientA);
+  makePeer(1, clientB);
+  for (const p of peers) {
+    const { anchor, head } = p.editor.selection();
+    p.client.setSelection(anchor, head);
+  }
+  peers[0]!.editor.focus();
+  // Worker의 답(ack)은 화면 이벤트를 만들지 않으므로 판정 표시는 주기적으로도 갱신한다
+  setInterval(status, 250);
+  status();
+
+  Object.assign(window, { peers });
+})();

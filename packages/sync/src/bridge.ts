@@ -13,19 +13,15 @@
  * - 맵 'hidden', 'placeholder', 'used': 구획 키 → true.
  * - 처음 문서: [사용자 문단들 BRK(t)][¶ BRK(p)][¶ 보초]. t는 순서 목록에, p는 자리표시.
  */
-import { Cursor, LoroDoc, type LoroEventBatch, type LoroMap, type LoroMovableList, type LoroText, type VersionVector } from 'loro-crdt';
-import { BRK_CHAR, Doc, type RawChange, type SegId, type SegState, type TextDelta } from '@quire/model';
+import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector } from 'loro-crdt';
+import { Doc, type RawChange, type TextDelta } from '@quire/model';
+import { LoroWriter, SEG_MARK, TEXT, initLoro, newLoro, readRaw, readState, type PeerId } from './shape';
 
-const TEXT = 'body';
-const ORDER = 'order';
-const END = '$end';
-const SEG_MARK = 'seg';
 const LOCAL_ORIGIN = 'quire-local';
-const NL = String.fromCharCode(10);
 
 export interface SyncOptions {
   /** 이 피어의 ID (피어마다 달라야 한다) */
-  peer: number | bigint | `${number}`;
+  peer: PeerId;
   /** 내보낼 업데이트가 생기면 호출된다 (묶음 단위) */
   onUpdate?: (update: Uint8Array) => void;
   /** 원격 업데이트를 Doc에 반영한 뒤 호출된다 (화면 갱신용) */
@@ -38,8 +34,7 @@ export class SyncBridge {
   readonly doc: Doc;
   readonly loro: LoroDoc;
   private readonly text: LoroText;
-  private readonly order: LoroMovableList;
-  private readonly maps: Record<'hidden' | 'placeholder' | 'used', LoroMap>;
+  private readonly writer: LoroWriter;
   private readonly opts: SyncOptions;
   /** 마지막으로 내보낸 시점의 버전 (그 사이 가져온 원격 연산 포함) */
   private exported: VersionVector;
@@ -52,20 +47,7 @@ export class SyncBridge {
   /** 새 문서를 만든다 (처음 만드는 피어) */
   static create(text: string, opts: SyncOptions): SyncBridge {
     const loro = newLoro(opts.peer);
-    const body = loro.getText(TEXT);
-    const user = text.replace(/\r\n?/g, NL) + NL;
-    body.insert(0, user + BRK_CHAR + NL + BRK_CHAR + NL);
-    const t = `${String(opts.peer)}.t`;
-    const p = `${String(opts.peer)}.p`;
-    const u = user.length;
-    body.mark({ start: u, end: u + 1 }, SEG_MARK, t);
-    body.mark({ start: u + 2, end: u + 3 }, SEG_MARK, p);
-    const order = loro.getMovableList(ORDER);
-    order.insert(0, t);
-    order.insert(1, 'tail');
-    order.insert(2, END);
-    loro.getMap('placeholder').set(p, true);
-    loro.commit();
+    initLoro(loro, text, opts.peer);
     return SyncBridge.fromLoro(loro, opts);
   }
 
@@ -77,15 +59,7 @@ export class SyncBridge {
   }
 
   private static fromLoro(loro: LoroDoc, opts: SyncOptions): SyncBridge {
-    const body = loro.getText(TEXT);
-    const keys: SegId[] = [];
-    let raw = '';
-    for (const op of body.toDelta()) {
-      if (typeof op.insert !== 'string') continue;
-      raw += op.insert;
-      const key = op.attributes?.[SEG_MARK];
-      if (typeof key === 'string') keys.push(key);
-    }
+    const { raw, keys } = readRaw(loro);
     const doc = Doc.fromRaw(raw, keys, readState(loro), String(opts.peer));
     return new SyncBridge(doc, loro, opts);
   }
@@ -95,8 +69,7 @@ export class SyncBridge {
     this.loro = loro;
     this.opts = opts;
     this.text = loro.getText(TEXT);
-    this.order = loro.getMovableList(ORDER);
-    this.maps = { hidden: loro.getMap('hidden'), placeholder: loro.getMap('placeholder'), used: loro.getMap('used') };
+    this.writer = new LoroWriter(loro, () => doc.segmentOrder());
     this.exported = loro.oplogVersion();
     doc.observe((c) => this.onLocal(c));
     this.unsubscribe = loro.subscribe((e) => this.onEvent(e));
@@ -185,74 +158,9 @@ export class SyncBridge {
   // ── 로컬 → Loro ───────────────────────────────────────
 
   private onLocal(c: RawChange): void {
-    switch (c.kind) {
-      case 'insert': {
-        this.text.insert(c.at, c.text);
-        if (c.segs) {
-          let k = 0;
-          for (let j = 0; j < c.text.length; j++) {
-            if (c.text[j] !== BRK_CHAR) continue;
-            this.text.mark({ start: c.at + j, end: c.at + j + 1 }, SEG_MARK, c.segs[k++]!);
-          }
-        }
-        break;
-      }
-      case 'delete':
-        this.text.delete(c.at, c.len);
-        break;
-      case 'order':
-        for (const m of c.moves) this.placeBefore(m.seg, m.before);
-        break;
-      case 'list':
-        this.placeBefore(c.seg, c.before);
-        break;
-      case 'hidden':
-        for (const s of c.segs) {
-          if (c.value) this.maps.hidden.set(s, true);
-          else this.maps.hidden.delete(s);
-        }
-        break;
-      case 'flag':
-        this.maps[c.flag].set(c.seg, true);
-        break;
-    }
+    this.writer.apply(c);
     this.loro.commit({ origin: LOCAL_ORIGIN });
     this.schedule();
-  }
-
-  /** 순서 목록에서 seg를 before 앞으로 (null이면 END 앞). 목록에 없으면 그 자리에 넣고, 중복 항목은 지운다 */
-  private placeBefore(seg: SegId, before: SegId | null): void {
-    if (before !== null) this.ensureListed(before);
-    const list = this.order.toJSON() as string[];
-    const idxs: number[] = [];
-    list.forEach((v, k) => v === seg && idxs.push(k));
-    // 동시에 같은 구획을 넣어 생긴 중복은 하나만 남긴다
-    for (let k = idxs.length - 1; k >= 1; k--) this.order.delete(idxs[k]!, 1);
-    const cur = (this.order.toJSON() as string[]).indexOf(seg);
-    const now = this.order.toJSON() as string[];
-    let to = before !== null ? now.indexOf(before) : now.indexOf(END);
-    if (cur < 0) {
-      this.order.insert(to, seg);
-      return;
-    }
-    if (cur < to) to -= 1;
-    if (cur !== to) this.order.move(cur, to);
-  }
-
-  /** 순서 목록에 없는 구획을, Doc의 화면 순서에서 그 뒤로 가장 가까운 목록 항목 앞에 넣는다 */
-  private ensureListed(seg: SegId): void {
-    const list = this.order.toJSON() as string[];
-    if (list.includes(seg)) return;
-    const docOrder = this.doc.segmentOrder();
-    const listed = new Set(list);
-    let to = list.indexOf(END);
-    for (let k = docOrder.indexOf(seg) + 1; k < docOrder.length; k++) {
-      if (listed.has(docOrder[k]!)) {
-        to = list.indexOf(docOrder[k]!);
-        break;
-      }
-    }
-    this.order.insert(to, seg);
   }
 
   // ── Loro → Doc ────────────────────────────────────────
@@ -283,27 +191,4 @@ export class SyncBridge {
       this.flush();
     }, ms);
   }
-}
-
-function newLoro(peer: SyncOptions['peer']): LoroDoc {
-  const loro = new LoroDoc();
-  loro.setPeerId(peer);
-  // 구획 표식 마크는 옆에 입력한 글자로 번지지 않게 한다
-  loro.configTextStyle({ [SEG_MARK]: { expand: 'none' } });
-  return loro;
-}
-
-function keysOf(map: LoroMap): SegId[] {
-  const out: SegId[] = [];
-  for (const [k, v] of Object.entries(map.toJSON() as Record<string, unknown>)) if (v === true) out.push(k);
-  return out;
-}
-
-function readState(loro: LoroDoc): SegState {
-  return {
-    order: (loro.getMovableList(ORDER).toJSON() as string[]).filter((v) => v !== END),
-    hidden: keysOf(loro.getMap('hidden')),
-    placeholder: keysOf(loro.getMap('placeholder')),
-    used: keysOf(loro.getMap('used')),
-  };
 }

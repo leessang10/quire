@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { History, type Doc, type Op } from '@quire/model';
 import { SyncBridge } from './index';
+import { displayOrderFromLoro } from './shape';
 
 /** 피어 묶음: 각 피어의 내보낸 업데이트를 다른 피어의 받은편지함 대기열에 넣는다 */
 function network(n: number, text = '') {
@@ -257,6 +258,8 @@ describe('SyncBridge randomized convergence (3 peers)', () => {
       expect(texts[1]).toBe(texts[0]);
       expect(texts[2]).toBe(texts[0]);
       for (const p of peers) consistent(p);
+      // Loro만으로 구한 화면 순서 = Doc의 화면 순서 (모두 받은 뒤)
+      for (const p of peers) expect(displayOrderFromLoro(p.loro)).toEqual(p.doc.segmentOrder());
       for (const c of cursors) {
         const at = peers.map((p) => p.resolveCursor(c));
         expect(at[0]).not.toBeNull();
