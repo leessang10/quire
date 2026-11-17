@@ -24,6 +24,13 @@
       <section id="editor" class="editor" aria-label="편집기"></section>
       <aside class="panel">
         <h2>상태</h2>
+        <label class="input-mode">입력 층
+          <select id="input-mode">
+            <option value="auto">자동</option>
+            <option value="editcontext">A. EditContext</option>
+            <option value="textarea">B. 숨긴 textarea</option>
+          </select>
+        </label>
         <dl id="stats" class="stats"></dl>
         <div class="log-head">
           <h2>입력 이벤트</h2>

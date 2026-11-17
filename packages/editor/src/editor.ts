@@ -4,7 +4,8 @@
  */
 import { Doc, History, type Op, type Position, type Selection } from '@quire/model';
 import { LayoutCache, PagedLayout, cpSlice, docToDisplay, pageTop, type Measurer, type PageSetup } from '@quire/layout';
-import { TextareaInput, type InputIntent, type InputLogEntry } from './input';
+import { EditContextInput, editContextSupported } from './edit-context';
+import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 
 export interface EditorOptions {
   host: HTMLElement;
@@ -14,6 +15,11 @@ export interface EditorOptions {
   fontFamily?: string;
   fontSize?: number;
   onInputLog?: (entry: InputLogEntry) => void;
+  /**
+   * 입력 층 (03 §2). auto(기본): EditContext를 지원하면 경로 A, 아니면 숨긴 textarea(경로 B).
+   * editcontext를 골랐는데 지원하지 않으면 textarea를 쓴다.
+   */
+  input?: InputMode;
   onChange?: (editor: Editor) => void;
   /** 선택 영역(캐럿)이 바뀌었을 때 (프레즌스 전송용). 화면 오프셋 */
   onSelectionChange?: (anchor: number, head: number) => void;
@@ -112,7 +118,7 @@ export class Editor {
   private readonly spacer: HTMLDivElement;
   private readonly caretEl: HTMLDivElement;
   private readonly mirror: HTMLDivElement;
-  private readonly input: TextareaInput;
+  private readonly input: InputBackend;
   private readonly font: string;
   private readonly measurer: Measurer;
   private readonly cache = new LayoutCache();
@@ -210,7 +216,12 @@ export class Editor {
     scroller.appendChild(mirror);
     this.mirror = mirror;
 
-    this.input = new TextareaInput(scroller, (i) => this.handleIntent(i), opts.onInputLog);
+    const mode = opts.input ?? 'auto';
+    const onIntent = (i: InputIntent) => this.handleIntent(i);
+    this.input =
+      mode !== 'textarea' && editContextSupported()
+        ? new EditContextInput(scroller, onIntent, opts.onInputLog)
+        : new TextareaInput(scroller, onIntent, opts.onInputLog);
     this.input.el.style.font = this.font;
 
     // ── 이벤트 ──
@@ -232,6 +243,11 @@ export class Editor {
 
   focus(): void {
     this.input.focus();
+  }
+
+  /** 쓰고 있는 입력 층 */
+  get inputKind(): InputBackend['kind'] {
+    return this.input.kind;
   }
 
   setText(text: string): void {

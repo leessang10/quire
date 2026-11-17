@@ -29,7 +29,24 @@ export interface InputLogEntry {
   detail: string;
 }
 
-export class TextareaInput {
+/** 입력 층 (경로 A: EditContext, 경로 B: 숨긴 textarea). 편집기는 이것만 본다 */
+export interface InputBackend {
+  readonly kind: 'textarea' | 'editcontext';
+  /** 포커스를 받는 요소 (focus·blur를 편집기가 듣는다) */
+  readonly el: HTMLElement;
+  readonly composing: boolean;
+  focus(): void;
+  /** 조합 중이면 강제로 확정시킨다 (클릭 등으로 캐럿을 옮기기 전) */
+  commitComposition(): void;
+  /** 캐럿 위치 (스크롤 영역 좌표): IME 후보 창 위치 */
+  place(left: number, top: number, height: number): void;
+  destroy(): void;
+}
+
+export type InputMode = 'auto' | 'textarea' | 'editcontext';
+
+export class TextareaInput implements InputBackend {
+  readonly kind = 'textarea' as const;
   readonly el: HTMLTextAreaElement;
   composing = false;
   private pendingParagraph = false;
