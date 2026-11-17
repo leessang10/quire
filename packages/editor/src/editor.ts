@@ -36,8 +36,14 @@ export interface EditorOptions {
 export interface FontSource {
   /** 사람이 읽는 이름 (상태 표시용) */
   name: string;
+  /** 글꼴 파일 하나 */
   url?: string;
   data?: ArrayBuffer | Uint8Array;
+  /**
+   * 조각난 글꼴의 목록 (scripts/build-fonts.mjs의 manifest.json). 문서에 나온 글자가 든 조각만 내려받고, 편집 중 새 글자가
+   * 나오면 그 조각을 받아 다시 조판한다 (02 §4 부분 로드).
+   */
+  manifest?: string;
 }
 
 /** 다른 사용자의 선택 영역 (화면 오프셋). 협업 프레즌스에서 받아 그린다 */
@@ -271,27 +277,99 @@ export class Editor {
 
   /** 글꼴을 불러와 HarfBuzz 셰이핑으로 바꾼다 (셰이핑 모듈·WASM은 이때 불러온다) */
   private async loadFonts(sources: FontSource[]): Promise<void> {
-    const { HbShaper, loadShapingFont } = await import('@quire/shaping');
-    const bytes = await Promise.all(
-      sources.map(async (f) => {
-        if (f.data) return f.data instanceof Uint8Array ? f.data : new Uint8Array(f.data);
-        const r = await fetch(f.url!);
-        if (!r.ok) throw new Error(`글꼴을 불러오지 못함: ${f.url} (${r.status})`);
-        return new Uint8Array(await r.arrayBuffer());
-      }),
-    );
-    const families = sources.map((_, i) => `quire-font-${editorSeq}-${i}`);
-    await Promise.all(
-      bytes.map(async (b, i) => {
-        const face = new FontFace(families[i]!, b.slice().buffer);
-        document.fonts.add(await face.load());
-      }),
-    );
-    editorSeq++;
-    const fonts = bytes.map((b, i) => loadShapingFont(b, sources[i]!.name));
-    this.measurer = new HbShaper(fonts, { size: this.fontSize, fallback: this.measurer });
+    const shaping = await import('@quire/shaping');
+    const fetchBytes = async (url: string) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`글꼴을 불러오지 못함: ${url} (${r.status})`);
+      return new Uint8Array(await r.arrayBuffer());
+    };
+    // 글꼴 자리: 파일 하나는 바로 불러온 자리, 조각 목록은 조각마다 아직 안 불러온 자리
+    const slots: Array<import('@quire/shaping').FontSlot & { url?: string; bytes?: number }> = [];
+    const ready: Array<{ i: number; data: Uint8Array }> = [];
+    for (const src of sources) {
+      if (src.manifest) {
+        const r = await fetch(src.manifest);
+        if (!r.ok) throw new Error(`글꼴 목록을 불러오지 못함: ${src.manifest} (${r.status})`);
+        const m = (await r.json()) as import('@quire/shaping').FontManifest;
+        slots.push(...shaping.slotsFromManifest(m, new URL(src.manifest, location.href)));
+      } else {
+        const data = src.data ? (src.data instanceof Uint8Array ? src.data : new Uint8Array(src.data)) : await fetchBytes(src.url!);
+        ready.push({ i: slots.length, data });
+        slots.push(shaping.slotOf(shaping.loadShapingFont(data, src.name)));
+      }
+    }
+    const seq = editorSeq++;
+    const families = slots.map((_, i) => `quire-font-${seq}-${i}`);
+    const register = async (i: number, data: Uint8Array) => {
+      document.fonts.add(await new FontFace(families[i]!, data.slice().buffer).load());
+    };
+    await Promise.all(ready.map(({ i, data }) => register(i, data)));
+
+    let loadedBytes = 0;
+    const describe = () => {
+      const lazy = slots.filter((s) => s.url);
+      const done = lazy.filter((s) => s.font).length;
+      this.textEngine = `HarfBuzz (${sources.map((s) => s.name).join(', ')}${lazy.length ? ` · 조각 ${done}/${lazy.length}, ${(loadedBytes / 1e6).toFixed(2)} MB` : ''})`;
+    };
+    /** 조각 i를 받아 셰이퍼와 캔버스에 등록 */
+    const loadChunk = async (i: number) => {
+      const slot = slots[i]!;
+      if (slot.font || !slot.url) return;
+      const data = await fetchBytes(slot.url);
+      await register(i, data);
+      loadedBytes += data.length;
+      shaper.loaded(i, shaping.loadShapingFont(data, slot.name));
+    };
+    // 편집 중 새 글자가 아직 안 받은 조각에 있으면: 모아서 받고 한 번에 다시 조판
+    const queue = new Set<number>();
+    let flushing = false;
+    const flush = async () => {
+      if (flushing) return;
+      flushing = true;
+      while (queue.size > 0) {
+        const batch = [...queue];
+        queue.clear();
+        await Promise.all(batch.map((i) => loadChunk(i).catch((e: unknown) => console.warn(e))));
+      }
+      flushing = false;
+      describe();
+      this.relayoutAll();
+    };
+    const shaper = new shaping.HbShaper(slots, {
+      size: this.fontSize,
+      fallback: this.measurer,
+      onMissing: (i) => {
+        if (!switched) return; // 처음 조판 전 미리 받기는 아래에서
+        queue.add(i);
+        if (!flushing) setTimeout(() => void flush(), 0);
+      },
+    });
+    let switched = false;
+    // 처음: 문서에 나온 글자가 든 조각을 미리 받는다 (다시 조판을 한 번만)
+    if (slots.some((s) => s.url)) {
+      const need = new Set<number>();
+      const seen = new Set<number>();
+      for (const ch of this.doc.text()) {
+        const cp = ch.codePointAt(0)!;
+        if (seen.has(cp)) continue;
+        seen.add(cp);
+        const i = slots.findIndex((s) => s.covers(cp));
+        if (i >= 0 && !slots[i]!.font) need.add(i);
+      }
+      // 공백 폭을 정하는 조각도
+      const sp = slots.findIndex((s) => s.covers(0x20));
+      if (sp >= 0 && !slots[sp]!.font) need.add(sp);
+      await Promise.all([...need].map(loadChunk));
+    }
+    switched = true;
+    this.measurer = shaper;
     this.shapedFonts = families.map((f) => `${this.fontSize}px ${f}`);
-    this.textEngine = `HarfBuzz (${sources.map((s) => s.name).join(', ')})`;
+    describe();
+    this.relayoutAll();
+  }
+
+  /** 측정이 바뀌었다 (글꼴을 받음): 모든 문단을 다시 조판한다 */
+  private relayoutAll(): void {
     this.cache.clear();
     this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
     this.refresh();
