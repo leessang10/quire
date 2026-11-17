@@ -82,5 +82,5 @@ V1 대상 환경:
 
 1. ~~입력 경로 A (EditContext)~~ → 구현 (03 §2)
 2. V1–V3 실제 환경 확인 (06 §2 표의 OS·브라우저·입력기, NVDA·VoiceOver). Chromium 계열은 경로 A·B 모두 (플레이그라운드 `?input=`). 도구: 플레이그라운드 `/checklist.html`
-3. 1단계 시작 때 ADR-0002 확정 (HarfBuzz로 셰이핑 교체 여부)
+3. ~~ADR-0002 확정~~ → HarfBuzz 채택 ([셰이핑 검증](../spikes/phase0-shaping.md)). 1단계: 셰이퍼 인터페이스, 아이템화·대체 글꼴, 어절 셰이핑 캐시, 글꼴 부분 로드
 4. 2단계(서식과 블록): 서식이 들어오면 정본 JSON(07), CRDT 서식 마크, 재기반도 함께 넓힌다
