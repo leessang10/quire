@@ -144,3 +144,41 @@ describe('.quire file', () => {
     await expect(openQuire(await writeZip([entries[1]!, entries[0]!, entries[2]!]))).rejects.toThrow(/mimetype/);
   });
 });
+
+describe('canonical JSON with formatting (10, step 2-2)', () => {
+  it('round-trips marks and paragraph attributes through document.json', async () => {
+    const { Doc } = await import('@quire/model');
+    const { quireFromDoc, docFromQuire } = await import('./canonical');
+    const doc = Doc.fromText('제목\n본문은 굵게, 이건 링크\n');
+    doc.setParaAttr(0, 'style', 'Heading1');
+    doc.setParaAttr(1, 'align', 'justify');
+    doc.format(7, 9, 'bold', true);
+    doc.format(11, 13, 'link', 'https://quire.dev');
+    doc.format(11, 13, 'color', '#2563eb');
+    const json = canonicalJson(quireFromDoc(doc));
+    const q = JSON.parse(json);
+    expect(q.stories.body[0]).toEqual({ p: { style: 'Heading1' }, c: [{ t: '제목' }] });
+    expect(q.stories.body[1].c).toEqual([
+      { t: '본문은 ' },
+      { t: '굵게', m: { bold: true } },
+      { t: ', ' },
+      { t: '이건', m: { color: '#2563eb', link: 'https://quire.dev' } },
+      { t: ' 링크' },
+    ]);
+    const { doc: back, notes } = docFromQuire(q);
+    expect(notes).toEqual([]);
+    expect(back.paragraphRuns()).toEqual(doc.paragraphRuns());
+    // 같은 문서는 같은 바이트열
+    expect(canonicalJson(quireFromDoc(back))).toBe(json);
+  });
+
+  it('drops keys this engine does not know, with notes', async () => {
+    const { docFromQuire } = await import('./canonical');
+    const q = quireFromText('가나\n');
+    q.stories.body[0] = { p: { align: 'center', mystery: 1 }, c: [{ t: '가나', m: { bold: true, sparkle: true } as never }] };
+    const { doc, notes } = docFromQuire(q);
+    expect(doc.paraAttrs(0)).toEqual({ align: 'center' });
+    expect(doc.marksAt(0)).toEqual({ bold: true });
+    expect(notes.length).toBe(2);
+  });
+});

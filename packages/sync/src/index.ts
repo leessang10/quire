@@ -10,7 +10,7 @@ export { WsLink } from './ws';
 export { serveSyncWorker, startSyncWorker, WorkerClient } from './host';
 export type { WorkerConfig } from './host';
 export type { ToMain, ToWorker, RemoteSel } from './protocol';
-export { canonicalJson, displayText, migrateQuire, quireFromText, sha256Hex, stateHash, textFromQuire, SCHEMA_VERSION } from './canonical';
+export { canonicalJson, displayText, docFromQuire, migrateQuire, quireFromDoc, quireFromText, sha256Hex, stateHash, textFromQuire, SCHEMA_VERSION } from './canonical';
 export type { QuireDoc, QuireParagraph, QuireRun } from './canonical';
 export { openQuire, packQuire, MIMETYPE, FORMAT_VERSION } from './quire-file';
 export type { OpenedQuire, Manifest } from './quire-file';

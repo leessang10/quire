@@ -227,3 +227,44 @@ describe('Doc with segments, randomized against a reference', () => {
     expect(seen.joins).toBeGreaterThan(5);
   });
 });
+
+describe('undo after paragraph moves (regression)', () => {
+  // 문단을 옮긴 뒤 입력·삭제를 모두 되돌리면, 실행 취소가 구획 끝 ¶나 화면 마지막 ¶를 지울 수 있다.
+  // 예전에는 문단 목록이 어긋나 예외가 났다 (ID 순서 ≠ 화면 순서, 로컬 문서에 가상 ¶ 없음)
+  function rng(seed: number) {
+    let s = seed >>> 0 || 1;
+    return () => {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 0x100000000;
+    };
+  }
+  it('keeps the paragraph index consistent for 30 seeds', () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      const r = rng(seed);
+      const doc = Doc.fromText('하나 둘 셋\n넷 다섯\n여섯');
+      const h = new History(0);
+      const sel = { anchor: doc.positionAt(0), head: doc.positionAt(0) };
+      for (let step = 0; step < 200; step++) {
+        const at = Math.floor(r() * doc.length);
+        const pick = r();
+        let ops: Op[] = [];
+        if (pick < 0.5) ops = [{ type: 'insert', ids: doc.insertText(Math.min(at, doc.maxCaret), ['가', '\n', 'ab'][Math.floor(r() * 3)]!) }];
+        else if (pick < 0.75 && doc.maxCaret > 0) ops = doc.deleteRange(Math.min(at, doc.maxCaret - 1), Math.min(doc.maxCaret, at + 1 + Math.floor(r() * 5)));
+        else if (doc.paragraphs().length > 1) {
+          const k = doc.paragraphs().length;
+          const i = Math.floor(r() * k);
+          ops = doc.moveParagraphs(i, i, Math.floor(r() * (k + 1)));
+        }
+        h.record({ ops, before: sel, after: sel, time: step });
+      }
+      while (h.canUndo) {
+        h.undo(doc);
+        expect(doc.paragraphs()).toEqual(doc.paragraphsFromScratch());
+      }
+      doc.checkInvariants();
+      while (h.canRedo) h.redo(doc);
+      expect(doc.paragraphs()).toEqual(doc.paragraphsFromScratch());
+      doc.checkInvariants();
+    }
+  });
+});
