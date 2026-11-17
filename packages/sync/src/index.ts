@@ -17,3 +17,4 @@ export type { OpenedQuire, Manifest } from './quire-file';
 export { applyHunks, compactLoro, diffText, readEpoch, rebaseHunks, rebaseOnto, META } from './epoch';
 export type { Hunk, RebaseInfo } from './epoch';
 export { parseRebase } from './ws';
+export { LoroWriter, initLoro, newLoro, readRaw, readState, displayOrderFromLoro, SEG_MARK, TEXT, ORDER, END } from './shape';
