@@ -132,3 +132,4 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .live-status { color: var(--muted); font-size: 13px; }
 .live-status[data-state='online'] { color: #1a7f37; }
 .live-status[data-state='offline'] { color: #b45309; }
+.live-note { margin: 0; padding: 6px 16px; font-size: 13px; background: #fff7ed; color: #9a3412; border-top: 1px solid #fed7aa; }

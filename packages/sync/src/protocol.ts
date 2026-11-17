@@ -16,6 +16,8 @@ export type ToWorker =
   | { t: 'flush' }
   /** 중계 모드: 네트워크에서 받은 문서·프레즌스 업데이트 */
   | { t: 'net'; kind: 'doc' | 'presence'; bytes: Uint8Array }
+  /** hold에 대한 답: 보낸 묶음이 모두 적용되었고, 이제 reset까지 아무것도 보내지 않는다 */
+  | { t: 'held' }
   | { t: 'close' };
 
 /** 원격 피어의 선택 영역. 위치는 Worker의 Loro 기준 UTF-16 (null = 아직 풀 수 없음) */
@@ -38,5 +40,9 @@ export type ToMain =
   | { t: 'remotes'; list: RemoteSel[] }
   /** 중계 모드: 네트워크로 보낼 업데이트 */
   | { t: 'net'; kind: 'doc' | 'presence'; bytes: Uint8Array }
+  /** 새 판으로 바꾸기 전: 보낸 묶음이 끝나면 held로 답하고 로컬 변경을 보내지 말라 (09 §9) */
+  | { t: 'hold' }
+  /** 새 판의 문서. 메인은 Doc을 새로 만들고, held 뒤에 한 로컬 변경을 다시 적용한다. lost: 옛 판의 로컬 변경을 살리지 못함 */
+  | { t: 'reset'; raw: string; keys: SegId[]; state: SegState; peer: string; lost: boolean }
   /** 연결 상태 (WebSocket 모드) */
   | { t: 'status'; online: boolean; detail?: string };

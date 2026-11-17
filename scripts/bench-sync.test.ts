@@ -4,9 +4,21 @@
  *
  * 브리지를 붙인 Doc에서 키 입력 1회 비용(Doc 편집 + UTF-16 위치 + Loro 입력·커밋)과
  * 묶음 처리(flush: 내보내기 + 원격 가져오기 + Doc 적용) 비용, 공유 위치(Loro 커서) 만들기·풀기 비용을 잰다.
+ * 저장(09 §9): 새 판 압축, .quire 저장·열기, 재기반 비용과 크기.
  */
 import { it } from 'vitest';
-import { SyncBridge, SyncClient, SyncCore, type ToMain, type ToWorker } from '@quire/sync';
+import {
+  SyncBridge,
+  SyncClient,
+  SyncCore,
+  compactLoro,
+  displayText,
+  openQuire,
+  packQuire,
+  rebaseOnto,
+  type ToMain,
+  type ToWorker,
+} from '@quire/sync';
 
 const NL = String.fromCharCode(10);
 const LOREM =
@@ -162,6 +174,65 @@ function workerScenario(paragraphs: number) {
   A.core.close();
   B.core.close();
 }
+
+/** 편집이 쌓인 문서를 새 판으로 압축·저장·재기반하는 비용 */
+async function storageScenario(paragraphs: number) {
+  const text = Array.from({ length: paragraphs }, (_, i) => `${i + 1}. ${LOREM}`).join(NL);
+  const a = SyncBridge.create(text, { peer: 1, batchMs: null });
+  const n = a.doc.paragraphs().length;
+  // 문단 이동 200번, 삭제(숨김) 100번, 입력 2,000자
+  for (let k = 0; k < 200; k++) {
+    const i = (k * 7919) % (n - 2);
+    a.doc.moveParagraphs(i, i, (k * 104729) % (n - 1));
+  }
+  for (let k = 0; k < 100; k++) {
+    const i = (k * 31337) % (a.doc.paragraphs().length - 2);
+    a.doc.hideParagraphs(i, i);
+  }
+  for (let k = 0; k < 2000; k++) a.doc.insertText((k * 2654435761) % a.doc.maxCaret, '가');
+  a.flush();
+  const before = a.loro.export({ mode: 'snapshot' }).length;
+  let t = performance.now();
+  const shown = displayText(a.loro);
+  const displayMs = performance.now() - t;
+  t = performance.now();
+  const fresh = compactLoro(shown, 'e1', 99);
+  const compactMs = performance.now() - t;
+  const base = fresh.export({ mode: 'snapshot' });
+  t = performance.now();
+  const file = await packQuire({ loro: fresh });
+  const packMs = performance.now() - t;
+  t = performance.now();
+  const opened = await openQuire(file);
+  const openMs = performance.now() - t;
+  // 재기반: 옛 판에서 오프라인으로 20자 입력한 클라이언트
+  const off = SyncBridge.fromSnapshot(a.snapshot(), { peer: 2, batchMs: null });
+  const finalVV = a.loro.oplogVersion().encode();
+  for (let k = 0; k < 20; k++) off.doc.insertText((k * 7907) % off.doc.maxCaret, '오');
+  off.flush();
+  t = performance.now();
+  const r = rebaseOnto(off.loro, { epoch: 'e1', oldVV: finalVV, update: new Uint8Array(), base }, 2);
+  const rebaseMs = performance.now() - t;
+  const ok = displayText(r.loro) === displayText(off.loro) && opened.crdt !== null;
+  const kb = (b: number) => `${(b / 1024).toFixed(0)} KB`;
+  console.log(
+    [
+      `── 저장 ${paragraphs.toLocaleString()}문단 (이동 200 · 삭제 100 · 입력 2,000) ──`,
+      `  스냅샷 ${kb(before)} → 새 판 ${kb(base.length)} (구획 표식 ${a.doc.segmentCount} → 2)`,
+      `  화면 텍스트 ${displayMs.toFixed(0)} ms · 새 판 만들기 ${compactMs.toFixed(0)} ms`,
+      `  .quire ${kb(file.length)} · 저장 ${packMs.toFixed(0)} ms · 열기(해시 확인 포함) ${openMs.toFixed(0)} ms`,
+      `  재기반(오프라인 20자) ${rebaseMs.toFixed(0)} ms · 결과 일치 ${ok}`,
+    ].join(NL),
+  );
+  a.destroy();
+  off.destroy();
+}
+
+it('storage cost', async () => {
+  await storageScenario(1_000);
+  await storageScenario(10_000);
+  await storageScenario(100_000);
+}, 600_000);
 
 it('sync bridge cost', () => {
   scenario(1_000);

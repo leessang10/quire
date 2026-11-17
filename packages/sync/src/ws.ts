@@ -6,11 +6,14 @@
  *   잃은 업데이트가 있어도 다시 연결하면 맞춰진다.
  * - 끊기면 0.5초에서 시작해 두 배씩(최대 5초) 기다렸다가 다시 연결한다.
  * - 빈 방이면 서버가 처음 내용을 만들 클라이언트 하나를 정한다(SYNC의 만들기 표시).
+ * - HELLO에는 이쪽 문서의 판(epoch)도 넣는다. 서버가 그사이 새 판으로 압축했으면 SYNC 대신 REBASE가 온다 (09 §9).
+ *   onRebase가 새 판 문서를 돌려주면 그 문서로 다시 HELLO를 보낸다.
  */
 import { VersionVector, type LoroDoc } from 'loro-crdt';
 import type { NetOut } from './core';
+import { readEpoch, type RebaseInfo } from './epoch';
 
-export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5 } as const;
+export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6 } as const;
 
 export interface WsLinkHandlers {
   /**
@@ -21,6 +24,8 @@ export interface WsLinkHandlers {
   onDoc(bytes: Uint8Array): void;
   onPresence(bytes: Uint8Array): void;
   onGone(key: string): void;
+  /** 서버가 새 판으로 바뀌었다: 옛 판 문서(이쪽 변경 포함)를 새 판으로 옮겨 그 문서를 돌려준다 */
+  onRebase(info: RebaseInfo): Promise<LoroDoc>;
   onStatus?(online: boolean, detail?: string): void;
 }
 
@@ -41,15 +46,17 @@ export class WsLink implements NetOut {
   private delay: number;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
+  private loro: LoroDoc;
   private readonly opts: Required<Omit<WsLinkOptions, 'WebSocketImpl'>> & { WebSocketImpl: typeof WebSocket };
 
   constructor(
     private readonly url: string,
-    private readonly loro: LoroDoc,
+    loro: LoroDoc,
     private readonly key: string,
     private readonly h: WsLinkHandlers,
     opts: WsLinkOptions = {},
   ) {
+    this.loro = loro;
     this.opts = {
       minDelayMs: opts.minDelayMs ?? 500,
       maxDelayMs: opts.maxDelayMs ?? 5000,
@@ -87,16 +94,7 @@ export class WsLink implements NetOut {
     const ws = new this.opts.WebSocketImpl(this.url);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
-    ws.onopen = () => {
-      const k = encoder.encode(this.key);
-      const vv = this.loro.oplogVersion().encode();
-      const msg = new Uint8Array(2 + k.length + vv.length);
-      msg[0] = MSG.HELLO;
-      msg[1] = k.length;
-      msg.set(k, 2);
-      msg.set(vv, 2 + k.length);
-      ws.send(msg);
-    };
+    ws.onopen = () => this.hello(ws);
     ws.onmessage = (e: MessageEvent) => this.onMessage(new Uint8Array(e.data as ArrayBuffer));
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -115,10 +113,32 @@ export class WsLink implements NetOut {
     };
   }
 
+  private hello(ws: WebSocket): void {
+    const k = encoder.encode(this.key);
+    const e = encoder.encode(readEpoch(this.loro));
+    const vv = this.loro.oplogVersion().encode();
+    const msg = new Uint8Array(3 + k.length + e.length + vv.length);
+    msg[0] = MSG.HELLO;
+    msg[1] = k.length;
+    msg.set(k, 2);
+    msg[2 + k.length] = e.length;
+    msg.set(e, 3 + k.length);
+    msg.set(vv, 3 + k.length + e.length);
+    ws.send(msg);
+  }
+
   private onMessage(m: Uint8Array): void {
     const type = m[0];
     const body = m.subarray(1);
-    if (type === MSG.SYNC) {
+    if (type === MSG.REBASE) {
+      const info = parseRebase(body);
+      const ws = this.ws;
+      this.h.onStatus?.(false, '새 판으로 옮기는 중');
+      void this.h.onRebase(info).then((loro) => {
+        this.loro = loro;
+        if (ws && this.ws === ws && ws.readyState === 1) this.hello(ws);
+      });
+    } else if (type === MSG.SYNC) {
       const create = body[0] === 1;
       const n = ((body[1]! << 24) | (body[2]! << 16) | (body[3]! << 8) | body[4]!) >>> 0;
       const serverVV = body.slice(5, 5 + n);
@@ -150,4 +170,22 @@ export class WsLink implements NetOut {
     msg.set(bytes, 1);
     ws.send(msg);
   }
+}
+
+/** REBASE 본문: [판 길이 u8][판][옛 VV 길이 u32][옛 VV][업데이트 길이 u32][업데이트][새 판 처음 스냅샷] */
+export function parseRebase(b: Uint8Array): RebaseInfo {
+  const u32 = (at: number) => ((b[at]! << 24) | (b[at + 1]! << 16) | (b[at + 2]! << 8) | b[at + 3]!) >>> 0;
+  let at = 0;
+  const el = b[at++]!;
+  const epoch = decoder.decode(b.subarray(at, at + el));
+  at += el;
+  const vl = u32(at);
+  at += 4;
+  const oldVV = b.slice(at, at + vl);
+  at += vl;
+  const ul = u32(at);
+  at += 4;
+  const update = b.slice(at, at + ul);
+  at += ul;
+  return { epoch, oldVV, update, base: b.slice(at) };
 }

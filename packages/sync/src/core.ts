@@ -25,6 +25,8 @@ export interface CoreOptions {
   /** 내보내기·가져오기 묶음 간격 (ms). null이면 flush()를 직접 부른다. 기본 50 */
   batchMs?: number | null;
   presenceTimeoutMs?: number;
+  /** 새 판으로 바꾼 코어: init 대신 reset을 보낸다 (09 §9) */
+  reset?: { lost: boolean };
 }
 
 export class SyncCore {
@@ -70,7 +72,8 @@ export class SyncCore {
     this.exported = loro.oplogVersion();
     this.unsubscribe = loro.subscribe((e) => this.onEvent(e));
     const { raw, keys } = readRaw(loro);
-    opts.post({ t: 'init', raw, keys, state: readState(loro), peer: loro.peerIdStr });
+    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr };
+    opts.post(opts.reset ? { t: 'reset', ...init, lost: opts.reset.lost } : { t: 'init', ...init });
     this.heartbeat = setInterval(() => this.tick(), (opts.presenceTimeoutMs ?? 30000) / 2);
   }
 

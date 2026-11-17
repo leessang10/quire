@@ -26,8 +26,14 @@
       "name": "sync-server",
       "runtimeExecutable": "node",
       "runtimeArgs": [
+        "--experimental-transform-types",
+        "--no-warnings",
+        "--import",
+        "./apps/sync-server/src/resolve.ts",
         "apps/sync-server/src/server.ts",
-        "8787"
+        "8787",
+        "--data=.quire-data",
+        "--idle=10000"
       ],
       "port": 8787
     }

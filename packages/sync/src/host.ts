@@ -6,11 +6,14 @@
  *
  * 모드
  * - relay: 네트워크 업데이트를 메인으로 넘긴다 (한 페이지에 피어 여럿을 두는 데모: 메인이 지연·오프라인을 흉내 낸다).
- * - ws: Worker가 직접 중계 서버에 WebSocket으로 붙는다 (재접속 포함).
+ * - ws: Worker가 직접 중계 서버에 WebSocket으로 붙는다 (재접속 포함). 서버가 새 판으로 압축했으면 메인을 멈추고(hold),
+ *   보낸 묶음이 끝나면(held) 옛 문서를 새 판으로 옮겨 새 코어를 만든다(reset). 09 §9.
  */
+import type { LoroDoc } from 'loro-crdt';
 import type { SegState } from '@quire/model';
 import { SyncClient, type ClientOptions } from './client';
 import { SyncCore, type CoreOptions, type NetOut } from './core';
+import { rebaseOnto, type RebaseInfo } from './epoch';
 import type { PresenceUser } from './presence';
 import type { ToMain, ToWorker } from './protocol';
 import { initLoro, newLoro } from './shape';
@@ -36,6 +39,7 @@ export function serveSyncWorker(scope: PortLike): void {
   let link: WsLink | null = null;
   const post = (m: ToMain | { t: 'snapshot'; bytes: Uint8Array }) => scope.postMessage(m);
   const early: ToWorker[] = [];
+  let rebasing: { info: RebaseInfo; resolve: (loro: LoroDoc) => void; config: WorkerConfig; net: NetOut } | null = null;
 
   scope.addEventListener('message', (e: MessageEvent) => {
     const msg = e.data as ToWorker | StartMsg | SnapshotMsg;
@@ -45,6 +49,10 @@ export function serveSyncWorker(scope: PortLike): void {
     }
     if (msg.t === 'snapshot') {
       if (core) post({ t: 'snapshot', bytes: core.loro.export({ mode: 'snapshot' }) });
+      return;
+    }
+    if (msg.t === 'held') {
+      if (rebasing && core) finishRebase();
       return;
     }
     if (!core) {
@@ -57,6 +65,16 @@ export function serveSyncWorker(scope: PortLike): void {
 
   function coreOptions(c: WorkerConfig, net: NetOut): CoreOptions {
     return { user: c.user, post, net, batchMs: c.batchMs };
+  }
+
+  function finishRebase(): void {
+    const r = rebasing!;
+    rebasing = null;
+    const old = core!;
+    old.close();
+    const { loro, lost } = rebaseOnto(old.loro, r.info, r.config.peer);
+    core = new SyncCore(loro, { ...coreOptions(r.config, r.net), reset: { lost } });
+    r.resolve(loro);
   }
 
   function ready(c: SyncCore): void {
@@ -73,7 +91,7 @@ export function serveSyncWorker(scope: PortLike): void {
       ready(c.snapshot ? SyncCore.fromSnapshot(c.snapshot, c.peer, coreOptions(c, net)) : SyncCore.create(c.text ?? '', c.peer, coreOptions(c, net)));
       return;
     }
-    const loro = newLoro(c.peer);
+    let loro = newLoro(c.peer);
     const l: WsLink = new WsLink(c.url, loro, loro.peerIdStr, {
       onSync: ({ first, create, update }) => {
         if (first) {
@@ -88,6 +106,19 @@ export function serveSyncWorker(scope: PortLike): void {
       onDoc: (b) => core?.receiveDoc(b),
       onPresence: (b) => core?.receivePresence(b),
       onGone: (k) => core?.forgetPeer(k),
+      onRebase: (info) =>
+        new Promise<LoroDoc>((resolve) => {
+          if (!core) {
+            // 아직 메인에 문서를 주기 전 (보통은 없음: 처음 연결은 빈 문서라 판을 묻지 않는다)
+            loro = rebaseOnto(loro, info, c.peer).loro;
+            resolve(loro);
+            return;
+          }
+          // 가져온 원격 변경을 먼저 메인에 넘긴 뒤 멈춘다 (held 뒤의 텍스트 차이가 로컬 변경만 되도록)
+          core.flush();
+          rebasing = { info, resolve, config: c, net: l };
+          post({ t: 'hold' });
+        }),
       onStatus: (online, detail) => {
         post({ t: 'status', online, detail });
         if (online) core?.announce();

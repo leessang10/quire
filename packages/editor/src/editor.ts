@@ -248,6 +248,20 @@ export class Editor {
   }
 
   /**
+   * 문서 모델을 통째로 바꾼다 (동기화 문서가 새 판으로 바뀐 경우 등). 캐럿은 같은 화면 오프셋에 두고, 실행 취소 기록은 비운다
+   * (옛 문서의 원소 ID를 가리키므로).
+   */
+  setDoc(doc: Doc): void {
+    const { anchor, head } = this.selection();
+    this.doc = doc;
+    this.cache.clear();
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
+    this.history = new History();
+    this.setSelection(anchor, head);
+    this.refresh();
+  }
+
+  /**
    * 바깥에서 문서 모델이 바뀌었을 때(원격 편집 적용 등) 호출한다. 선택 영역은 원소 ID 기준이라 그대로 유지된다.
    * 실행 취소 기록에는 들어가지 않는다.
    */
