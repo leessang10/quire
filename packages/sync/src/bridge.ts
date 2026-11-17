@@ -13,7 +13,7 @@
  * - 맵 'hidden', 'placeholder', 'used': 구획 키 → true.
  * - 처음 문서: [사용자 문단들 BRK(t)][¶ BRK(p)][¶ 보초]. t는 순서 목록에, p는 자리표시.
  */
-import { LoroDoc, type LoroEventBatch, type LoroMap, type LoroMovableList, type LoroText, type VersionVector } from 'loro-crdt';
+import { Cursor, LoroDoc, type LoroEventBatch, type LoroMap, type LoroMovableList, type LoroText, type VersionVector } from 'loro-crdt';
 import { BRK_CHAR, Doc, type RawChange, type SegId, type SegState, type TextDelta } from '@quire/model';
 
 const TEXT = 'body';
@@ -47,6 +47,7 @@ export class SyncBridge {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly unsubscribe: () => void;
   private destroyed = false;
+  private readonly flushListeners = new Set<() => void>();
 
   /** 새 문서를 만든다 (처음 만드는 피어) */
   static create(text: string, opts: SyncOptions): SyncBridge {
@@ -134,6 +135,44 @@ export class SyncBridge {
       this.opts.onRemoteChange?.();
     }
     this.exported = this.loro.oplogVersion();
+    for (const fn of this.flushListeners) fn();
+  }
+
+  /** 아직 내보내지 않은 로컬 변경이 있는가 */
+  get pendingExport(): boolean {
+    return this.loro.oplogVersion().compare(this.exported) !== 0;
+  }
+
+  /** 묶음 처리(flush)가 끝날 때마다 호출된다. 해제 함수를 돌려준다 */
+  onFlush(fn: () => void): () => void {
+    this.flushListeners.add(fn);
+    return () => this.flushListeners.delete(fn);
+  }
+
+  // ── 공유 위치 (09 §7) ─────────────────────────────────
+
+  /**
+   * 화면 오프셋 → 공유 위치 (인코딩한 Loro 커서). 그 자리 원소(캐럿 바로 뒤 글자)에 붙으므로,
+   * 그 앞에 누가 입력해도 캐럿은 그 글자 앞에 남는다.
+   */
+  cursorAt(offset: number): Uint8Array {
+    const c = this.text.getCursor(this.doc.u16OfOffset(offset), 0);
+    if (!c) throw new Error(`no cursor at ${offset}`);
+    return c.encode();
+  }
+
+  /**
+   * 공유 위치 → 현재 화면 오프셋. 아직 받지 못한 연산을 가리키면 null.
+   * 기준 글자가 지워졌으면 그 글자가 있던 자리, 숨긴 구획에 있으면 그 구획이 놓였을 자리.
+   */
+  resolveCursor(bytes: Uint8Array): number | null {
+    let pos: ReturnType<LoroDoc['getCursorPos']>;
+    try {
+      pos = this.loro.getCursorPos(Cursor.decode(bytes));
+    } catch {
+      return null;
+    }
+    return pos ? this.doc.offsetOfU16(pos.offset) : null;
   }
 
   destroy(): void {

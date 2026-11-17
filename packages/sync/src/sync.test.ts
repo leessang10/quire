@@ -197,6 +197,7 @@ describe('SyncBridge randomized convergence (3 peers)', () => {
       const { peers, deliver, settle } = network(3, randomText(r, 200));
       const histories = peers.map(() => new History(0));
       let moves = 0;
+      const cursors: Uint8Array[] = [];
       for (let step = 0; step < 300; step++) {
         const k = Math.floor(r() * 3);
         const p = peers[k]!;
@@ -240,6 +241,14 @@ describe('SyncBridge randomized convergence (3 peers)', () => {
           expect(q.doc.rawText()).toBe(q.loro.getText('body').toString());
           expect(q.doc.segmentKeys()).toEqual(segKeysOf(q));
           expect(q.doc.paragraphs()).toEqual(q.doc.paragraphsFromScratch());
+          // 공유 위치: 아무 캐럿 자리나 커서로 만들었다 풀면 제자리
+          const o = Math.floor(r() * (q.doc.maxCaret + 1));
+          expect(q.resolveCursor(q.cursorAt(o))).toBe(o);
+        }
+        // 이따금 공유 위치를 만들어 두고 끝에서 모든 피어가 같은 자리로 푸는지 본다
+        if (step % 25 === 0) {
+          const o = Math.floor(r() * (doc.maxCaret + 1));
+          cursors.push(p.cursorAt(o));
         }
       }
       expect(moves).toBeGreaterThan(10);
@@ -248,6 +257,12 @@ describe('SyncBridge randomized convergence (3 peers)', () => {
       expect(texts[1]).toBe(texts[0]);
       expect(texts[2]).toBe(texts[0]);
       for (const p of peers) consistent(p);
+      for (const c of cursors) {
+        const at = peers.map((p) => p.resolveCursor(c));
+        expect(at[0]).not.toBeNull();
+        expect(at[1]).toBe(at[0]);
+        expect(at[2]).toBe(at[0]);
+      }
     });
   }
 });

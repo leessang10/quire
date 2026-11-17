@@ -666,6 +666,46 @@ export class Doc {
     return Math.min(this.length, !chunk.dead[i] && !hidden && pos.side === 'after' ? off + 1 : off);
   }
 
+  /**
+   * 화면 오프셋 → 그 자리 원소의 UTF-16 위치 (살아 있는 원소 열 = Loro 텍스트 기준).
+   * 공유 위치(원격 커서·주석 범위)를 Loro 커서로 만들 때 쓴다 (09 §7). 가상 ¶ 자리는 그 구획의 표식 원소.
+   */
+  u16OfOffset(offset: number): number {
+    const total = this.length;
+    offset = clamp(offset, 0, total);
+    const at = offset < total ? offset : total - 1;
+    const { seg, raw } = this.toRaw(at);
+    const { chunk, index } = this.insertPoint(seg, raw);
+    const u = this.u16At(chunk, index);
+    return offset < total || index >= chunk.len ? u : u + width16(chunk.codes[index]!);
+  }
+
+  /**
+   * UTF-16 위치(Loro 텍스트 기준) → 화면 오프셋. 그 자리 원소가 화면에 나오지 않는 구획에 있으면
+   * 그 구획이 놓였을 자리. 결과는 커서가 놓일 수 있는 범위(0..maxCaret)로 자른다.
+   */
+  offsetOfU16(u16: number): number {
+    let { chunk, index } = this.locateU16(Math.max(0, u16));
+    if (index >= chunk.len) {
+      // 텍스트 끝: 마지막 원소(묘비 제외)의 자리
+      let c = this.chunks.length - 1;
+      let i = -1;
+      for (; c >= 0 && i < 0; c--) {
+        const ch = this.chunks[c]!;
+        for (let k = ch.len - 1; k >= 0; k--) {
+          if (ch.dead[k] !== TOMB) {
+            i = k;
+            chunk = ch;
+            break;
+          }
+        }
+      }
+      if (i < 0) return 0;
+      index = i;
+    }
+    return clamp(this.elementDisplay(chunk, index).off, 0, this.maxCaret);
+  }
+
   // ── 검사 ──────────────────────────────────────────────
 
   /** 디버그·테스트용: 문단 목록을 처음부터 다시 계산한 결과 */

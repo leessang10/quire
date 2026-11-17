@@ -3,7 +3,7 @@
  *   npx vitest run --config vitest.bench.config.ts scripts/bench-sync.test.ts --silent=false
  *
  * 브리지를 붙인 Doc에서 키 입력 1회 비용(Doc 편집 + UTF-16 위치 + Loro 입력·커밋)과
- * 묶음 처리(flush: 내보내기 + 원격 가져오기 + Doc 적용) 비용을 잰다.
+ * 묶음 처리(flush: 내보내기 + 원격 가져오기 + Doc 적용) 비용, 공유 위치(Loro 커서) 만들기·풀기 비용을 잰다.
  */
 import { it } from 'vitest';
 import { SyncBridge } from '@quire/sync';
@@ -58,6 +58,27 @@ function scenario(paragraphs: number) {
   }
   if (a.doc.text() !== b.doc.text()) throw new Error('diverged');
 
+  // 공유 위치: 캐럿 → 커서(보내는 쪽), 커서 → 화면 오프셋(받는 쪽). 문단을 몇 개 옮겨 구획을 늘린 상태
+  for (let k = 0; k < 20; k++) {
+    const n = a.doc.paragraphs().length;
+    a.doc.moveParagraphs((k * 7919) % n, (k * 7919) % n, (k * 104729) % (n + 1));
+  }
+  a.flush();
+  for (const u of outbox.splice(0)) b.receive(u);
+  b.flush();
+  const make: number[] = [];
+  const resolve: number[] = [];
+  for (let k = 0; k < 200; k++) {
+    const o = Math.floor(((k * 2654435761) % 1_000_003) / 1_000_003 * a.doc.maxCaret);
+    let s = performance.now();
+    const c = a.cursorAt(o);
+    make.push(performance.now() - s);
+    s = performance.now();
+    const back = b.resolveCursor(c);
+    resolve.push(performance.now() - s);
+    if (back !== o) throw new Error(`cursor ${o} -> ${back}`);
+  }
+
   console.log(
     [
       '',
@@ -67,6 +88,8 @@ function scenario(paragraphs: number) {
       `  Backspace (브리지 포함)  ${stats(back)}`,
       `  묶음 내보내기 (5타)      ${stats(flushA)}`,
       `  묶음 가져오기 + Doc 적용 ${stats(flushB)}`,
+      `  공유 위치 만들기         ${stats(make)}  (구획 ${a.doc.segmentCount}개)`,
+      `  공유 위치 풀기           ${stats(resolve)}`,
     ].join(NL),
   );
   a.destroy();

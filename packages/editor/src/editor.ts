@@ -3,7 +3,7 @@
  * 설계: docs/design/03, 04, 08
  */
 import { Doc, History, type Op, type Position, type Selection } from '@quire/model';
-import { LayoutCache, PagedLayout, cpSlice, pageTop, type Measurer, type PageSetup } from '@quire/layout';
+import { LayoutCache, PagedLayout, cpSlice, docToDisplay, pageTop, type Measurer, type PageSetup } from '@quire/layout';
 import { TextareaInput, type InputIntent, type InputLogEntry } from './input';
 
 export interface EditorOptions {
@@ -15,6 +15,18 @@ export interface EditorOptions {
   fontSize?: number;
   onInputLog?: (entry: InputLogEntry) => void;
   onChange?: (editor: Editor) => void;
+  /** 선택 영역(캐럿)이 바뀌었을 때 (프레즌스 전송용). 화면 오프셋 */
+  onSelectionChange?: (anchor: number, head: number) => void;
+}
+
+/** 다른 사용자의 선택 영역 (화면 오프셋). 협업 프레즌스에서 받아 그린다 */
+export interface RemoteCaret {
+  key: string;
+  name: string;
+  /** #rrggbb */
+  color: string;
+  anchor: number;
+  head: number;
 }
 
 export interface EditorStats {
@@ -120,6 +132,10 @@ export class Editor {
   private drag: { i: number; j: number; to: number; clientX: number; clientY: number } | null = null;
   private autoScroll = 0;
   private autoScrollRaf = 0;
+  /** 다른 사용자의 캐럿·선택 */
+  private remotes: RemoteCaret[] = [];
+  /** 마지막으로 onSelectionChange로 알린 선택 (같은 객체면 바뀌지 않음) */
+  private reportedSel: Selection | null = null;
 
   constructor(private readonly opts: EditorOptions) {
     this.fontSize = opts.fontSize ?? 16;
@@ -239,6 +255,12 @@ export class Editor {
     this.relayout();
     this.render();
     this.opts.onChange?.(this);
+  }
+
+  /** 다른 사용자의 캐럿·선택을 바꾼다 (프레즌스 갱신·원격 편집 뒤에 호출) */
+  setRemoteCarets(list: RemoteCaret[]): void {
+    this.remotes = list;
+    this.scheduleRender();
   }
 
   getText(): string {
@@ -413,6 +435,23 @@ export class Editor {
         }
       }
 
+      // 다른 사용자의 선택 영역
+      for (const rc of this.remotes) {
+        if (rc.anchor === rc.head) continue;
+        const pEnd = this.doc.paragraphs()[ref.para]!.end; // 이 문단 ¶의 오프셋
+        const a = Math.max(Math.min(rc.anchor, rc.head), pStart);
+        const b = Math.min(Math.max(rc.anchor, rc.head), pEnd + 1);
+        if (a >= b) continue;
+        const withMark = b > pEnd && ln.index === para.lines.length - 1; // 이 줄에 ¶까지 포함
+        const sd = Math.max(docToDisplay(para, a), ln.start);
+        const ed = b > pEnd ? ln.end : Math.min(docToDisplay(para, b), ln.end);
+        if (sd > ed || (sd === ed && !withMark)) continue;
+        const sx = x0 + xs[sd]!;
+        const ex = x0 + xs[ed]! + (withMark ? this.fontSize * 0.5 : 0);
+        ctx.fillStyle = withAlpha(rc.color, 0.22);
+        ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
+      }
+
       // 글자
       ctx.fillStyle = COLORS.text;
       const midY = y + ln.height / 2;
@@ -462,6 +501,7 @@ export class Editor {
     }
 
     this.drawParagraphDrag(px, top);
+    this.drawRemoteCarets(px, top, w, visibleParas);
 
     if (!ready) {
       this.drawPendingPlaceholder(px, top, w, h);
@@ -470,6 +510,7 @@ export class Editor {
 
     this.updateCaret();
     this.updateMirror(visibleParas);
+    this.reportSelection();
     this.stats.renderMs = performance.now() - t0;
   }
 
@@ -508,6 +549,41 @@ export class Editor {
     ctx.beginPath();
     ctx.arc(x, y, 4, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  /** 다른 사용자의 캐럿과 이름표. 화면에 보이는 문단에 있는 것만 */
+  private drawRemoteCarets(px: number, top: number, w: number, visible: Set<number>): void {
+    if (this.remotes.length === 0) return;
+    const { ctx } = this;
+    ctx.save();
+    ctx.font = `600 11px ${this.font.replace(/^\d+px /, '')}`;
+    ctx.textBaseline = 'middle';
+    for (const rc of this.remotes) {
+      const head = Math.min(rc.head, this.doc.maxCaret);
+      if (!visible.has(this.doc.paragraphIndexAt(head))) continue;
+      const r = this.layout.caretRect(head);
+      const x = Math.round(px + r.x);
+      const y = r.y - top;
+      ctx.fillStyle = rc.color;
+      ctx.fillRect(x - 1, y + 2, 2, r.height - 4);
+      // 이름표: 캐럿 위 (위에 자리가 없으면 아래)
+      const tw = ctx.measureText(rc.name).width + 8;
+      const th = 16;
+      const ly = y - th + 2 >= 0 ? y - th + 2 : y + r.height - 2;
+      const lx = Math.min(x - 1, w - tw - 2);
+      ctx.fillRect(lx, ly, tw, th);
+      ctx.fillStyle = readableOn(rc.color);
+      ctx.fillText(rc.name, lx + 4, ly + th / 2 + 0.5);
+    }
+    ctx.restore();
+  }
+
+  /** 선택 영역이 바뀌었으면 알린다 (원격 편집으로 오프셋만 바뀐 것은 알리지 않음: 공유 위치가 따라간다) */
+  private reportSelection(): void {
+    if (this.sel === this.reportedSel || !this.opts.onSelectionChange) return;
+    this.reportedSel = this.sel;
+    const { anchor, head } = this.selection();
+    this.opts.onSelectionChange(anchor, head);
   }
 
   /** 아직 배치되지 않은 영역: 쪽 위에 옅은 막과 진행률을 그린다 */
@@ -1066,6 +1142,24 @@ export class Editor {
 }
 
 // ── 유틸 ─────────────────────────────────────────────────
+
+/** #rrggbb → rgba(…, a) */
+function withAlpha(hex: string, a: number): string {
+  const n = parseInt(hex.slice(1, 7), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+/** 배경색 위에서 읽히는 글자색 (흰색 또는 검정) */
+function readableOn(hex: string): string {
+  const n = parseInt(hex.slice(1, 7), 16);
+  const lin = (c: number) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const L = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  // 흰 글자와의 대비가 4.5 이상이면 흰색
+  return 1.05 / (L + 0.05) >= 4.5 ? '#ffffff' : '#1d1d1f';
+}
 
 const wordSegmenter = new Intl.Segmenter('ko', { granularity: 'word' });
 
