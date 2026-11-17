@@ -11,7 +11,8 @@
  * - textupdate: 조합 중이면 조합 범위의 글자를 preedit로(문서에 넣지 않음), 아니면 insertText.
  * - compositionstart/end는 EditContext에서 온다. 확정 글자는 마지막 preedit(또는 이벤트 data)다.
  * - Enter·Tab은 textupdate가 오지 않으므로 keydown에서 처리한다. 조합 중 Enter(key가 'Process'일 수 있어 code로
- *   본다)는 조합 확정 뒤에 문단을 나눈다.
+ *   본다)는 조합 확정 뒤에 문단을 나눈다. Windows 한국어 IME + Chromium은 같은 Enter를 확정 뒤 keydown으로 한 번 더
+ *   보내므로(실제 IME로 확인), keyup 전에 오는 반복 아닌 Enter keydown은 버린다.
  * - Backspace·Delete·방향키 등은 keydown → 'key' 의도로 편집기가 처리하고 preventDefault한다 (EditContext가
  *   버퍼를 따로 지우지 않게).
  *
@@ -64,6 +65,11 @@ export class EditContextInput implements InputBackend {
   readonly ec: EditContextLike;
   composing = false;
   private pendingParagraph = false;
+  /**
+   * 조합 중 눌린 Enter가 아직 떼어지지 않았다 (keyup 전). Windows 한국어 IME + Chromium은 이 Enter를
+   * keydown(Process, 229) → compositionend → keydown(Enter, 13)으로 두 번 보낸다. 두 번째는 같은 누름이므로 버린다.
+   */
+  private compositionEnterDown = false;
   /** 조합 시작 때 버퍼 위치와 길이: preedit = 조합 범위의 글자 */
   private compStart = 0;
   private baseLen = 0;
@@ -109,15 +115,34 @@ export class EditContextInput implements InputBackend {
       const enter = e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter';
       if (e.isComposing || e.keyCode === 229 || this.composing) {
         // 조합 중 Enter: IME가 확정한 뒤 문단을 나눈다
-        if (enter) this.pendingParagraph = true;
+        if (enter) {
+          this.pendingParagraph = true;
+          this.compositionEnterDown = true;
+        }
         return;
       }
+      if (enter && this.compositionEnterDown && !e.repeat) {
+        // 조합을 확정한 그 Enter의 두 번째 keydown: 문단은 이미 나눴다
+        this.compositionEnterDown = false;
+        e.preventDefault();
+        this.log('skip', 'Enter keydown after composition Enter');
+        return;
+      }
+      this.compositionEnterDown = false;
       if (enter && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         this.onIntent({ kind: 'insertParagraph' });
         return;
       }
       this.onIntent({ kind: 'key', event: e });
+    });
+
+    this.on(el, 'keyup', (ev) => {
+      const e = ev as KeyboardEvent;
+      if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') this.compositionEnterDown = false;
+    });
+    this.on(el, 'blur', () => {
+      this.compositionEnterDown = false;
     });
 
     this.on(this.ec, 'textupdate', (ev) => {

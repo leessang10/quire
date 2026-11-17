@@ -104,8 +104,8 @@ function setup() {
     rect: (x, y, w, h) => ({ x, y, width: w, height: h }) as DOMRect,
   });
   const el = input.el as unknown as FakeElement;
-  const key = (init: { key: string; code?: string; keyCode?: number; isComposing?: boolean; ctrlKey?: boolean }) => {
-    const e = Object.assign(new Event('keydown', { cancelable: true }), { code: init.key, keyCode: 0, isComposing: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...init });
+  const key = (init: { key: string; code?: string; keyCode?: number; isComposing?: boolean; ctrlKey?: boolean; repeat?: boolean }, type = 'keydown') => {
+    const e = Object.assign(new Event(type, { cancelable: true }), { code: init.key, keyCode: 0, isComposing: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false, ...init });
     el.dispatchEvent(e);
     return e;
   };
@@ -184,6 +184,38 @@ describe('EditContext input (path A)', () => {
     expect(e2.defaultPrevented).toBe(false);
     ec.endComposition();
     expect(seen()).toEqual(['compositionStart', 'compositionUpdate:한', 'compositionEnd:한', 'insertParagraph']);
+  });
+
+  it('splits once when the IME sends Enter again after committing (Windows Korean IME + Chromium)', () => {
+    const { ec, key, seen } = setup();
+    ec.startComposition();
+    ec.compose('한');
+    // 실제 기록: keydown Process/Enter/229 → compositionend → keydown Enter/13 → keyup
+    key({ key: 'Process', code: 'Enter', keyCode: 229 });
+    ec.endComposition();
+    const second = key({ key: 'Enter', code: 'Enter', keyCode: 13 });
+    expect(second.defaultPrevented).toBe(true);
+    key({ key: 'Enter', code: 'Enter', keyCode: 13 }, 'keyup');
+    ec.startComposition();
+    ec.compose('글');
+    ec.endComposition();
+    expect(seen()).toEqual(['compositionStart', 'compositionUpdate:한', 'compositionEnd:한', 'insertParagraph', 'compositionStart', 'compositionUpdate:글', 'compositionEnd:글']);
+    // 그 뒤의 Enter는 평소대로, 길게 눌러 반복되는 Enter도 그대로
+    key({ key: 'Enter', keyCode: 13 });
+    key({ key: 'Enter', keyCode: 13, repeat: true });
+    expect(seen()).toEqual(['insertParagraph', 'insertParagraph']);
+  });
+
+  it('keeps holding Enter after a composition: repeated keydowns are not dropped', () => {
+    const { ec, key, seen } = setup();
+    ec.startComposition();
+    ec.compose('가');
+    key({ key: 'Process', code: 'Enter', keyCode: 229 });
+    ec.endComposition();
+    key({ key: 'Enter', keyCode: 13 }); // 같은 누름의 두 번째: 버림
+    key({ key: 'Enter', keyCode: 13, repeat: true });
+    key({ key: 'Enter', keyCode: 13, repeat: true });
+    expect(seen().filter((x) => x === 'insertParagraph')).toHaveLength(3);
   });
 
   it('passes other keys to the editor, but not while composing', () => {

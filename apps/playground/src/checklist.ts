@@ -138,6 +138,8 @@ function run() {
   return store.runs[k];
 }
 
+// 환경 칸을 고치면(잘못 잡힌 OS·입력기 바로잡기) 그 이름으로 남긴 결과도 새 이름으로 옮긴다. 새 이름에 이미 결과가 있으면 옮기지 않는다
+let lastKey = envKey(env());
 for (const [el, key] of [
   [platformEl, 'platform'],
   [imeEl, 'ime'],
@@ -145,6 +147,14 @@ for (const [el, key] of [
 ] as const) {
   el.addEventListener('change', () => {
     pref(key, el.value);
+    const next = envKey(env());
+    const old = store.runs[lastKey];
+    if (next !== lastKey && old && Object.keys(old.results).length > 0 && !store.runs[next]) {
+      store.runs[next] = { env: env(), results: old.results };
+      delete store.runs[lastKey];
+      save();
+    }
+    lastKey = next;
     renderList();
     show(current);
   });
