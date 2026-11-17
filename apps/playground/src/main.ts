@@ -98,14 +98,20 @@ modeSelect.addEventListener('change', () => {
   location.search = params.toString();
 });
 
-// 엔진 글꼴 (ADR-0002): 개발용으로 Windows 글꼴을 복사해 쓴다 (node spikes/shaping/prepare-fonts.mjs). ?fonts=off면 시스템 글꼴 측정
+// 엔진 글꼴 (ADR-0002): 저장소의 OFL 글꼴(fonts/)을 조각낸 것 (node scripts/build-fonts.mjs → public/fonts).
+// 문서에 나온 글자의 조각만 받는다. ?fonts=off면 시스템 글꼴 측정, ?fonts=windows면 Windows 글꼴 통째로(검증용)
 const fonts =
   params.get('fonts') === 'off'
     ? undefined
-    : [
-        { name: '맑은 고딕', url: '/spike-fonts/malgun.ttf' },
-        { name: 'Calibri', url: '/spike-fonts/calibri.ttf' },
-      ];
+    : params.get('fonts') === 'windows'
+      ? [
+          { name: '맑은 고딕', url: '/spike-fonts/malgun.ttf' },
+          { name: 'Calibri', url: '/spike-fonts/calibri.ttf' },
+        ]
+      : [
+          { name: 'Pretendard', manifest: '/fonts/pretendard/manifest.json' },
+          { name: 'Noto Sans KR', manifest: '/fonts/noto-sans-kr/manifest.json' },
+        ];
 const editor = new Editor({
   host,
   text: SAMPLE,

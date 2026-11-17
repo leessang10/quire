@@ -10,3 +10,4 @@ Thumbs.db
 !.env.example
 .quire-data/
 apps/playground/public/spike-fonts/
+apps/playground/public/fonts/

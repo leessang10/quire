@@ -32,6 +32,20 @@ export interface ShapingFont {
   has(cp: number): boolean;
 }
 
+/**
+ * 글꼴 목록의 한 자리. 부분 로드(02 §4)에서는 글꼴 조각마다 하나이고, 불러오기 전에도 어떤 글자를 가졌는지 안다
+ * (조각 목록의 범위). font가 null이면 아직 불러오지 않았다.
+ */
+export interface FontSlot {
+  name: string;
+  covers(cp: number): boolean;
+  font: ShapingFont | null;
+}
+
+export function slotOf(font: ShapingFont): FontSlot {
+  return { name: font.name, covers: (cp) => font.has(cp), font };
+}
+
 export function loadShapingFont(bytes: Uint8Array | ArrayBuffer, name: string): ShapingFont {
   const face = new hb.Face(new hb.Blob(bytes));
   const font = new hb.Font(face);
@@ -131,6 +145,11 @@ export interface ShaperOptions {
   fallback?: Measurer;
   /** 캐시 항목 수 상한 (넘으면 비운다). 기본 100,000 */
   cacheLimit?: number;
+  /**
+   * 아직 불러오지 않은 글꼴 자리의 글자를 만났다 (자리마다 한 번). 그 글자는 불러올 때까지 대체 측정기로 재고 캐시하지 않는다.
+   * 불러오면 loaded(i, font)를 부르고 다시 조판한다.
+   */
+  onMissing?: (slot: number) => void;
 }
 
 export class HbShaper implements Measurer {
@@ -140,18 +159,36 @@ export class HbShaper implements Measurer {
   private readonly fallback: Measurer | undefined;
   private readonly cacheLimit: number;
   private spaceW = -1;
+  readonly slots: FontSlot[];
+  private readonly onMissing: ((slot: number) => void) | undefined;
+  private readonly requested = new Set<number>();
+  /** 지금 셰이핑하는 조각에 아직 없는 글꼴이 쓰였다 (캐시하지 않음) */
+  private pending = false;
   /** 통계 */
   shapedRuns = 0;
   cacheHits = 0;
 
-  constructor(
-    readonly fonts: ShapingFont[],
-    opts: ShaperOptions,
-  ) {
+  constructor(fonts: Array<ShapingFont | FontSlot>, opts: ShaperOptions) {
     if (fonts.length === 0) throw new Error('HbShaper: no fonts');
+    if (fonts.length >= FALLBACK_FONT) throw new Error(`HbShaper: at most ${FALLBACK_FONT - 1} font slots`);
+    this.slots = fonts.map((f) => ('hb' in f ? slotOf(f) : f));
     this.size = opts.size;
     this.fallback = opts.fallback;
     this.cacheLimit = opts.cacheLimit ?? 100_000;
+    this.onMissing = opts.onMissing;
+    if (this.slots.some((s) => !s.font) && !this.fallback) throw new Error('HbShaper: lazy font slots need a fallback measurer');
+  }
+
+  /** 자리 i의 글꼴을 불러왔다. 그 자리를 쓰는 글자는 다음 셰이핑부터 이 글꼴로 잰다 (편집기가 다시 조판한다) */
+  loaded(i: number, font: ShapingFont): void {
+    this.slots[i]!.font = font;
+    this.requested.delete(i);
+    this.spaceW = -1;
+  }
+
+  /** 불러오기를 요청했지만 아직 안 온 자리 */
+  get waiting(): number[] {
+    return [...this.requested];
   }
 
   width(g: string): number {
@@ -173,10 +210,21 @@ export class HbShaper implements Measurer {
 
   private space(): number {
     if (this.spaceW < 0) {
-      const f = this.fonts[0]!;
+      const slot = this.slots.findIndex((s) => s.covers(0x20));
+      const f = slot >= 0 ? this.slots[slot]!.font : null;
+      if (!f) {
+        if (slot >= 0) this.request(slot);
+        return this.fallback ? this.fallback.width(' ') : 0;
+      }
       this.spaceW = this.px(f, this.runUnits(f, ' ').reduce((s, g) => s + g.ax, 0));
     }
     return this.spaceW;
+  }
+
+  private request(i: number): void {
+    if (this.requested.has(i)) return;
+    this.requested.add(i);
+    this.onMissing?.(i);
   }
 
   private px(f: ShapingFont, units: number): number {
@@ -189,7 +237,9 @@ export class HbShaper implements Measurer {
       this.cacheHits++;
       return hit;
     }
+    this.pending = false;
     const r = this.shapeChunk(chunk);
+    if (this.pending) return r; // 아직 없는 글꼴을 대신 잰 결과: 불러오면 달라진다
     if (this.cache.size >= this.cacheLimit) this.cache.clear();
     this.cache.set(chunk, r);
     return r;
@@ -230,9 +280,16 @@ export class HbShaper implements Measurer {
       if (!isJoiner(c)) cps.push(c);
     }
     if (cps.length === 0) return 0;
-    for (let i = 0; i < this.fonts.length; i++) if (cps.every((c) => this.fonts[i]!.has(c))) return i;
-    for (let i = 0; i < this.fonts.length; i++) if (this.fonts[i]!.has(cps[0]!)) return i;
-    return this.fallback ? FALLBACK_FONT : 0;
+    let pick = -1;
+    for (let i = 0; i < this.slots.length && pick < 0; i++) if (cps.every((c) => this.slots[i]!.covers(c))) pick = i;
+    for (let i = 0; i < this.slots.length && pick < 0; i++) if (this.slots[i]!.covers(cps[0]!)) pick = i;
+    if (pick < 0) return this.fallback ? FALLBACK_FONT : 0;
+    if (!this.slots[pick]!.font) {
+      this.request(pick);
+      this.pending = true;
+      return FALLBACK_FONT;
+    }
+    return pick;
   }
 
   private shapeChunk(chunk: string): Shaped {
@@ -253,7 +310,7 @@ export class HbShaper implements Measurer {
       if (font === FALLBACK_FONT) {
         for (let k = a; k < b; k++) adv[gs[k]!.cp] = this.fallback!.width(gs[k]!.text);
       } else {
-        this.shapeRun(this.fonts[font]!, chunk, gs, a, b, adv);
+        this.shapeRun(this.slots[font]!.font!, chunk, gs, a, b, adv);
       }
       a = b;
     }
