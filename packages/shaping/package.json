@@ -1,0 +1,11 @@
+{
+  "name": "@quire/shaping",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@quire/layout": "*",
+    "harfbuzzjs": "1.6.4"
+  }
+}
