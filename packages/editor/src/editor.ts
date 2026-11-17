@@ -3,7 +3,7 @@
  * 설계: docs/design/03, 04, 08
  */
 import { Doc, History, type Op, type Position, type Selection } from '@quire/model';
-import { LayoutCache, PagedLayout, cpSlice, docToDisplay, pageTop, type Measurer, type PageSetup } from '@quire/layout';
+import { LayoutCache, PagedLayout, cpSlice, docToDisplay, pageTop, type Measurer, type PageSetup, type ParaLayout } from '@quire/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 
@@ -16,6 +16,13 @@ export interface EditorOptions {
   fontSize?: number;
   onInputLog?: (entry: InputLogEntry) => void;
   /**
+   * 엔진이 불러올 글꼴 (ADR-0002). 앞이 기본 글꼴, 뒤는 대체 글꼴. 주면 불러오는 동안은 fontFamily(시스템 글꼴)로
+   * 측정하고, 다 불러오면 HarfBuzz 셰이핑으로 바꿔 다시 조판한다. 그리기도 같은 파일(FontFace)로 한다.
+   */
+  fonts?: FontSource[];
+  /** 글꼴을 다 불러와 셰이핑으로 바꿨을 때 (실패하면 error) */
+  onFontsReady?: (editor: Editor, error?: unknown) => void;
+  /**
    * 입력 층 (03 §2). auto(기본): EditContext를 지원하면 경로 A, 아니면 숨긴 textarea(경로 B).
    * editcontext를 골랐는데 지원하지 않으면 textarea를 쓴다.
    */
@@ -23,6 +30,14 @@ export interface EditorOptions {
   onChange?: (editor: Editor) => void;
   /** 선택 영역(캐럿)이 바뀌었을 때 (프레즌스 전송용). 화면 오프셋 */
   onSelectionChange?: (anchor: number, head: number) => void;
+}
+
+/** 엔진이 불러올 글꼴 파일 (TTF·OTF: HarfBuzz가 woff2를 읽지 못하므로 압축 안 된 sfnt) */
+export interface FontSource {
+  /** 사람이 읽는 이름 (상태 표시용) */
+  name: string;
+  url?: string;
+  data?: ArrayBuffer | Uint8Array;
 }
 
 /** 다른 사용자의 선택 영역 (화면 오프셋). 협업 프레즌스에서 받아 그린다 */
@@ -78,6 +93,8 @@ const AUTOSCROLL_EDGE = 40;
 
 /** 렌더링 한 번에 쪽 조립에 쓸 최대 시간 (나머지는 다음 프레임) */
 const RENDER_LAYOUT_BUDGET_MS = 10;
+/** FontFace 이름을 편집기마다 다르게 */
+let editorSeq = 0;
 
 class CanvasMeasurer implements Measurer {
   private ctx: CanvasRenderingContext2D;
@@ -120,7 +137,11 @@ export class Editor {
   private readonly mirror: HTMLDivElement;
   private readonly input: InputBackend;
   private readonly font: string;
-  private readonly measurer: Measurer;
+  private measurer: Measurer;
+  /** 셰이핑 중이면 글꼴 번호별 CSS font (FontFace로 등록한 엔진 글꼴). null이면 시스템 글꼴 측정 */
+  private shapedFonts: string[] | null = null;
+  /** 상태 표시: 측정 방식 */
+  textEngine = 'canvas';
   private readonly cache = new LayoutCache();
   private readonly setup: PageSetup;
   private readonly fontSize: number;
@@ -237,6 +258,44 @@ export class Editor {
     this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
     this.relayout();
     this.render();
+    if (opts.fonts?.length) {
+      this.loadFonts(opts.fonts).then(
+        () => opts.onFontsReady?.(this),
+        (e: unknown) => {
+          this.textEngine = 'canvas (글꼴 불러오기 실패)';
+          opts.onFontsReady?.(this, e);
+        },
+      );
+    }
+  }
+
+  /** 글꼴을 불러와 HarfBuzz 셰이핑으로 바꾼다 (셰이핑 모듈·WASM은 이때 불러온다) */
+  private async loadFonts(sources: FontSource[]): Promise<void> {
+    const { HbShaper, loadShapingFont } = await import('@quire/shaping');
+    const bytes = await Promise.all(
+      sources.map(async (f) => {
+        if (f.data) return f.data instanceof Uint8Array ? f.data : new Uint8Array(f.data);
+        const r = await fetch(f.url!);
+        if (!r.ok) throw new Error(`글꼴을 불러오지 못함: ${f.url} (${r.status})`);
+        return new Uint8Array(await r.arrayBuffer());
+      }),
+    );
+    const families = sources.map((_, i) => `quire-font-${editorSeq}-${i}`);
+    await Promise.all(
+      bytes.map(async (b, i) => {
+        const face = new FontFace(families[i]!, b.slice().buffer);
+        document.fonts.add(await face.load());
+      }),
+    );
+    editorSeq++;
+    const fonts = bytes.map((b, i) => loadShapingFont(b, sources[i]!.name));
+    this.measurer = new HbShaper(fonts, { size: this.fontSize, fallback: this.measurer });
+    this.shapedFonts = families.map((f) => `${this.fontSize}px ${f}`);
+    this.textEngine = `HarfBuzz (${sources.map((s) => s.name).join(', ')})`;
+    this.cache.clear();
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
+    this.refresh();
+    this.opts.onChange?.(this);
   }
 
   // ── 공개 API ──────────────────────────────────────────
@@ -428,7 +487,8 @@ export class Editor {
     const visibleParas = new Set<number>();
     ctx.font = this.font;
     ctx.textBaseline = 'middle';
-    if (this.kerningOff) ctx.fontKerning = 'none';
+    // 셰이핑 중이면 커닝을 켠다: 같은 글꼴 파일이면 캔버스가 HarfBuzz와 같은 폭으로 그린다 (ADR-0002)
+    if (this.kerningOff) ctx.fontKerning = this.shapedFonts ? 'normal' : 'none';
     // 화면 영역이 아직 배치되지 않았으면 시간 예산 안에서만 배치한다 (스크롤바로 멀리 이동한 경우 등).
     // 못 끝낸 부분은 자리표시로 그리고 다음 프레임에 이어서 한다.
     const ready = layout.ensureThroughY(top + h, RENDER_LAYOUT_BUDGET_MS);
@@ -493,7 +553,10 @@ export class Editor {
       // 글자
       ctx.fillStyle = COLORS.text;
       const midY = y + ln.height / 2;
-      if (this.kerningOff) {
+      if (this.shapedFonts) {
+        this.drawShapedLine(para.layout, ln.start, ln.end, x0, midY);
+        ctx.font = this.font;
+      } else if (this.kerningOff) {
         // 커닝을 끄면 문자열 폭 = 글자 폭의 합이므로 탭 사이 구간을 한 번에 그린다 (그리기 호출 수 ↓)
         const text = cpSlice(para.layout, ln.start, ln.end);
         let segStart = ln.start;
@@ -550,6 +613,31 @@ export class Editor {
     this.updateMirror(visibleParas);
     this.reportSelection();
     this.stats.renderMs = performance.now() - t0;
+  }
+
+  /**
+   * 셰이핑한 줄 그리기: 어절(공백·탭 사이)과 글꼴이 바뀌는 곳마다 나눠 셰이핑 위치에 fillText. 레이아웃이 어절마다
+   * 셰이핑했으므로 같은 단위로 그려야 어절 경계 커닝 차이가 생기지 않는다.
+   */
+  private drawShapedLine(pl: ParaLayout, start: number, end: number, x0: number, y: number): void {
+    const { ctx } = this;
+    const fonts = pl.fonts;
+    const families = this.shapedFonts!;
+    const fontAt = (k: number) => (fonts ? fonts[k]! : 0);
+    const blank = (c: string) => c === ' ' || c === '\t' || c === '　';
+    let k = start;
+    while (k < end) {
+      if (blank(cpSlice(pl, k, k + 1))) {
+        k++;
+        continue;
+      }
+      const f = fontAt(k);
+      let j = k + 1;
+      while (j < end && fontAt(j) === f && !blank(cpSlice(pl, j, j + 1))) j++;
+      ctx.font = f < families.length ? families[f]! : this.font;
+      ctx.fillText(cpSlice(pl, k, j), x0 + pl.xs[k]!, y);
+      k = j;
+    }
   }
 
   /** 문단 손잡이(⋮⋮)와 끌어서 놓을 자리 표시 */

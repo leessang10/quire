@@ -1,8 +1,10 @@
 /**
  * 문단 레이아웃: 글자 폭 측정 → 줄바꿈 (02 §4–5)
  *
- * 0단계 단순화
- * - 셰이핑 대신 grapheme 단위 폭 합산 (Measurer). 커닝·합자 무시 (ADR-0002)
+ * 폭 측정 (ADR-0002)
+ * - 셰이퍼(Measurer.advances가 있음): 공백으로 나뉜 조각(어절)마다 셰이핑해 코드포인트별 진행폭을 받는다. 커닝·합자가
+ *   반영되고, 조각 안의 위치는 셰이퍼가 정한다 (합자는 grapheme마다 나눔). 어절 경계를 넘는 커닝은 없다.
+ * - 셰이퍼가 없으면 grapheme 단위 폭 합산 (커닝·합자 무시, 0단계 방식)
  * - 줄바꿈: 한글 어절(공백) 단위. 한 어절이 줄보다 길면 글자 단위로 끊음
  * - 금칙: 글자 단위로 끊을 때 닫는 문장부호가 줄 앞에 오지 않게 한 글자 당김
  * - 왼쪽 정렬만
@@ -13,6 +15,13 @@
 export interface Measurer {
   /** grapheme 하나의 진행폭 (px) */
   width(grapheme: string): number;
+  /**
+   * 셰이퍼: 공백·탭이 없는 조각(어절)의 코드포인트별 진행폭 (px, 길이 = 코드포인트 수). 같은 조각이면 같은 결과.
+   * 있으면 레이아웃이 width 대신 쓴다. 공백·탭·전각 공백 하나는 width로 잰다.
+   */
+  advances?(chunk: string): Float32Array;
+  /** 셰이퍼: 조각의 코드포인트별 글꼴 번호 (그리기용). 모두 0번 글꼴이면 null */
+  fontsOf?(chunk: string): Uint8Array | null;
 }
 
 export interface Preedit {
@@ -41,6 +50,8 @@ export interface ParaLayout {
   /** 표시 인덱스 기준 조합 문자열 구간 [start, end), 없으면 null */
   preedit: [number, number] | null;
   lines: LineBox[];
+  /** 코드포인트별 글꼴 번호 (셰이퍼가 준 것). 모두 0번이면 null */
+  fonts: Uint8Array | null;
 }
 
 /** 표시 텍스트의 코드포인트 구간 [a, b) */
@@ -121,11 +132,12 @@ export function layoutParagraph(
       gFirst.push(ch);
       stops[i] = 1;
       xs[i] = x;
-      x += measurer.width(ch);
+      if (!measurer.advances) x += measurer.width(ch);
     }
     xs[n] = x;
+    const fonts = measurer.advances ? shapeXs(display, n, null, xs, measurer) : null;
     const lines = breakLines(n, xs, gStart, gFirst, width);
-    return { text: display, n, u16: null, xs, stops, preedit: pre, lines };
+    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts };
   }
   for (const seg of segmenter.segment(display)) {
     const s = seg.segment;
@@ -139,13 +151,54 @@ export function layoutParagraph(
     gFirst.push(String.fromCodePoint(s.codePointAt(0)!));
     stops[cp] = 1;
     for (let k = 0; k < len; k++) xs[cp + k] = x;
-    x += measurer.width(s);
+    if (!measurer.advances) x += measurer.width(s);
     cp += len;
   }
   xs[n] = x;
+  const fonts = measurer.advances ? shapeXs(display, n, u16, xs, measurer) : null;
 
   const lines = breakLines(n, xs, gStart, gFirst, width);
-  return { text: display, n, u16, xs, stops, preedit: pre, lines };
+  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts };
+}
+
+/**
+ * 셰이퍼로 xs를 채운다: 공백·탭이 아닌 글자가 이어진 조각마다 advances, 공백·탭은 width.
+ * (빠른 경로에서 width로 채운 값은 덮어쓴다. 빠른 경로의 width 호출은 grapheme 판정용이 아니므로 셰이퍼 쪽에서는 쓰지 않음)
+ */
+function shapeXs(display: string, n: number, u16: Uint32Array | null, xs: Float32Array, m: Measurer): Uint8Array | null {
+  let fonts: Uint8Array | null = null;
+  let x = 0;
+  let cp = 0;
+  const at = (k: number) => (u16 ? u16[k]! : k);
+  while (cp < n) {
+    const ch = display[at(cp)]!;
+    if (isSpace(ch)) {
+      xs[cp] = x;
+      x += m.width(ch);
+      cp++;
+      continue;
+    }
+    let end = cp + 1;
+    while (end < n) {
+      const c = display[at(end)]!;
+      if (isSpace(c)) break;
+      end++;
+    }
+    const chunk = display.slice(at(cp), at(end));
+    const adv = m.advances!(chunk);
+    const f = m.fontsOf?.(chunk) ?? null;
+    for (let k = 0; k < end - cp; k++) {
+      xs[cp + k] = x;
+      x += adv[k] ?? 0;
+    }
+    if (f) {
+      fonts ??= new Uint8Array(n);
+      fonts.set(f.subarray(0, end - cp), cp);
+    }
+    cp = end;
+  }
+  xs[n] = x;
+  return fonts;
 }
 
 function breakLines(n: number, xs: Float32Array, starts: number[], first: string[], width: number): LineBox[] {

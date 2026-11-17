@@ -71,6 +71,7 @@ function showStats() {
       ['렌더링', `${s.renderMs.toFixed(1)} ms`],
       ['문단 재계산/재배치/재사용', `${s.reflowed} / ${s.repositioned.toLocaleString()} / ${s.reused.toLocaleString()}`],
       ['캐시 적중/실패', `${s.cacheHits.toLocaleString()} / ${s.cacheMisses.toLocaleString()}`],
+      ['글자 측정', editor.textEngine],
       ['입력 층', editor.inputKind === 'editcontext' ? 'A. EditContext' : 'B. 숨긴 textarea'],
       ['선택', sel.anchor === sel.head ? `${sel.head}` : `${sel.anchor} → ${sel.head}`],
       ['실행 취소', editor.history.canUndo ? '가능' : '-'],
@@ -97,7 +98,26 @@ modeSelect.addEventListener('change', () => {
   location.search = params.toString();
 });
 
-const editor = new Editor({ host, text: SAMPLE, onInputLog, onChange: showStats, input: inputMode });
+// 엔진 글꼴 (ADR-0002): 개발용으로 Windows 글꼴을 복사해 쓴다 (node spikes/shaping/prepare-fonts.mjs). ?fonts=off면 시스템 글꼴 측정
+const fonts =
+  params.get('fonts') === 'off'
+    ? undefined
+    : [
+        { name: '맑은 고딕', url: '/spike-fonts/malgun.ttf' },
+        { name: 'Calibri', url: '/spike-fonts/calibri.ttf' },
+      ];
+const editor = new Editor({
+  host,
+  text: SAMPLE,
+  onInputLog,
+  onChange: showStats,
+  input: inputMode,
+  fonts,
+  onFontsReady: (_e, err) => {
+    if (err) console.warn('엔진 글꼴을 쓰지 못해 시스템 글꼴로 잽니다:', err);
+    showStats();
+  },
+});
 editor.focus();
 showStats();
 
