@@ -123,15 +123,27 @@ export class Document {
   }
 
   /**
-   * 본문 offset이 든 문단 앞에 표 문단 `[표][¶]`을 넣는다 (표는 문단 하나를 혼자 차지한다). 실행 취소 연산을 돌려준다.
+   * 본문 offset(캐럿)에 표 문단 `[표][¶]`을 넣는다 (표는 문단 하나를 혼자 차지한다). Word·Google Docs처럼 캐럿 자리에:
+   * 문단 첫머리면 그 문단 앞, 아니면 캐럿에서 문단을 나누고 그 사이 (문단 끝이면 표 뒤에 빈 문단). 표 문단은 문단 속성을 갖지 않는다
+   * (목록 항목에서 넣어도 번호가 붙지 않는다). 실행 취소 연산을 돌려준다.
    * width: 본문 폭 (1/1000pt), 열마다 똑같이 나눈다
    */
   insertTable(offset: number, rows: number, cols: number, width: number): { id: string; ops: Op[] } {
     const id = this.createTable(rows, cols, Math.floor(width / cols));
-    const p = this.body.paragraphs()[this.body.paragraphIndexAt(offset)]!;
+    const body = this.body;
+    const p = body.paragraphs()[body.paragraphIndexAt(offset)]!;
+    const ops: Op[] = [];
+    let at = p.start;
+    if (offset > p.start) {
+      // 캐럿에서 나눈다 (Enter와 같다: 뒤 문단도 같은 문단 속성)
+      ops.push({ type: 'insert', ids: body.insertText(offset, '\n') });
+      at = offset + 1;
+    }
     const attrs: ObjAttrs = { id, kind: 'table', table: id };
-    const ops = this.body.insertObject(p.start, attrs);
-    ops.push({ type: 'insert', ids: this.body.insertText(p.start + 1, '\n') });
+    ops.push(...body.insertObject(at, attrs));
+    ops.push({ type: 'insert', ids: body.insertText(at + 1, '\n') });
+    const ti = body.paragraphIndexAt(at);
+    for (const key of Object.keys(body.paraAttrs(ti)) as Array<keyof ReturnType<Doc['paraAttrs']>>) ops.push(...body.setParaAttr(ti, key, undefined));
     return { id, ops };
   }
 

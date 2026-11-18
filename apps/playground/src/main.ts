@@ -100,12 +100,14 @@ async function openFormatSample(): Promise<void> {
   const just = editor.doc.paragraphs().findIndex((p) => p.text.startsWith('양쪽 맞춤은'));
   if (just >= 0) {
     await editor.insertImage(img, '어울림 예제 그림', editor.doc.paragraphs()[just]!.start);
+    editor.select(editor.doc.paragraphs()[just]!.start, editor.doc.paragraphs()[just]!.start + 1); // 넣은 이미지 선택
     editor.setObjectAttr('w', 120000);
     editor.setObjectAttr('h', 67500);
     editor.setObjectAttr('float', { relX: 'column', relY: 'paragraph', x: 'right', y: 0, wrap: 'square', side: 'largest', gap: 9000 });
   }
   if (small >= 0) {
     await editor.insertImage(img, '작은 그림', editor.doc.paragraphs()[small]!.start + 7);
+    editor.select(editor.doc.paragraphs()[small]!.start + 7, editor.doc.paragraphs()[small]!.start + 8);
     editor.setObjectAttr('w', 36000);
     editor.setObjectAttr('h', 20250);
   }

@@ -122,20 +122,36 @@ export interface ListLabel {
 /**
  * 화면 순서의 문단들 → 문단 ID별 번호. 같은 id의 문단을 세고, 수준 L의 문단이 나오면 L보다 깊은 수준의 번호를 다시 1부터.
  * 정의가 없는 목록(지워진 id)은 번호를 매기지 않는다.
+ *
+ * **붙은 목록은 하나로 잇는다** (Word·Google Docs·Notion과 같다): 목록 문단이 끊기지 않고 이어지는 동안, 같은 종류(번호·글머리)의
+ * 다른 목록은 그 이어짐에서 먼저 나온 목록의 번호를 잇는다. 따로 번호를 매긴 문단 셋이 붙으면 1, 1, 1이 아니라 1, 2, 3이다.
+ * 목록이 아닌 문단이 끼면 이어짐이 끝나고, 같은 id는 사이에 다른 문단이 있어도 번호를 잇는다 (지금과 같다).
+ * 한 번 이어진 목록은 뒤에서 따로 나와도 이은 목록의 번호를 잇는다 (표 뒤의 같은 목록 항목 등). 편집기는 붙은 목록을 문서에서도
+ * 합치지만 (Editor.joinTouchingLists), 동시 편집으로 붙은 것은 여기서만 합쳐진다.
  */
 export function numberLists(paras: readonly ParagraphInfo[], defs: ReadonlyMap<string, ListDef>): Map<string, ListLabel> {
   const out = new Map<string, ListLabel>();
   const counters = new Map<string, number[]>();
+  /** 지금 이어지는 목록 문단들에서 종류마다 먼저 나온 목록 (번호를 이을 목록) */
+  let run: Map<string, ListDef> | null = null;
+  /** 이어진 적이 있는 목록 → 이은 목록 */
+  const alias = new Map<string, ListDef>();
   for (const p of paras) {
     const li = p.attrs.list;
-    if (!li) continue;
-    const def = defs.get(li.id);
-    if (!def) continue;
+    const own = li ? defs.get(li.id) : undefined;
+    if (!li || !own) {
+      run = null;
+      continue;
+    }
+    run ??= new Map();
+    let def = run.get(own.kind);
+    if (!def) run.set(own.kind, (def = alias.get(own.id) ?? own));
+    else if (def !== own && !alias.has(own.id)) alias.set(own.id, def);
     const level = Math.max(0, Math.min(MAX_LIST_LEVEL, li.level | 0, def.levels.length - 1));
-    let c = counters.get(li.id);
+    let c = counters.get(def.id);
     if (!c) {
       c = new Array<number>(def.levels.length).fill(0);
-      counters.set(li.id, c);
+      counters.set(def.id, c);
     }
     c[level] = (c[level] || (def.levels[level]!.start ?? 1) - 1) + 1;
     for (let k = level + 1; k < c.length; k++) c[k] = 0;

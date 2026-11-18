@@ -61,6 +61,52 @@ describe('list numbering', () => {
     expect(labels(doc)).toEqual(['1.', '•', '◦', '2.', '?']);
   });
 
+  it('joins separately numbered lists that touch (1, 2, 3 — not 1, 1, 1), and when they come to touch by deleting', () => {
+    // 셋을 따로 번호 매김 (사이에 보통 문단): 따로 시작하는 목록 셋
+    const doc = Doc.fromText(['가', '사이', '나', '사이', '다'].join('\n'));
+    for (const i of [0, 2, 4]) {
+      const [id, ] = doc.createList('number');
+      doc.setParaAttr(i, 'list', { id, level: 0 });
+    }
+    expect(labels(doc)).toEqual(['1.', '1.', '1.']);
+    // 사이 문단을 지워 셋이 붙으면 한 목록처럼 1, 2, 3 (번호 캐시도 다시 센다)
+    const del = (i: number) => {
+      const q = doc.paragraphs()[i]!;
+      doc.deleteRange(q.start, q.end + 1);
+    };
+    del(3);
+    expect(labels(doc)).toEqual(['1.', '1.', '2.']);
+    del(1);
+    expect(labels(doc)).toEqual(['1.', '2.', '3.']);
+    // 다시 끼우면 다시 끊긴다
+    doc.insertText(doc.paragraphs()[1]!.start, '사이\n');
+    doc.setParaAttr(1, 'list', undefined);
+    expect(labels(doc)).toEqual(['1.', '1.', '2.']);
+  });
+
+  it('continues a joined list after a break (an item of the joined list after a table keeps counting)', () => {
+    // 동시 편집으로 붙은 두 목록 (문서에서는 다른 id) + 표(보통 문단) 뒤에 두 번째 목록의 항목
+    const doc = Doc.fromText('a\nb\n표\nc');
+    const [x] = doc.createList('number');
+    const [y] = doc.createList('number');
+    doc.setParaAttr(0, 'list', { id: x, level: 0 });
+    doc.setParaAttr(1, 'list', { id: y, level: 0 });
+    doc.setParaAttr(3, 'list', { id: y, level: 0 });
+    expect(labels(doc)).toEqual(['1.', '2.', '3.']);
+  });
+
+  it('keeps numbering across a nested bullet list of another kind, and keeps bullets and numbers apart', () => {
+    const doc = Doc.fromText('a\nb\nc\nd');
+    const [n1] = doc.createList('number');
+    const [b1] = doc.createList('bullet');
+    const [n2] = doc.createList('number');
+    doc.setParaAttr(0, 'list', { id: n1, level: 0 });
+    doc.setParaAttr(1, 'list', { id: b1, level: 1 });
+    doc.setParaAttr(2, 'list', { id: n2, level: 0 }); // 다른 번호 목록이지만 붙어 있으므로 잇는다
+    doc.setParaAttr(3, 'list', { id: b1, level: 1 });
+    expect(labels(doc)).toEqual(['1.', '◦', '2.', '◦']);
+  });
+
   it('follows paragraph moves and hiding (segments)', () => {
     const doc = listDoc([[0, 'a'], [0, 'b'], [0, 'c'], [0, 'd']]);
     doc.moveParagraphs(3, 3, 0); // d를 맨 앞으로
