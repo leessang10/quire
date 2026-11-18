@@ -57,6 +57,7 @@ import {
 } from '@quire/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
 import { MemoryAssets, type AssetStore } from './assets';
+import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 
 export interface EditorOptions {
@@ -285,6 +286,8 @@ export class Editor {
   private goalX: number | null = null;
   /** 편집 중인 셀 (null이면 본문) */
   private active: ActiveCell | null = null;
+  /** 다음 붙여넣기는 글자만 (Ctrl+Shift+V) */
+  private plainPaste = false;
   /** 다중 커서 (11 §5.2): 첫 캐럿(sel) 말고 다른 캐럿들. 같은 스토리, 겹치지 않음 */
   private extras: Array<{ anchor: Position; head: Position }> = [];
   private tables!: TableLayouter;
@@ -3135,24 +3138,152 @@ export class Editor {
           if (i.kind === 'cut') this.editAll((f, t) => (f === t ? null : { ops: this.doc.deleteRange(f, t), caret: f }));
           break;
         }
+        // 셀 범위: 그 셀들로 된 표
+        if (this.cellSel && this.active) {
+          const v = this.tableViews.get(this.active.table);
+          const box = v && this.cellSelBox(v);
+          if (v && box) {
+            const frag: Fragment = { quire: 1, blocks: [], closed: true, stories: {}, lists: {} };
+            const tb = tableBlock(this.document, v.id, frag, box);
+            if (tb) frag.blocks.push(tb);
+            this.writeClipboard(i.event, frag);
+            if (i.kind === 'cut') this.clearCellRange();
+            break;
+          }
+        }
         if (from === to) return;
-        i.event.clipboardData?.setData('text/plain', this.doc.slice(from, to));
+        this.writeClipboard(i.event, fragmentOf(this.document, this.doc, from, to));
         if (i.kind === 'cut') this.deleteRange(from, to);
         break;
       }
-      case 'paste':
+      case 'paste': {
         this.history.seal();
-        if (i.files?.length) {
+        const plain = this.plainPaste;
+        this.plainPaste = false;
+        // 서식 있는 붙여넣기: Quire 조각 → HTML. 다중 커서는 글자만 (캐럿마다)
+        if (!plain && !this.extras.length) {
+          let frag: Fragment | null = null;
+          if (i.quire)
+            try {
+              const f = JSON.parse(i.quire) as Fragment;
+              if (f && f.quire === 1 && Array.isArray(f.blocks)) frag = f;
+            } catch {
+              frag = null;
+            }
+          // 이미지 파일과 함께 온 HTML이 그림 하나뿐이면 파일을 쓴다 (Excel·이미지 복사)
+          const htmlUseful = !!i.html && /<(p|div|li|h[1-6]|td|span|b|strong|i|em|br|table|ul|ol)\b/i.test(i.html);
+          if (!frag && htmlUseful && !(i.files?.length && !/<(p|li|td|h[1-6])\b/i.test(i.html!))) frag = htmlToFragment(i.html!);
+          if (frag) {
+            void this.pasteRich(frag);
+            break;
+          }
+        }
+        if (i.files?.length && !plain) {
           for (const f of i.files) void this.insertImage(f);
           break;
         }
-        this.replaceSelection(i.text);
+        if (i.text) this.replaceSelection(i.text);
         break;
+      }
     }
+  }
+
+  /** 복사: 조각(Quire끼리), HTML(다른 프로그램), 글자 */
+  private writeClipboard(e: ClipboardEvent, frag: Fragment): void {
+    const dt = e.clipboardData;
+    if (!dt) return;
+    dt.setData('text/plain', fragmentToText(frag));
+    dt.setData('text/html', fragmentToHtml(frag));
+    try {
+      dt.setData(FRAGMENT_MIME, JSON.stringify(frag));
+    } catch {
+      // 사용자 형식을 못 쓰는 브라우저: HTML로 붙는다
+    }
+  }
+
+  /** 서식 있는 붙여넣기 (선택을 바꾼다). HTML의 그림(data: URL)은 먼저 자산으로 */
+  private async pasteRich(frag: Fragment): Promise<void> {
+    for (const r of pendingImages(frag)) {
+      try {
+        const blob = await (await fetch(r.src!)).blob();
+        const asset = await this.assets.put(blob);
+        const bmp = await createImageBitmap(blob);
+        this.images.set(asset, bmp);
+        const img = r.img!;
+        img.asset = asset;
+        if (!img.w || !img.h) {
+          const maxW = this.setup.width - this.setup.margin * 2;
+          const sc = Math.min(1, maxW / bmp.width);
+          img.w = Math.round(bmp.width * sc * 750);
+          img.h = Math.round(bmp.height * sc * 750);
+        }
+      } catch {
+        // 못 읽은 그림은 넣지 않는다
+      }
+    }
+    this.input.commitComposition();
+    // 셀에서 표(셀 범위)를 붙이면 지금 셀부터 칸마다 덮어쓴다 (Word·Excel)
+    if (this.active && frag.blocks.length === 1 && 'table' in frag.blocks[0]!) return this.pasteCells(frag);
+    const before = this.fullSel();
+    const [from, to] = this.range();
+    const ops: Op[] = [];
+    const merge = this.mergeKeepAttrs(from, to);
+    if (from !== to) ops.push(...this.doc.deleteRange(from, to));
+    if (merge) ops.push(...merge());
+    const r = pasteFragment({ document: this.document, doc: this.doc, inCell: !!this.active, newId: () => crypto.randomUUID().slice(0, 8) }, from, frag);
+    ops.push(...r.ops);
+    this.setSelection(r.caret);
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
+  /** 표 조각을 편집 중인 셀부터 칸마다 덮어쓴다 (표 밖으로 넘치는 칸은 버린다). 실행 취소 한 단계 */
+  private pasteCells(frag: Fragment): void {
+    const a = this.active!;
+    const loc = this.locateTable(a.table);
+    const pos = loc && this.cellPos(loc.view, a.story);
+    const block = frag.blocks[0] as Extract<Fragment['blocks'][0], { table: unknown }>;
+    if (!loc || !pos) return;
+    const before = this.fullSel();
+    const ops: Op[] = [];
+    const done = new Set<string>();
+    const taken = new Set<string>();
+    block.table.rows.forEach((row, y) => {
+      let x = 0;
+      for (const c of row.cells) {
+        while (taken.has(`${y},${x}`)) x++;
+        const [h, w] = c.span ?? [1, 1];
+        for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) taken.add(`${yy},${xx}`);
+        const o = this.ownerAt(loc.view, pos.y + y, pos.x + x);
+        x += w;
+        if (!o || pos.y + y >= loc.view.grid.rows.length || pos.x + x - w >= loc.view.grid.cols.length || done.has(o.cell.story)) continue;
+        done.add(o.cell.story);
+        const d = this.document.story(o.cell.story);
+        const cellOps: Op[] = [];
+        if (d.maxCaret > 0) cellOps.push(...d.deleteRange(0, d.maxCaret));
+        for (let k = 0; k < d.paragraphs().length; k++)
+          for (const key of Object.keys(d.paraAttrs(k)) as ParaKey[]) cellOps.push(...d.setParaAttr(k, key, undefined));
+        const paras = frag.stories[c.story] ?? [];
+        const sub: Fragment = { quire: 1, blocks: paras, closed: false, stories: {}, lists: frag.lists };
+        cellOps.push(...pasteFragment({ document: this.document, doc: d, inCell: true, newId: () => crypto.randomUUID().slice(0, 8) }, 0, sub).ops);
+        ops.push(...Document.tag(o.cell.story, cellOps));
+      }
+    });
+    this.cellSel = null;
+    if (!ops.length) return;
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.history.seal();
   }
 
   private onKey(e: KeyboardEvent): void {
     const mod = e.ctrlKey || e.metaKey;
+    // Ctrl+Shift+V: 다음 붙여넣기는 글자만 (paste 이벤트는 브라우저가 이어서 보낸다)
+    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v') {
+      this.plainPaste = true;
+      return;
+    }
     const shift = e.shiftKey;
     const head = this.headOffset();
     const [from, to] = this.range();

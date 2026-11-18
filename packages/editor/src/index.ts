@@ -6,3 +6,5 @@ export { TextareaInput } from './input';
 export type { InputBackend, InputIntent, InputLogEntry, InputMode } from './input';
 export { EditContextInput, editContextSupported } from './edit-context';
 export type { EditContextLike, EditContextDeps } from './edit-context';
+export { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment } from './clipboard';
+export type { Fragment } from './clipboard';

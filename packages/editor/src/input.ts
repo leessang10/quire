@@ -24,7 +24,7 @@ export type InputIntent =
   | { kind: 'key'; event: KeyboardEvent }
   | { kind: 'copy'; event: ClipboardEvent }
   | { kind: 'cut'; event: ClipboardEvent }
-  | { kind: 'paste'; text: string; files?: File[] };
+  | { kind: 'paste'; text: string; files?: File[]; html?: string; quire?: string };
 
 export interface InputLogEntry {
   time: number;
@@ -150,11 +150,13 @@ export class TextareaInput implements InputBackend {
     this.on('paste', (e) => {
       e.preventDefault();
       const text = e.clipboardData?.getData('text/plain') ?? '';
+      // 서식 있는 붙여넣기: Quire 조각, HTML (clipboard.ts)
+      const html = e.clipboardData?.getData('text/html') ?? '';
+      const quire = e.clipboardData?.getData('application/x-quire-fragment') ?? '';
       // 클립보드 이미지 (11 §5.3)
       const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'));
-      this.log('paste', `text=${fmt(text.slice(0, 40))}${files.length ? ` images=${files.length}` : ''}`);
-      if (files.length) this.onIntent({ kind: 'paste', text: '', files });
-      else if (text) this.onIntent({ kind: 'paste', text });
+      this.log('paste', `text=${fmt(text.slice(0, 40))}${html ? ' html' : ''}${quire ? ' quire' : ''}${files.length ? ` images=${files.length}` : ''}`);
+      if (text || html || quire || files.length) this.onIntent({ kind: 'paste', text, ...(html ? { html } : {}), ...(quire ? { quire } : {}), ...(files.length ? { files } : {}) });
     });
   }
 
