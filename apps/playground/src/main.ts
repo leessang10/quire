@@ -71,6 +71,39 @@ function formatSample(): Doc {
   return doc;
 }
 
+/** 예제 그림 (캔버스로 만든 PNG): 이미지 원본이 저장소에 있어야 하므로 문서를 연 뒤 넣는다 */
+async function sampleImage(): Promise<Blob> {
+  const c = document.createElement('canvas');
+  c.width = 320;
+  c.height = 180;
+  const g = c.getContext('2d')!;
+  const grad = g.createLinearGradient(0, 0, 320, 180);
+  grad.addColorStop(0, '#3884ff');
+  grad.addColorStop(1, '#26a269');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 320, 180);
+  g.fillStyle = '#ffffff';
+  g.font = 'bold 28px sans-serif';
+  g.fillText('Quire 이미지', 24, 100);
+  return new Promise((resolve) => c.toBlob((b) => resolve(b!), 'image/png'));
+}
+
+/** 서식 예제를 열고 이미지 두 개를 넣는다 (인라인: 글자처럼 줄 안에) */
+async function openFormatSample(): Promise<void> {
+  editor.setDoc(formatSample());
+  const img = await sampleImage();
+  const paras = editor.doc.paragraphs();
+  const at = paras.findIndex((p) => p.text.startsWith('물의 화학식'));
+  if (at >= 0) await editor.insertImage(img, '그러데이션 위에 Quire 이미지라고 쓴 그림', paras[at]!.start);
+  const small = editor.doc.paragraphs().findIndex((p) => p.text.startsWith('크기가 섞인 줄'));
+  if (small >= 0) {
+    await editor.insertImage(img, '작은 그림', editor.doc.paragraphs()[small]!.start + 7);
+    editor.setObjectAttr('w', 36000);
+    editor.setObjectAttr('h', 20250);
+  }
+  editor.select(0);
+}
+
 const LOREM =
   '대한민국은 민주공화국이다. 대한민국의 주권은 국민에게 있고, 모든 권력은 국민으로부터 나온다. 이 문단은 대형 문서 성능 측정을 위해 반복해서 생성된 문단입니다. 레이아웃 캐시가 동작하면 편집할 때 바뀐 문단만 다시 줄을 나눕니다.';
 
@@ -195,10 +228,10 @@ document.querySelectorAll<HTMLButtonElement>('[data-doc]').forEach((btn) => {
   btn.addEventListener('click', () => {
     const kind = btn.dataset.doc!;
     if (kind === 'format') {
-      editor.setDoc(formatSample());
-      editor.select(0);
-      editor.focus();
-      showStats();
+      void openFormatSample().then(() => {
+        editor.focus();
+        showStats();
+      });
       return;
     }
     const text = kind === 'sample' ? SAMPLE : kind === 'empty' ? '' : generate(Number(kind));
@@ -238,6 +271,22 @@ hlSel.addEventListener('change', () => {
   editor.setMark('highlight', hlSel.value || undefined);
   editor.focus();
 });
+// 이미지 (2-8)
+const fileInput = document.getElementById('img-file') as HTMLInputElement;
+document.getElementById('img-insert')!.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files?.[0];
+  if (f) void editor.insertImage(f).then(() => editor.focus());
+  fileInput.value = '';
+});
+document.getElementById('img-alt')!.addEventListener('click', () => {
+  const o = editor.selectedObject();
+  if (!o) return;
+  const alt = prompt('대체 텍스트 (화면 읽기 프로그램이 읽음)', o.attrs.alt ?? '');
+  if (alt !== null) editor.setObjectAttr('alt', alt || undefined);
+  editor.focus();
+});
+
 document.getElementById('fmt-clear')!.addEventListener('click', () => {
   editor.clearMarks();
   editor.focus();

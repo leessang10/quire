@@ -237,8 +237,11 @@ export class EditContextInput implements InputBackend {
       const e = ev as ClipboardEvent;
       e.preventDefault();
       const text = e.clipboardData?.getData('text/plain') ?? '';
-      this.log('paste', `text=${fmt(text.slice(0, 40))}`);
-      if (text) this.onIntent({ kind: 'paste', text });
+      // 클립보드 이미지 (11 §5.3)
+      const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'));
+      this.log('paste', `text=${fmt(text.slice(0, 40))}${files.length ? ` images=${files.length}` : ''}`);
+      if (files.length) this.onIntent({ kind: 'paste', text: '', files });
+      else if (text) this.onIntent({ kind: 'paste', text });
     });
   }
 

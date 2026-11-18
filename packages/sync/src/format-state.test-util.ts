@@ -9,6 +9,7 @@ export function formatState(doc: Doc) {
       f: Array.from(p.text).map((_, k) => ms(p.fmt ? p.fmt[k]! : 0)),
       m: ms(p.mark),
       a: p.attrs,
+      o: p.objs ? [...p.objs] : null,
     })),
     styles: [...doc.styles()].sort((a, b) => (a.name < b.name ? -1 : 1)),
     lists: [...doc.lists()].sort((a, b) => (a.id < b.id ? -1 : 1)),

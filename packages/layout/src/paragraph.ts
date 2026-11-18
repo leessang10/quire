@@ -7,6 +7,8 @@
  * - 셰이퍼가 없으면 grapheme 단위 폭 합산 (커닝·합자 무시, 0단계 방식)
  * - 줄바꿈: 한글 어절(공백) 단위. 한 어절이 줄보다 길면 글자 단위로 끊음
  * - 금칙: 글자 단위로 끊을 때 닫는 문장부호가 줄 앞에 오지 않게 한 글자 당김
+ * - 개체(11 §4.1): U+FFFC 글자는 조각을 끊고 진행폭 = 개체 폭, 앞뒤 모두 줄바꿈 기회. 줄보다 넓으면 줄 폭으로 줄인다.
+ *   개체는 기준선 위에 서고(ascent = 높이) 그 줄의 objH가 된다
  * - 문단 상자(ParaBox, 10 §4): 들여쓰기만 줄바꿈에 영향을 준다 (첫 줄 폭, 나머지 줄 폭). 정렬·간격·줄 간격은 쪽 배치(document.ts)에서
  * - 서식 (10 §4): 글자마다 서식 번호(fmt)를 받아 얼굴(굵게)·크기 배율로 잰다. 조각은 서식 번호가 바뀌는 곳에서도 나눈다.
  *   줄마다 높이 배율(그 줄 글자의 가장 큰 크기)을 낸다. fmt가 없으면 서식 없는 경로와 같다
@@ -55,6 +57,8 @@ export interface ParaFormat {
    * 번호가 자리보다 넓으면 첫 줄 본문을 그만큼(+ 공백 하나) 민다
    */
   marker?: { text: string; id: number; hanging: number } | null;
+  /** 개체 크기 (px): 원래 텍스트의 코드포인트 위치 → 폭·높이 */
+  objs?: ReadonlyMap<number, { w: number; h: number }> | null;
   /** 레이아웃 캐시 키에 더할 값: style 함수가 서식 번호 밖의 것(문단 스타일 등)에 따라 달라지면 그것을 나타내는 문자열 */
   key?: string;
 }
@@ -85,6 +89,8 @@ export interface LineBox {
   end: number;
   /** 줄 높이 배율 (그 줄에서 가장 큰 글자, 서식 없으면 1) */
   scale: number;
+  /** 그 줄 개체의 가장 큰 높이 (px, 개체 없으면 0) */
+  objH?: number;
 }
 
 export interface ParaLayout {
@@ -111,7 +117,12 @@ export interface ParaLayout {
   widths: [number, number];
   /** 목록 번호 (없으면 null) */
   marker: MarkerLayout | null;
+  /** 개체: 표시 코드포인트 위치 → 놓인 크기 (px, 줄 폭으로 줄인 것). 없으면 null */
+  objs: Map<number, { w: number; h: number }> | null;
 }
+
+/** 개체 글자 */
+export const OBJ_CHAR = '\uFFFC';
 
 export interface MarkerLayout {
   text: string;
@@ -199,6 +210,16 @@ export function layoutParagraph(
   const marker = format ? measureMarker(measurer, format) : null;
   const restW = box ? Math.max(1, width - box.left - box.right) : width;
   const firstW = box ? Math.max(1, restW - box.first - (marker?.shift ?? 0)) : width;
+  // 개체: 조합 문자열만큼 밀고, 줄 폭보다 넓으면 비율대로 줄인다
+  let objs: Map<number, { w: number; h: number }> | null = null;
+  if (format?.objs && format.objs.size) {
+    objs = new Map();
+    const shift = pre ? pre[1] - pre[0] : 0;
+    for (const [k, o] of format.objs) {
+      const w = Math.min(o.w, restW);
+      objs.set(pre && k >= pre[0] ? k + shift : k, { w, h: o.w > 0 ? (o.h * w) / o.w : o.h });
+    }
+  }
   const style = format?.style;
   const dfmt = fmt;
   const st = dfmt && style ? (k: number) => style(dfmt[k]!) : null;
@@ -243,7 +264,9 @@ export function layoutParagraph(
       gFirst.push(ch);
       stops[i] = 1;
       xs[i] = x;
-      if (!measurer.advances) {
+      const ob = objs?.get(i);
+      if (ob) x += ob.w;
+      else if (!measurer.advances) {
         if (st) {
           const r = st(i);
           x += measurer.width(ch, r.face) * r.scale;
@@ -251,10 +274,11 @@ export function layoutParagraph(
       }
     }
     xs[n] = x;
-    const fonts = measurer.advances ? shapeXs(display, n, null, xs, measurer, fmt, st) : null;
+    const fonts = measurer.advances ? shapeXs(display, n, null, xs, measurer, fmt, st, objs) : null;
     const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
     lineScales(lines, st, format);
-    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker };
+  if (objs) lineObjects(lines, objs);
+    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs };
   }
   for (const seg of segmenter.segment(display)) {
     const s = seg.segment;
@@ -268,7 +292,9 @@ export function layoutParagraph(
     gFirst.push(String.fromCodePoint(s.codePointAt(0)!));
     stops[cp] = 1;
     for (let k = 0; k < len; k++) xs[cp + k] = x;
-    if (!measurer.advances) {
+    const ob = objs?.get(cp);
+    if (ob) x += ob.w;
+    else if (!measurer.advances) {
       if (st) {
         const r = st(cp);
         x += measurer.width(s, r.face) * r.scale;
@@ -277,11 +303,21 @@ export function layoutParagraph(
     cp += len;
   }
   xs[n] = x;
-  const fonts = measurer.advances ? shapeXs(display, n, u16, xs, measurer, fmt, st) : null;
+  const fonts = measurer.advances ? shapeXs(display, n, u16, xs, measurer, fmt, st, objs) : null;
 
   const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
   lineScales(lines, st, format);
-  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker };
+  if (objs) lineObjects(lines, objs);
+  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs };
+}
+
+/** 줄마다 개체의 가장 큰 높이 */
+function lineObjects(lines: LineBox[], objs: Map<number, { w: number; h: number }>): void {
+  for (const ln of lines) {
+    let h = 0;
+    for (const [k, o] of objs) if (k >= ln.start && k < ln.end) h = Math.max(h, o.h);
+    if (h > 0) ln.objH = h;
+  }
 }
 
 /** 줄마다 높이 배율: 줄 글자의 가장 큰 line 배율. 마지막 줄은 ¶도 센다 (빈 줄은 ¶만) */
@@ -309,6 +345,7 @@ function shapeXs(
   m: Measurer,
   fmt: Uint16Array | null,
   st: ((k: number) => RunStyle) | null,
+  objs: Map<number, { w: number; h: number }> | null = null,
 ): Uint8Array | null {
   let fonts: Uint8Array | null = null;
   let x = 0;
@@ -316,6 +353,13 @@ function shapeXs(
   const at = (k: number) => (u16 ? u16[k]! : k);
   while (cp < n) {
     const ch = display[at(cp)]!;
+    const ob = objs?.get(cp);
+    if (ob) {
+      xs[cp] = x;
+      x += ob.w;
+      cp++;
+      continue;
+    }
     const r = st ? st(cp) : PLAIN_STYLE;
     if (isSpace(ch)) {
       xs[cp] = x;
@@ -327,7 +371,7 @@ function shapeXs(
     let end = cp + 1;
     while (end < n) {
       const c = display[at(end)]!;
-      if (isSpace(c) || (fmt && fmt[end] !== fmt[cp])) break;
+      if (isSpace(c) || c === OBJ_CHAR || (fmt && fmt[end] !== fmt[cp])) break;
       end++;
     }
     const chunk = display.slice(at(cp), at(end));
@@ -364,6 +408,11 @@ function breakLines(n: number, xs: Float32Array, starts: number[], first: string
 
     // 공백은 줄 끝에 매달릴 수 있으므로 넘침 판정에서 제외
     const width = lines.length === 0 ? firstWidth : restWidth;
+    // 개체 앞은 줄바꿈 기회
+    if (ch === OBJ_CHAR && i > lineStart) {
+      lastBreak = i;
+      lastBreakG = g;
+    }
     if (!isSpace(ch) && xs[next]! - xs[lineStart]! > width && i > lineStart) {
       let breakAt: number;
       let bg: number;
@@ -386,7 +435,7 @@ function breakLines(n: number, xs: Float32Array, starts: number[], first: string
       continue;
     }
 
-    if (isSpace(ch)) {
+    if (isSpace(ch) || ch === OBJ_CHAR) {
       lastBreak = next;
       lastBreakG = g + 1;
     }

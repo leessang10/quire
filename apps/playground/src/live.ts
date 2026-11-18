@@ -5,7 +5,7 @@
  * 서버를 껐다 켜면 Worker가 다시 연결하고, 끊긴 동안의 편집을 맞춘다.
  * 모두 나가 방이 비면 서버가 새 판으로 압축한다. 그 사이 오프라인이던 탭은 다시 붙을 때 새 판으로 옮겨진다 (09 §9).
  */
-import { Editor } from '@quire/editor';
+import { Editor, HttpAssets } from '@quire/editor';
 import { startSyncWorker } from '@quire/sync';
 
 const params = new URLSearchParams(location.search);
@@ -93,6 +93,8 @@ void (async () => {
     doc: client.doc,
     onChange: () => editor?.setRemoteCarets(client.remotes()),
     onSelectionChange: (a, h) => client.setSelection(a, h),
+    // 이미지 원본은 서버의 자산 저장소 (11 §2.2)
+    assets: new HttpAssets(`${server.replace(/^ws/, 'http')}/${encodeURIComponent(room)}/assets/`),
   });
   editor.focus();
   addEventListener('pagehide', () => client.close());

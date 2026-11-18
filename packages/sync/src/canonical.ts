@@ -5,12 +5,15 @@
  * - 키 순서를 고정해 직렬화한다(키 사전순, 들여쓰기 2칸, 끝 줄바꿈). 같은 문서는 늘 같은 바이트열 → 해시·diff가 안정적이다.
  * - CRDT 원소 ID·묘비·구획 표식은 들어가지 않는다. 그래서 정본으로 저장했다 다시 열면 구획이 하나뿐인 깨끗한 문서가 된다.
  */
-import { DEFAULT_STYLES, Doc, MARK_KEYS, type ListDef, type MarkSet, type ParaAttrs, type Style } from '@quire/model';
+import { DEFAULT_STYLES, Doc, MARK_KEYS, OBJ, OBJ_KEYS, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
 import { readRaw, readState } from './shape';
 
 export interface QuireRun {
-  t: string;
+  /** 글 (개체 런이면 없음) */
+  t?: string;
+  /** 인라인 이미지 (11 §6): 개체 하나 */
+  img?: ObjAttrs;
   /** 글자 서식 (10 §2.1, 크기는 1/1000pt). 없으면 서식 없음 */
   m?: MarkSet;
 }
@@ -62,9 +65,13 @@ export function textFromQuire(q: QuireDoc): string {
     const runs = (block as QuireParagraph).c ?? [];
     if (!Array.isArray(runs)) throw new Error(`document.json: body[${i}].c must be an array`);
     for (const [k, r] of runs.entries()) {
+      if (r && typeof r === 'object' && (r as QuireRun).img && typeof (r as QuireRun).img === 'object') {
+        out += OBJ; // 인라인 이미지 = 개체 글자 하나
+        continue;
+      }
       if (!r || typeof r !== 'object' || typeof (r as QuireRun).t !== 'string')
         throw new Error(`document.json: body[${i}].c[${k}] is not a text run (not supported yet)`);
-      const t = (r as QuireRun).t;
+      const t = (r as QuireRun).t!;
       if (t.includes('\n') || t.includes('\r')) throw new Error(`document.json: body[${i}].c[${k}] contains a line break`);
       out += t;
     }
@@ -82,7 +89,12 @@ export function quireFromDoc(doc: Doc): QuireDoc {
   const q = quireFromText('\n');
   q.stories.body = doc.paragraphRuns().map((p) => ({
     p: { ...p.attrs },
-    c: p.runs.filter((r) => r.text).map((r) => (Object.keys(r.marks).length ? { t: r.text, m: { ...r.marks } } : { t: r.text })),
+    c: p.runs
+      .filter((r) => r.text)
+      .map((r): QuireRun => {
+        const m = Object.keys(r.marks).length ? { m: { ...r.marks } } : {};
+        return r.obj ? { img: { ...r.obj }, ...m } : { t: r.text, ...m };
+      }),
   }));
   // 스타일 (10 §2.3): 기본 스타일과 다른 것만 (이름 → 정의)
   const defaults = new Map(DEFAULT_STYLES.map((st) => [st.name, JSON.stringify(st)]));
@@ -100,7 +112,7 @@ export function quireFromDoc(doc: Doc): QuireDoc {
 export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: string[] } {
   const text = textFromQuire(q); // 구조 확인 (표·필드 등 아직 담을 수 없는 내용은 오류)
   // 서식 없는 문서: 빠른 길
-  const plainBody = q.stories.body.every((b) => Object.keys(b.p ?? {}).length === 0 && (b.c ?? []).every((r) => !r.m || Object.keys(r.m).length === 0));
+  const plainBody = q.stories.body.every((b) => Object.keys(b.p ?? {}).length === 0 && (b.c ?? []).every((r) => !r.img && (!r.m || Object.keys(r.m).length === 0)));
   if (plainBody && Object.keys(q.styles ?? {}).length === 0 && !q.settings?.lists) return { doc: Doc.fromText(text.slice(0, -1), peer), notes: [] };
   const notes = new Set<string>();
   const paras = q.stories.body.map((block) => {
@@ -115,7 +127,15 @@ export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: str
         if ((MARK_KEYS as readonly string[]).includes(k)) marks[k] = v;
         else notes.add(`글자 서식 ${k}`);
       }
-      return { text: r.t, marks: marks as MarkSet };
+      if (r.img) {
+        const obj: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(r.img)) {
+          if ((OBJ_KEYS as readonly string[]).includes(k)) obj[k] = v;
+          else notes.add(`개체 속성 ${k}`);
+        }
+        return { text: OBJ, marks: marks as MarkSet, obj: obj as ObjAttrs };
+      }
+      return { text: r.t!, marks: marks as MarkSet };
     });
     return { attrs: attrs as ParaAttrs, runs };
   });

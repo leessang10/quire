@@ -123,6 +123,16 @@ describe('format sync (bridge)', () => {
         const s = sel(doc);
         const roll = r();
         const rec = (ops: Op[]) => ops.length && h.record({ ops, before: s, after: s, time: step });
+        // 개체 (2-8): 넣기, 속성 바꾸기
+        if (r() < 0.08) {
+          const len0 = doc.length;
+          const objOffsets: number[] = [];
+          for (const q of doc.paragraphs()) if (q.objs) for (const k of q.objs.keys()) objOffsets.push(q.start + k);
+          if (objOffsets.length === 0 || r() < 0.4)
+            rec(doc.insertObject(Math.floor(r() * len0), { id: `o${step}`, kind: 'image', asset: 'a'.repeat(32), w: 72000, h: 36000 }));
+          else rec(doc.setObjAttr(objOffsets[Math.floor(r() * objOffsets.length)]!, r() < 0.5 ? 'w' : 'alt', r() < 0.5 ? Math.floor(r() * 100000) : `alt${step}`));
+          continue;
+        }
         if (roll < 0.18) rec([{ type: 'insert', ids: doc.insertText(Math.floor(r() * len), pick(r, ALPHA) + pick(r, ALPHA)) }]);
         else if (roll < 0.28) {
           const from = Math.floor(r() * len);

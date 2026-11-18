@@ -6,6 +6,7 @@ import {
   LayoutCache,
   PLAIN_STYLE,
   PagedLayout,
+  baselineOffset,
   layoutParagraph,
   lineX,
   type FormatSource,
@@ -160,5 +161,47 @@ describe('list marker', () => {
     const b = cache.get('가나', 1000, mono, null, fmt('2.', 30));
     expect(a).not.toBe(b);
     expect(b.marker!.text).toBe('2.');
+  });
+});
+
+describe('inline objects (11 §4.1)', () => {
+  const O = '\uFFFC';
+  const withObjs = (objs: Array<[number, number, number]>) => ({ fmt: null, mark: 0, style, objs: new Map(objs.map(([k, w, h]) => [k, { w, h }])) });
+
+  it('gives an object its width as advance and breaks lines on both sides of it', () => {
+    // 폭 100: "가나" 20 + 개체 70 = 90, 다음 "다라" 20이 넘친다 → 개체 뒤에서 줄바꿈
+    const pl = layoutParagraph(`가나${O}다라`, 100, mono, null, withObjs([[2, 70, 40]]));
+    expect(pl.xs[3]).toBe(90);
+    expect(pl.lines.map((l) => [l.start, l.end])).toEqual([[0, 3], [3, 5]]);
+    // 개체가 들어가지 않으면 개체 앞에서 줄바꿈 (공백이 없어도)
+    const pl2 = layoutParagraph(`가나다${O}`, 100, mono, null, withObjs([[3, 80, 40]]));
+    expect(pl2.lines.map((l) => [l.start, l.end])).toEqual([[0, 3], [3, 4]]);
+  });
+
+  it('shrinks an object wider than the line to the line width, keeping its ratio', () => {
+    const pl = layoutParagraph(`가${O}`, 100, mono, null, withObjs([[1, 400, 200]]));
+    expect(pl.objs!.get(1)).toEqual({ w: 100, h: 50 });
+  });
+
+  it('raises the line for an object taller than the text ascent, and puts it on the baseline', () => {
+    // fontSize 12, ascent 0.8 → 글자 ascent 9.6. 개체 높이 40 → 줄이 round(40 − 9.6) = 30 늘어난다
+    const setup: PageSetup = { ...SETUP, ascent: 0.8, descent: 0.2 };
+    const pl = new PagedLayout(setup, mono, new LayoutCache(), (info) => (info.id === 'o' ? withObjs([[1, 30, 40]]) : null));
+    pl.update([
+      { id: 'o', start: 0, text: `가${O}나` },
+      { id: 'p', start: 4, text: '다' },
+    ]);
+    const ln = pl.para(0).lines[0]!;
+    expect(ln.height).toBe(20 + 30);
+    expect(ln.baseline - ln.y).toBeCloseTo(baselineOffset(setup, 20, 1) + 30, 9);
+    expect(pl.para(1).lines[0]!.y - ln.y).toBe(50 + 5);
+  });
+
+  it('keys the cache on object sizes', () => {
+    const cache = new LayoutCache();
+    const a = cache.get(`가${O}`, 1000, mono, null, withObjs([[1, 30, 40]]));
+    const b = cache.get(`가${O}`, 1000, mono, null, withObjs([[1, 60, 40]]));
+    expect(a).not.toBe(b);
+    expect(b.xs[2]).toBe(70);
   });
 });

@@ -15,6 +15,8 @@ import {
   Doc,
   INHERITED_MARKS,
   MARK_KEYS,
+  OBJ_KEYS,
+  OBJ_MARK_PREFIX,
   PARA_KEYS,
   PARA_MARK_PREFIX,
   type ListDef,
@@ -43,6 +45,7 @@ export function newLoro(peer: PeerId): LoroDoc {
   const styles: Record<string, { expand: 'after' | 'none' }> = { [SEG_MARK]: { expand: 'none' } };
   for (const k of MARK_KEYS) styles[k] = { expand: INHERITED_MARKS.has(k) ? 'after' : 'none' };
   for (const k of PARA_KEYS) styles[PARA_MARK_PREFIX + k] = { expand: 'none' };
+  for (const k of OBJ_KEYS) styles[OBJ_MARK_PREFIX + k] = { expand: 'none' };
   loro.configTextStyle(styles);
   return loro;
 }
@@ -178,6 +181,12 @@ export function writeFormats(loro: LoroDoc, doc: Doc): void {
       let w = cps[k]!.length;
       while (j < cps.length && (p.fmt ? p.fmt[j]! : 0) === f) w += cps[j++]!.length;
       if (f !== 0) for (const [key, v] of Object.entries(doc.markSet(f))) text.mark({ start: u, end: u + w }, key, v);
+      // 개체 속성 (개체 글자마다)
+      if (p.objs)
+        for (let q = k, uq = u; q < j; uq += cps[q]!.length, q++) {
+          const o = p.objs.get(q);
+          if (o) for (const [key, v] of Object.entries(o)) if (v !== undefined) text.mark({ start: uq, end: uq + 1 }, OBJ_MARK_PREFIX + key, v);
+        }
       u += w;
       k = j;
     }
@@ -275,7 +284,7 @@ export class LoroWriter {
           if (w === undefined) this.text.unmark({ start: u, end: u + n }, k);
           else this.text.mark({ start: u, end: u + n }, k, w);
         }
-        for (const k of Object.keys(have)) if (k.startsWith(PARA_MARK_PREFIX)) this.text.unmark({ start: u, end: u + n }, k);
+        for (const k of Object.keys(have)) if (k.startsWith(PARA_MARK_PREFIX) || k.startsWith(OBJ_MARK_PREFIX)) this.text.unmark({ start: u, end: u + n }, k);
       }
       u += n;
     }
@@ -319,6 +328,12 @@ export class LoroWriter {
         break;
       case 'para': {
         const key = PARA_MARK_PREFIX + c.key;
+        if (c.value === undefined || c.value === null) this.text.unmark({ start: c.at, end: c.at + 1 }, key);
+        else this.text.mark({ start: c.at, end: c.at + 1 }, key, c.value);
+        break;
+      }
+      case 'obj': {
+        const key = OBJ_MARK_PREFIX + c.key;
         if (c.value === undefined || c.value === null) this.text.unmark({ start: c.at, end: c.at + 1 }, key);
         else this.text.mark({ start: c.at, end: c.at + 1 }, key, c.value);
         break;

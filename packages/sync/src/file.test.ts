@@ -209,6 +209,35 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
     expect(canonicalJson(quireFromDoc(back))).toBe(json);
   });
 
+  it('stores inline images as img runs and their bytes under assets/ (2-8)', async () => {
+    const { Doc } = await import('@quire/model');
+    const { quireFromDoc, docFromQuire } = await import('./canonical');
+    const { assetIdOf, assetIdsOf } = await import('./quire-file');
+    const bytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
+    const id = await assetIdOf(bytes);
+    const doc = Doc.fromText('앞 뒤\n');
+    doc.insertObject(2, { id: 'i1', kind: 'image', asset: id, w: 72000, h: 36000, alt: '그림' });
+    doc.format(0, 3, 'bold', true);
+    const q = JSON.parse(canonicalJson(quireFromDoc(doc)));
+    expect(q.stories.body[0].c).toEqual([
+      { t: '앞 ', m: { bold: true } },
+      { img: { alt: '그림', asset: id, h: 36000, id: 'i1', kind: 'image', w: 72000 }, m: { bold: true } },
+      { t: '뒤' },
+    ]);
+    const back = docFromQuire(q).doc;
+    expect(back.objAt(2)).toEqual(doc.objAt(2));
+    expect(assetIdsOf(back)).toEqual([id]);
+    const file = await packQuire({ doc, assets: [{ id, mime: 'image/png', bytes }] });
+    const opened = await openQuire(file);
+    expect(opened.assets).toEqual([{ id, mime: 'image/png', bytes }]);
+    expect(docFromQuire(opened.doc).doc.objAt(2)!.asset).toBe(id);
+    // 이름과 내용이 다른 자산은 버린다
+    const bad = await packQuire({ doc, assets: [{ id: 'f'.repeat(32), mime: 'image/png', bytes }] });
+    const o2 = await openQuire(bad);
+    expect(o2.assets).toEqual([]);
+    expect(o2.notes.some((n) => n.includes('does not match'))).toBe(true);
+  });
+
   it('drops keys this engine does not know, with notes', async () => {
     const { docFromQuire } = await import('./canonical');
     const q = quireFromText('가나\n');
