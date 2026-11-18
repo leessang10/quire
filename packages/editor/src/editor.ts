@@ -2,17 +2,37 @@
  * 0단계 에디터: 캔버스 렌더링 + 숨긴 textarea 입력 + 자체 선택 모델
  * 설계: docs/design/03, 04, 08
  */
-import { Doc, History, MARK_KEYS, type MarkKey, type MarkSet, type Op, type Position, type Selection } from '@quire/model';
+import {
+  BODY_STYLE,
+  Doc,
+  History,
+  MARK_KEYS,
+  mergeParaAttrs,
+  type MarkKey,
+  type MarkSet,
+  type Op,
+  type ParaAttrs,
+  type ParaKey,
+  type ParagraphInfo,
+  type Position,
+  type ResolvedStyle,
+  type Selection,
+  type Style,
+} from '@quire/model';
 import {
   LayoutCache,
   PagedLayout,
   PLAIN_STYLE,
   cpSlice,
   docToDisplay,
+  lineX,
   pageTop,
+  type FormatSource,
   type Measurer,
   type PageSetup,
+  type ParaBox,
   type ParaLayout,
+  type PlacedLine,
   type RunStyle,
 } from '@quire/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
@@ -57,6 +77,13 @@ export interface FontSource {
   manifest?: string;
   /** 같은 가족의 굵은 얼굴 (조각 목록, 같은 조각 이름). 없으면 굵게는 합성 굵게로 그린다 (10 §4) */
   bold?: { manifest: string };
+}
+
+/** 선택한 문단들의 문단 서식 (툴바 상태): 스타일 이름과 실제 속성. 문단마다 다른 키는 mixed에 */
+export interface ParagraphState {
+  style: string;
+  attrs: ParaAttrs;
+  mixed: Set<string>;
 }
 
 /** 선택 영역의 글자 서식: 키마다 값, 섞여 있으면 mixed에 */
@@ -221,10 +248,23 @@ export class Editor {
   private metrics: Metrics = {
     ascent: 0.8, descent: 0.2, underlinePosition: -0.1, underlineThickness: 0.06, strikePosition: 0.3, strikeThickness: 0.06,
   };
-  /** 서식 번호별 그리기 정보 (문서마다) */
-  private drawStyles: Array<DrawStyle | undefined> = [];
-  private drawStylesDoc: Doc | null = null;
-  private readonly styleOf = (id: number): RunStyle => this.drawStyle(id).run;
+  /** (문단 스타일, 서식 번호)별 그리기 정보. 문서·스타일 판이 바뀌면 비운다 */
+  private drawStyles = new Map<string, Array<DrawStyle | undefined>>();
+  private drawStylesKey: { doc: Doc; version: number } | null = null;
+  private styleFns = new Map<string, (id: number) => RunStyle>();
+  /** 문단 → 레이아웃 서식 (10 §4): 글자 서식, 스타일의 기본 글자 서식, 문단 상자 */
+  private readonly formatOf: FormatSource = (info, force) => {
+    const p = info as ParagraphInfo;
+    const attrs = p.attrs ?? {};
+    const rs = this.doc.resolvedStyle(attrs.style ?? BODY_STYLE);
+    const styled = hasKeys(rs.marks);
+    const box = this.paraBox(attrs, rs);
+    if (!p.fmt && !p.mark && !force && !box && !styled) return null;
+    const sty = styled ? (attrs.style ?? BODY_STYLE) : '';
+    // 스타일 글자 서식은 서식 번호 0에도 걸리므로 fmt가 없으면 0으로 채운 열을 준다
+    const fmt = p.fmt ?? (styled ? new Uint16Array(cpCount(p.text)) : null);
+    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty), box, key: styled ? `${sty}@${this.doc.stylesVersion}` : undefined };
+  };
   /** 캐럿에서 다음 입력이 받을 서식 (Ctrl+B 등을 선택 없이 눌렀을 때). at: 그 캐럿 오프셋 */
   private pending: { at: number; marks: MarkSet } | null = null;
   /** 상태 표시: 측정 방식 */
@@ -349,7 +389,7 @@ export class Editor {
     this.resizeObserver = new ResizeObserver(() => this.refresh());
     this.resizeObserver.observe(scroller);
 
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.styleOf);
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
     this.relayout();
     this.render();
     if (opts.fonts?.length) {
@@ -492,7 +532,7 @@ export class Editor {
   /** 측정이 바뀌었다 (글꼴을 받음): 모든 문단을 다시 조판한다 */
   private relayoutAll(): void {
     this.cache.clear();
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.styleOf);
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
     this.refresh();
     this.opts.onChange?.(this);
   }
@@ -511,7 +551,7 @@ export class Editor {
   setText(text: string): void {
     this.doc = Doc.fromText(text);
     this.cache.clear();
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.styleOf);
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
     this.stats.backgroundMs = 0;
     this.scroller.scrollTop = 0;
     const start = this.doc.positionAt(0);
@@ -530,7 +570,7 @@ export class Editor {
     this.doc = doc;
     this.pending = null;
     this.cache.clear();
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.styleOf);
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
     this.history = new History();
     this.setSelection(anchor, head);
     this.refresh();
@@ -708,6 +748,9 @@ export class Editor {
       const { xs, preedit } = para.layout;
       const pStart = para.info.start;
       const x0 = px + ln.x - xs[ln.start]!;
+      /** 표시 인덱스 d의 화면 x (들여쓰기·정렬·양쪽 맞춤 포함) */
+      const X = (d: number) => px + lineX(para.layout, ln, d);
+      const sty = this.styleKey(para.info as ParagraphInfo);
 
       // 끌고 있는 문단
       if (this.drag && ref.para >= this.drag.i && ref.para <= this.drag.j) {
@@ -717,7 +760,7 @@ export class Editor {
 
       // 형광펜 (선택 영역 아래)
       const baseY = ln.baseline - top;
-      if (para.layout.fmt) this.drawHighlights(para.layout, ln.start, ln.end, x0, baseY);
+      if (para.layout.fmt) this.drawHighlights(para.layout, ln, px, baseY, sty);
 
       // 선택 영역
       if (selFrom !== selTo) {
@@ -729,8 +772,8 @@ export class Editor {
         if (a < b) {
           const da = a - pStart;
           const db = Math.min(b - pStart, ln.end);
-          const sx = x0 + xs[da]!;
-          let ex = x0 + xs[db]!;
+          const sx = X(da);
+          let ex = X(db);
           if (isLast && b > pStart + ln.end) ex += this.fontSize * 0.5; // ¶ 표시 폭
           ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
           ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
@@ -748,8 +791,8 @@ export class Editor {
         const sd = Math.max(docToDisplay(para, a), ln.start);
         const ed = b > pEnd ? ln.end : Math.min(docToDisplay(para, b), ln.end);
         if (sd > ed || (sd === ed && !withMark)) continue;
-        const sx = x0 + xs[sd]!;
-        const ex = x0 + xs[ed]! + (withMark ? this.fontSize * 0.5 : 0);
+        const sx = X(sd);
+        const ex = X(ed) + (withMark ? this.fontSize * 0.5 : 0);
         ctx.fillStyle = withAlpha(rc.color, 0.22);
         ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
       }
@@ -757,9 +800,9 @@ export class Editor {
       // 글자
       ctx.fillStyle = COLORS.text;
       const midY = baseY;
-      if (this.shapedFonts || para.layout.fmt) {
-        this.drawRuns(para.layout, ln.start, ln.end, x0, baseY);
-        if (para.layout.fmt) this.drawDecorations(para.layout, ln.start, ln.end, x0, baseY);
+      if (this.shapedFonts || para.layout.fmt || ln.adj) {
+        this.drawRuns(para.layout, ln, px, baseY, sty);
+        if (para.layout.fmt) this.drawDecorations(para.layout, ln, px, baseY, sty);
         ctx.font = this.font;
         ctx.fillStyle = COLORS.text;
       } else if (this.kerningOff) {
@@ -802,7 +845,7 @@ export class Editor {
         const b = Math.min(preedit[1], ln.end);
         if (a < b) {
           ctx.fillStyle = COLORS.preedit;
-          ctx.fillRect(x0 + xs[a]!, y + ln.height - 5, xs[b]! - xs[a]!, 1.5);
+          ctx.fillRect(X(a), y + ln.height - 5, X(b) - X(a), 1.5);
         }
       }
     }
@@ -824,17 +867,46 @@ export class Editor {
 
   // ── 서식 (10 §4) ──────────────────────────────────────
 
-  /** 서식 번호 → 그리기 정보 (문서의 서식 묶음에서, 문서마다 캐시) */
-  private drawStyle(id: number): DrawStyle {
-    if (this.drawStylesDoc !== this.doc) {
-      this.drawStyles = [];
-      this.drawStylesDoc = this.doc;
+  /** 문단의 스타일 캐시 키: 스타일에 기본 글자 서식이 있으면 그 이름, 없으면 '' */
+  private styleKey(info: ParagraphInfo): string {
+    const name = info.attrs?.style ?? BODY_STYLE;
+    return hasKeys(this.doc.resolvedStyle(name).marks) ? name : '';
+  }
+
+  /** 스타일 sty 문단의 서식 번호 → 레이아웃 영향 (함수는 스타일마다 하나) */
+  private styleFn(sty: string): (id: number) => RunStyle {
+    this.checkStyleCaches();
+    let f = this.styleFns.get(sty);
+    if (!f) {
+      f = (id: number) => this.drawStyle(id, sty).run;
+      this.styleFns.set(sty, f);
     }
-    let d = this.drawStyles[id];
+    return f;
+  }
+
+  private checkStyleCaches(): void {
+    const k = this.drawStylesKey;
+    if (!k || k.doc !== this.doc || k.version !== this.doc.stylesVersion) {
+      this.drawStyles.clear();
+      this.styleFns.clear();
+      this.drawStylesKey = { doc: this.doc, version: this.doc.stylesVersion };
+    }
+  }
+
+  /** (문단 스타일 sty, 서식 번호) → 그리기 정보. 스타일의 기본 글자 서식 위에 글자 서식을 덮는다 */
+  private drawStyle(id: number, sty = ''): DrawStyle {
+    this.checkStyleCaches();
+    let table = this.drawStyles.get(sty);
+    if (!table) {
+      table = [];
+      this.drawStyles.set(sty, table);
+    }
+    let d = table[id];
     if (d) return d;
-    if (id === 0) d = PLAIN_DRAW;
+    const own = this.doc.markSet(id);
+    const m: MarkSet = sty ? { ...this.doc.resolvedStyle(sty).marks, ...own } : own;
+    if (!hasKeys(m)) d = PLAIN_DRAW;
     else {
-      const m = this.doc.markSet(id);
       // 크기는 1/1000pt → px (96dpi)
       const sizePx = typeof m.size === 'number' && m.size > 0 ? (m.size / 1000) * (96 / 72) : this.fontSize;
       const base = sizePx / this.fontSize;
@@ -852,8 +924,24 @@ export class Editor {
         shift: script === 'sup' ? SUP_SHIFT * sizePx : script === 'sub' ? SUB_SHIFT * sizePx : 0,
       };
     }
-    this.drawStyles[id] = d;
+    table[id] = d;
     return d;
+  }
+
+  /** 문단 속성(스타일 사슬 → 직접 속성)을 px 상자로. 레이아웃에 영향이 없으면 null (기본 문단과 같은 빠른 경로) */
+  private paraBox(attrs: ParaAttrs, rs: ResolvedStyle): ParaBox | null {
+    const a = hasKeys(rs.para) ? mergeParaAttrs(rs.para, attrs) : attrs;
+    if (!a.align && !a.indent && !a.space && !a.line) return null;
+    const pt = (v: number | undefined) => ((v ?? 0) / 1000) * (96 / 72);
+    return {
+      align: a.align ?? 'left',
+      left: pt(a.indent?.left),
+      right: pt(a.indent?.right),
+      first: pt(a.indent?.first),
+      before: a.space?.before !== undefined ? pt(a.space.before) : this.setup.paraSpacing,
+      after: pt(a.space?.after),
+      line: a.line ? (a.line.rule === 'multiple' ? { rule: 'multiple', value: a.line.value } : { rule: a.line.rule, value: pt(a.line.value) }) : null,
+    };
   }
 
   /** 그리기용 CSS font: 글꼴 번호 f(셰이핑 중)와 서식 */
@@ -872,14 +960,18 @@ export class Editor {
   /**
    * 줄 글자 그리기: 어절(공백·탭 사이)과 글꼴·서식이 바뀌는 곳마다 나눠 레이아웃 위치에 fillText. 레이아웃이 같은 단위로
    * 셰이핑했으므로 어절 경계 커닝 차이가 생기지 않는다. 기울임은 기준선 기준으로 기울여 그린다 (진행폭은 바로 선 글꼴).
+   * 양쪽 맞춤이 글자 사이에 나뉜 줄은 글자마다 나눠 그린다.
    */
-  private drawRuns(pl: ParaLayout, start: number, end: number, x0: number, baseY: number): void {
+  private drawRuns(pl: ParaLayout, ln: PlacedLine, px: number, baseY: number, sty: string): void {
     const { ctx } = this;
     const fonts = pl.fonts;
     const fmt = pl.fmt;
+    const start = ln.start;
+    const end = ln.end;
     const fontAt = (k: number) => (fonts ? fonts[k]! : 0);
     const idAt = (k: number) => (fmt ? fmt[k]! : 0);
     const blank = (c: string) => c === ' ' || c === '\t' || c === '　';
+    const perChar = ln.adjChars;
     let lastFont = '';
     let k = start;
     while (k < end) {
@@ -890,15 +982,15 @@ export class Editor {
       const f = fontAt(k);
       const id = idAt(k);
       let j = k + 1;
-      while (j < end && fontAt(j) === f && idAt(j) === id && !blank(cpSlice(pl, j, j + 1))) j++;
-      const d = this.drawStyle(id);
+      while (j < end && !(perChar && pl.stops[j]) && fontAt(j) === f && idAt(j) === id && !blank(cpSlice(pl, j, j + 1))) j++;
+      const d = this.drawStyle(id, sty);
       const font = this.cssFont(f, d);
       if (font !== lastFont) {
         ctx.font = font;
         lastFont = font;
       }
       ctx.fillStyle = d.color ?? COLORS.text;
-      const x = x0 + pl.xs[k]!;
+      const x = px + lineX(pl, ln, k);
       const y = baseY + d.shift;
       const t = cpSlice(pl, k, j);
       if (d.italic) {
@@ -912,39 +1004,43 @@ export class Editor {
     }
   }
 
-  /** 서식 번호가 같은 구간 [k, j)마다 fn (줄 [start, end) 안, 끝 공백 제외) */
-  private eachFormatRun(pl: ParaLayout, start: number, end: number, fn: (k: number, j: number, d: DrawStyle) => void): void {
+  /** 그리기 정보가 같은 구간 [k, j)마다 fn (줄 안, 끝 공백 제외) */
+  private eachFormatRun(pl: ParaLayout, ln: PlacedLine, sty: string, fn: (k: number, j: number, d: DrawStyle) => void): void {
     const fmt = pl.fmt!;
+    const start = ln.start;
+    let end = ln.end;
     while (end > start && /^[ \t　]$/.test(cpSlice(pl, end - 1, end))) end--;
     let k = start;
     while (k < end) {
       let j = k + 1;
       while (j < end && fmt[j] === fmt[k]) j++;
-      if (fmt[k] !== 0) fn(k, j, this.drawStyle(fmt[k]!));
+      const d = this.drawStyle(fmt[k]!, sty);
+      if (d !== PLAIN_DRAW) fn(k, j, d);
       k = j;
     }
   }
 
-  private drawHighlights(pl: ParaLayout, start: number, end: number, x0: number, baseY: number): void {
+  private drawHighlights(pl: ParaLayout, ln: PlacedLine, px: number, baseY: number, sty: string): void {
     const { ctx } = this;
     const { ascent, descent } = this.metrics;
-    this.eachFormatRun(pl, start, end, (k, j, d) => {
+    this.eachFormatRun(pl, ln, sty, (k, j, d) => {
       if (!d.highlight) return;
       const em = this.fontSize * d.run.line;
+      const x = px + lineX(pl, ln, k);
       ctx.fillStyle = d.highlight;
-      ctx.fillRect(x0 + pl.xs[k]!, baseY - ascent * em, pl.xs[j]! - pl.xs[k]!, (ascent + descent) * em);
+      ctx.fillRect(x, baseY - ascent * em, px + lineX(pl, ln, j) - x, (ascent + descent) * em);
     });
   }
 
   /** 밑줄·취소선: 위치·두께는 기본 글꼴 치수 (post·OS/2), 글자 크기 비례 */
-  private drawDecorations(pl: ParaLayout, start: number, end: number, x0: number, baseY: number): void {
+  private drawDecorations(pl: ParaLayout, ln: PlacedLine, px: number, baseY: number, sty: string): void {
     const { ctx } = this;
     const m = this.metrics;
-    this.eachFormatRun(pl, start, end, (k, j, d) => {
+    this.eachFormatRun(pl, ln, sty, (k, j, d) => {
       if (!d.underline && !d.strike) return;
       const em = this.fontSize * d.run.scale;
-      const x = x0 + pl.xs[k]!;
-      const w = pl.xs[j]! - pl.xs[k]!;
+      const x = px + lineX(pl, ln, k);
+      const w = px + lineX(pl, ln, j) - x;
       const y = baseY + d.shift;
       ctx.fillStyle = d.color ?? COLORS.text;
       if (d.underline) {
@@ -956,6 +1052,91 @@ export class Editor {
         ctx.fillRect(x, y - m.strikePosition * em - th / 2, w, th);
       }
     });
+  }
+
+  // ── 문단 서식 (10 §2.2–2.3) ──────────────────────────
+
+  /** 선택한 문단들의 문단 서식 (툴바 상태). 많으면 앞 1,000문단만 본다 */
+  paragraphState(): ParagraphState {
+    const [i, j] = this.selectedParagraphs();
+    const last = Math.min(j, i + 999);
+    const styleOf = (k: number) => this.doc.paraAttrs(k).style ?? BODY_STYLE;
+    const first = this.doc.effectiveParaAttrs(i);
+    const mixed = new Set<string>();
+    for (let k = i + 1; k <= last; k++) {
+      if (styleOf(k) !== styleOf(i)) mixed.add('style');
+      const a = this.doc.effectiveParaAttrs(k);
+      for (const key of ['align', 'indent', 'space', 'line'] as const)
+        if (JSON.stringify(a[key]) !== JSON.stringify(first[key])) mixed.add(key);
+    }
+    return { style: styleOf(i), attrs: first, mixed };
+  }
+
+  /** 선택한 문단들의 문단 속성 키 하나를 value로 (undefined = 해제). 실행 취소 한 단계 */
+  setParagraphAttr(key: ParaKey, value: unknown): void {
+    this.input.commitComposition();
+    const [i, j] = this.selectedParagraphs();
+    const before: Selection = { ...this.sel };
+    const ops: Op[] = [];
+    for (let k = i; k <= j; k++) ops.push(...this.doc.setParaAttr(k, key, value));
+    if (ops.length === 0) return;
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
+  /** 선택한 문단들에 문단 스타일 (본문이면 style 키를 지운다) */
+  setParagraphStyle(name: string): void {
+    this.setParagraphAttr('style', name === BODY_STYLE ? undefined : name);
+  }
+
+  /** 문단 스타일 정의를 바꾼다 (그 스타일을 쓰는 문단만 다시 조판). 실행 취소 한 단계 */
+  setStyleDef(name: string, def: Style | undefined): void {
+    this.input.commitComposition();
+    const before: Selection = { ...this.sel };
+    const ops = this.doc.setStyle(name, def);
+    if (ops.length === 0) return;
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
+  /** 들여쓰기 한 단계 (±24pt, 왼쪽 들여쓰기만) */
+  indent(dir: 1 | -1): void {
+    const cur = this.doc.paraAttrs(this.selectedParagraphs()[0]).indent;
+    const left = Math.max(0, (cur?.left ?? 0) + dir * 24000);
+    const next = { ...cur, left };
+    if (left === 0) delete (next as { left?: number }).left;
+    this.setParagraphAttr('indent', hasKeys(next) ? next : undefined);
+  }
+
+  /**
+   * 문단을 지우는 삭제 [from, to)의 뒤처리 (10 §2.2): 합친 문단은 남은 뒤 ¶의 속성을 갖는데, 사용자는 앞 문단 서식을 기대한다.
+   * 앞 문단이 일부라도 남으면(from이 문단 첫머리가 아니면) 그 문단의 속성을 합친 문단에 복사하는 연산을 돌려준다.
+   */
+  private mergeKeepAttrs(from: number, to: number): (() => Op[]) | null {
+    if (from === to) return null;
+    const pi = this.doc.paragraphIndexAt(from);
+    const p = this.doc.paragraphs()[pi]!;
+    if (to <= p.end || from === p.start) return null;
+    const keep = p.attrs;
+    return () => {
+      const cur = this.doc.paraAttrs(pi);
+      const ops: Op[] = [];
+      for (const k of new Set([...Object.keys(keep), ...Object.keys(cur)]) as Set<ParaKey>)
+        ops.push(...this.doc.setParaAttr(pi, k, keep[k]));
+      return ops;
+    };
+  }
+
+  /** Enter (10 §2.2): 문단 끝에서 Enter면 다음 문단은 스타일의 next (제목 → 본문) */
+  private insertParagraph(): void {
+    const [from, to] = this.range();
+    const pi = this.doc.paragraphIndexAt(from);
+    const p = this.doc.paragraphs()[pi]!;
+    const name = p.attrs.style;
+    const next = from === to && from === p.end && name ? this.doc.style(name)?.next : undefined;
+    this.replaceSelection('\n', undefined, next !== undefined && next !== name ? () => this.doc.setParaAttr(pi + 1, 'style', next === BODY_STYLE ? undefined : next) : undefined);
   }
 
   /** 보류 서식(캐럿에서 다음 입력이 받을 서식)의 번호. 지금 캐럿에 해당하지 않으면 undefined */
@@ -1166,12 +1347,14 @@ export class Editor {
 
   private updateMirror(paras: Set<number>): void {
     const infos = [...paras].sort((a, b) => a - b).map((p) => this.doc.paragraphs()[p]).filter((p) => p !== undefined);
-    const key = infos.map((p) => (p.fmt ? `${p.text}\u0001${p.fmt.join(',')}` : p.text)).join('\n');
+    const key = infos.map((p) => `${p.attrs.style ?? ''}\u0002${p.fmt ? `${p.text}\u0001${p.fmt.join(',')}` : p.text}`).join('\n');
     if (this.mirror.dataset.key === key) return;
     this.mirror.dataset.key = key;
     this.mirror.replaceChildren(
       ...infos.map((info) => {
-        const p = document.createElement('p');
+        // 제목·인용은 h1–h3·blockquote로 (04 §3): 스크린리더가 구조를 읽는다
+        const tag = ({ h1: 'h1', h2: 'h2', h3: 'h3', quote: 'blockquote' } as Record<string, string>)[info.attrs.style ?? ''] ?? 'p';
+        const p = document.createElement(tag);
         if (!info.fmt) {
           p.textContent = info.text;
           return p;
@@ -1235,18 +1418,24 @@ export class Editor {
   // ── 편집 ──────────────────────────────────────────────
 
   /** 선택 영역을 지우고 텍스트를 넣는다. 결과를 트랜잭션 하나로 기록 */
-  private replaceSelection(text: string, mergeKey?: string): void {
+  private replaceSelection(text: string, mergeKey?: string, extra?: () => Op[]): void {
     const before: Selection = { ...this.sel };
     const [from, to] = this.range();
     const ops: Op[] = [];
+    const merge = this.mergeKeepAttrs(from, to);
     if (from !== to) {
       ops.push(...this.doc.deleteRange(from, to));
       mergeKey = undefined;
     }
+    if (merge) ops.push(...merge());
     const marks = this.pending && this.pending.at === from ? this.pending.marks : undefined;
     if (text) ops.push({ type: 'insert', ids: this.doc.insertText(from, text, marks) });
     if (text) this.pending = null;
     const caret = from + Array.from(text.replace(/\r\n?/g, '\n')).length;
+    if (extra) {
+      ops.push(...extra());
+      mergeKey = undefined;
+    }
     this.setSelection(caret);
     this.commit(ops, before, mergeKey);
   }
@@ -1254,7 +1443,12 @@ export class Editor {
   private deleteRange(from: number, to: number, mergeKey?: string): void {
     if (from === to) return;
     const before: Selection = { ...this.sel };
+    const merge = this.mergeKeepAttrs(from, to);
     const ops = this.doc.deleteRange(from, to);
+    if (merge) {
+      ops.push(...merge());
+      mergeKey = undefined;
+    }
     this.setSelection(from);
     this.commit(ops, before, mergeKey);
   }
@@ -1336,7 +1530,7 @@ export class Editor {
         this.replaceSelection(i.text, 'type');
         break;
       case 'insertParagraph':
-        this.replaceSelection('\n');
+        this.insertParagraph();
         break;
       case 'compositionStart': {
         // 조합이 가져가는 기존 글자: 선택 영역, 또는 입력 층이 알려 준 범위(한자 재변환 등)
@@ -1401,9 +1595,22 @@ export class Editor {
       return;
     }
 
+    // 문단 스타일 (10 §5): Ctrl+Alt+1–3 제목, Ctrl+Alt+0 본문
+    if (mod && e.altKey && !shift && /^Digit[0-3]$/.test(e.code)) {
+      const n = Number(e.code.slice(5));
+      this.setParagraphStyle(n === 0 ? BODY_STYLE : `h${n}`);
+      e.preventDefault();
+      return;
+    }
     // 글자 서식 (10 §5)
     if (mod && !e.altKey) {
       const k = e.key.toLowerCase();
+      const align = !shift ? ({ l: 'left', e: 'center', r: 'right', j: 'justify' } as const)[k as 'l'] : undefined;
+      if (align) {
+        this.setParagraphAttr('align', align === 'left' ? undefined : align);
+        e.preventDefault();
+        return;
+      }
       const fmtKey =
         !shift && k === 'b' ? 'bold' : !shift && k === 'i' ? 'italic' : !shift && k === 'u' ? 'underline' : shift && k === 'x' ? 'strike' : null;
       if (fmtKey) {
@@ -1779,3 +1986,19 @@ function wordBounds(text: string): Array<{ start: number; end: number; isWord: b
 
 
 export type { Position };
+
+function hasKeys(o: object): boolean {
+  for (const _ in o) return true;
+  return false;
+}
+
+/** 코드포인트 수 */
+function cpCount(t: string): number {
+  let n = 0;
+  for (let i = 0; i < t.length; i++) {
+    const c = t.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < t.length) i++;
+    n++;
+  }
+  return n;
+}

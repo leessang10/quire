@@ -5,7 +5,7 @@
  * - 키 순서를 고정해 직렬화한다(키 사전순, 들여쓰기 2칸, 끝 줄바꿈). 같은 문서는 늘 같은 바이트열 → 해시·diff가 안정적이다.
  * - CRDT 원소 ID·묘비·구획 표식은 들어가지 않는다. 그래서 정본으로 저장했다 다시 열면 구획이 하나뿐인 깨끗한 문서가 된다.
  */
-import { Doc, MARK_KEYS, type MarkSet, type ParaAttrs } from '@quire/model';
+import { DEFAULT_STYLES, Doc, MARK_KEYS, type MarkSet, type ParaAttrs, type Style } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
 import { readRaw, readState } from './shape';
 
@@ -83,6 +83,10 @@ export function quireFromDoc(doc: Doc): QuireDoc {
     p: { ...p.attrs },
     c: p.runs.filter((r) => r.text).map((r) => (Object.keys(r.marks).length ? { t: r.text, m: { ...r.marks } } : { t: r.text })),
   }));
+  // 스타일 (10 §2.3): 기본 스타일과 다른 것만 (이름 → 정의)
+  const defaults = new Map(DEFAULT_STYLES.map((st) => [st.name, JSON.stringify(st)]));
+  for (const st of doc.styles()) if (defaults.get(st.name) !== JSON.stringify(st)) q.styles[st.name] = structuredClone(st);
+  for (const name of defaults.keys()) if (!doc.style(name)) q.styles[name] = null;
   return q;
 }
 
@@ -108,7 +112,14 @@ export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: str
     });
     return { attrs: attrs as ParaAttrs, runs };
   });
-  return { doc: Doc.fromParagraphRuns(paras, peer), notes: [...notes].map((n) => `${n}: 이 엔진이 모르는 값이라 버림`) };
+  const doc = Doc.fromParagraphRuns(paras, peer);
+  // 스타일: null이면 기본 스타일을 지운 것
+  for (const [name, def] of Object.entries(q.styles ?? {})) {
+    if (def === null) doc.setStyle(name, undefined);
+    else if (def && typeof def === 'object') doc.setStyle(name, { ...(def as Style), name });
+  }
+  doc.takeParagraphChanges();
+  return { doc, notes: [...notes].map((n) => `${n}: 이 엔진이 모르는 값이라 버림`) };
 }
 
 /** 스키마 확인 + 마이그레이션 (07 §6). 지금은 v1뿐이다 */

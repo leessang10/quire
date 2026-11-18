@@ -1,5 +1,5 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
-import { Doc, type MarkSet } from '@quire/model';
+import { Doc, type MarkSet, type ParaAttrs } from '@quire/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
 
@@ -11,12 +11,23 @@ const SAMPLE = `Quire 0단계 프로토타입
 
 단축키: Ctrl+Z 실행 취소, Ctrl+Shift+Z 또는 Ctrl+Y 다시 실행, Ctrl+A 전체 선택, Ctrl+←/→ 단어 이동, Shift+방향키 선택 확장, 두 번 클릭 단어 선택, 세 번 클릭 문단 선택.`;
 
-/** 서식 예제 (10 §4, 2-3): 굵게·기울임·크기·색·밑줄·취소선·형광펜·첨자, 줄마다 높이 */
+/** 서식 예제 (10 §4, 2-3·2-4): 굵게·기울임·크기·색·밑줄·취소선·형광펜·첨자, 줄마다 높이 */
 function formatSample(): Doc {
   const r = (text: string, marks: MarkSet = {}) => ({ text, marks });
   const p = (...runs: Array<{ text: string; marks: MarkSet }>) => ({ attrs: {}, runs });
+  const pa = (attrs: ParaAttrs, ...runs: Array<{ text: string; marks: MarkSet }>) => ({ attrs, runs });
+  const long =
+    '양쪽 맞춤은 마지막 줄을 뺀 줄에서 남는 폭을 어절 사이 공백에 나눠 줍니다. 추가 폭은 셰이핑 위치에 더하지 않고 줄마다 따로 들고 있다가 캐럿 위치와 그리기에서 더하므로, 정렬을 바꿔도 문단을 다시 셰이핑하지 않습니다.';
   return Doc.fromParagraphRuns([
-    p(r('글자 서식 예제', { bold: true, size: 24000 })),
+    pa({ style: 'h1' }, r('서식 예제')),
+    pa({ style: 'h2' }, r('문단 서식')),
+    pa({ align: 'justify' }, r(long)),
+    pa({ align: 'center' }, r('가운데 정렬한 문단입니다.')),
+    pa({ align: 'right' }, r('오른쪽 정렬한 문단입니다.')),
+    pa({ indent: { left: 36000, first: -18000 } }, r('내어쓰기: 왼쪽 36pt 들여쓰고 첫 줄은 18pt 내어 씁니다. 번호나 글머리를 붙일 자리를 만드는 방식이고, 둘째 줄부터는 들여쓴 자리에서 시작합니다.')),
+    pa({ indent: { first: 24000 }, line: { rule: 'multiple', value: 1.5 } }, r('첫 줄 들여쓰기 24pt와 줄 간격 1.5배입니다. 한국어 문서에서 흔한 첫 줄 들여쓰기 모양이고, 줄 간격은 기본 줄 높이의 배수로 정합니다.')),
+    pa({ style: 'quote' }, r('인용 스타일: 양쪽 24pt 들여쓰기, 기울임, 회색. 스타일의 기본 글자 서식은 직접 서식 아래에 깔립니다.')),
+    pa({ style: 'h2' }, r('글자 서식')),
     p(
       r('본문 사이에 '),
       r('굵게', { bold: true }),
@@ -216,8 +227,53 @@ document.getElementById('fmt-clear')!.addEventListener('click', () => {
   editor.clearMarks();
   editor.focus();
 });
+// ── 문단 서식 막대 (2-4) ──
+const styleSel = document.getElementById('para-style') as HTMLSelectElement;
+const lineSel = document.getElementById('para-line') as HTMLSelectElement;
+styleSel.addEventListener('change', () => {
+  editor.setParagraphStyle(styleSel.value);
+  editor.focus();
+});
+document.querySelectorAll<HTMLButtonElement>('[data-align]').forEach((b) =>
+  b.addEventListener('click', () => {
+    editor.setParagraphAttr('align', b.dataset.align === 'left' ? undefined : b.dataset.align);
+    editor.focus();
+  }),
+);
+lineSel.addEventListener('change', () => {
+  editor.setParagraphAttr('line', lineSel.value ? { rule: 'multiple', value: Number(lineSel.value) } : undefined);
+  editor.focus();
+});
+document.getElementById('para-indent')!.addEventListener('click', () => {
+  editor.indent(1);
+  editor.focus();
+});
+document.getElementById('para-outdent')!.addEventListener('click', () => {
+  editor.indent(-1);
+  editor.focus();
+});
+// 스타일 정의 바꾸기: 제목 1 문단만 다시 조판된다 (10 §2.3)
+let h1Blue = false;
+document.getElementById('restyle-h1')!.addEventListener('click', () => {
+  const cur = editor.doc.style('h1')!;
+  h1Blue = !h1Blue;
+  const marks = { ...cur.marks };
+  if (h1Blue) marks.color = '#1a5fb4';
+  else delete marks.color;
+  editor.setStyleDef('h1', { ...cur, marks });
+  editor.focus();
+});
+
 /** 도구 막대에 선택 영역의 서식을 보인다 */
 function showMarks(): void {
+  const ps = editor.paragraphState();
+  styleSel.value = ps.mixed.has('style') ? '' : ps.style;
+  const align = ps.attrs.align ?? 'left';
+  document.querySelectorAll<HTMLButtonElement>('[data-align]').forEach((b) => {
+    b.setAttribute('aria-pressed', ps.mixed.has('align') ? 'mixed' : String(b.dataset.align === align));
+  });
+  lineSel.value = ps.mixed.has('line') || ps.attrs.line?.rule !== 'multiple' ? '' : String(ps.attrs.line.value);
+
   const { marks, mixed } = editor.selectionMarks();
   const state = (on: boolean, mix: boolean) => (mix ? 'mixed' : on ? 'true' : 'false');
   document.querySelectorAll<HTMLButtonElement>('[data-mark]').forEach((b) => {

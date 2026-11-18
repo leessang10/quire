@@ -23,6 +23,32 @@
         <a class="link" href="/shaping.html">셰이핑 검증</a>
       </div>
     </header>
+    <div class="format-bar" role="toolbar" aria-label="문단 서식">
+      <label>스타일
+        <select id="para-style">
+          <option value="body">본문</option>
+          <option value="h1">제목 1</option>
+          <option value="h2">제목 2</option>
+          <option value="h3">제목 3</option>
+          <option value="quote">인용</option>
+        </select>
+      </label>
+      <button data-align="left" aria-pressed="false" title="왼쪽 정렬 (Ctrl+L)">왼쪽</button>
+      <button data-align="center" aria-pressed="false" title="가운데 정렬 (Ctrl+E)">가운데</button>
+      <button data-align="right" aria-pressed="false" title="오른쪽 정렬 (Ctrl+R)">오른쪽</button>
+      <button data-align="justify" aria-pressed="false" title="양쪽 맞춤 (Ctrl+J)">양쪽</button>
+      <label>줄 간격
+        <select id="para-line">
+          <option value="">기본</option>
+          <option value="1.15">1.15</option>
+          <option value="1.5">1.5</option>
+          <option value="2">2</option>
+        </select>
+      </label>
+      <button id="para-outdent" title="내어쓰기">← 들여쓰기</button>
+      <button id="para-indent" title="들여쓰기">들여쓰기 →</button>
+      <button id="restyle-h1" title="제목 1 스타일 정의를 바꾼다 (그 문단만 다시 조판)">제목 1 색 바꾸기</button>
+    </div>
     <div class="format-bar" role="toolbar" aria-label="글자 서식">
       <button data-mark="bold" aria-pressed="false" title="굵게 (Ctrl+B)"><b>가</b></button>
       <button data-mark="italic" aria-pressed="false" title="기울임 (Ctrl+I)"><i>가</i></button>

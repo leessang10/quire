@@ -6,6 +6,7 @@ import {
   LayoutCache,
   PLAIN_STYLE,
   PagedLayout,
+  charFormats,
   baselineOffset,
   layoutParagraph,
   type Measurer,
@@ -113,7 +114,7 @@ describe('paged layout with formats', () => {
       { id: 'a', start: 0, text: '가나 다라 마바', fmt: Uint16Array.from([0, 0, 0, 2, 0, 0, 0, 0]) },
       { id: 'b', start: 9, text: '사아' },
     ];
-    const pl = new PagedLayout(SETUP, mono, new LayoutCache(), style);
+    const pl = new PagedLayout(SETUP, mono, new LayoutCache(), charFormats(style));
     pl.update(paras);
     pl.finish();
     const lines = pl.para(0).lines;
@@ -150,7 +151,7 @@ describe('paged layout with formats', () => {
       { id: 'b', start: 3, text: '다라' },
       { id: 'c', start: 6, text: '마바' },
     ];
-    const pl = new PagedLayout(SETUP, mono, new LayoutCache(), style);
+    const pl = new PagedLayout(SETUP, mono, new LayoutCache(), charFormats(style));
     pl.update(paras);
     pl.finish();
     const next = [{ ...paras[0]!, fmt: Uint16Array.from([2, 2]) }, paras[1]!, paras[2]!];

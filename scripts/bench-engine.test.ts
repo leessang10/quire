@@ -9,7 +9,7 @@
  */
 import { it } from 'vitest';
 import { Doc } from '@quire/model';
-import { PLAIN_STYLE, PagedLayout, type Measurer, type PageSetup, type RunStyle } from '@quire/layout';
+import { PLAIN_STYLE, PagedLayout, type FormatSource, type Measurer, type PageSetup, type ParaBox, type RunStyle } from '@quire/layout';
 
 const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };
 const setup: PageSetup = { width: 794, height: 1123, margin: 96, gap: 24, lineHeight: 27, paraSpacing: 8 };
@@ -34,7 +34,18 @@ function stats(t: number[]) {
 /**
  * 서식 많은 문서 (10 §6): 문단마다 굵게·크기·기울임·색 구간 4개 (어절 경계와 어긋나게). 편집기와 같은 규칙으로 서식 → 영향
  */
-function formatDoc(doc: Doc): (id: number) => RunStyle {
+function formatDoc(doc: Doc): FormatSource {
+  // 문단 서식 (2-4): 셋에 하나는 양쪽 맞춤 + 첫 줄 들여쓰기, 다섯에 하나는 가운데 + 줄 간격 1.5
+  const n = doc.paragraphs().length;
+  for (let i = 0; i < n; i++) {
+    if (i % 3 === 0) {
+      doc.setParaAttr(i, 'align', 'justify');
+      doc.setParaAttr(i, 'indent', { first: 24000 });
+    } else if (i % 5 === 0) {
+      doc.setParaAttr(i, 'align', 'center');
+      doc.setParaAttr(i, 'line', { rule: 'multiple', value: 1.5 });
+    }
+  }
   for (const p of [...doc.paragraphs()].reverse()) {
     const a = p.start;
     doc.format(a + 3, a + 9, 'bold', true);
@@ -44,11 +55,19 @@ function formatDoc(doc: Doc): (id: number) => RunStyle {
   }
   doc.takeParagraphChanges(); // 준비 단계의 변경 기록은 레이아웃이 생기기 전 것
   const cache: RunStyle[] = [];
-  return (id) => {
+  const style = (id: number): RunStyle => {
     if (cache[id]) return cache[id]!;
     const m = doc.markSet(id);
     const base = m.size ? (m.size / 1000) * (96 / 72) / 16 : 1;
     return (cache[id] = id === 0 ? PLAIN_STYLE : { face: m.bold ? 1 : 0, scale: base, line: base });
+  };
+  const pt = (v = 0) => (v / 1000) * (96 / 72);
+  return (info, force) => {
+    const a = (info as unknown as { attrs: import('@quire/model').ParaAttrs }).attrs;
+    const box: ParaBox | null = a.align || a.indent || a.line
+      ? { align: a.align ?? 'left', left: pt(a.indent?.left), right: pt(a.indent?.right), first: pt(a.indent?.first), before: setup.paraSpacing, after: 0, line: a.line ?? null }
+      : null;
+    return info.fmt || info.mark || force || box ? { fmt: info.fmt ?? null, mark: info.mark ?? 0, style, box } : null;
   };
 }
 
@@ -58,9 +77,9 @@ function formatDoc(doc: Doc): (id: number) => RunStyle {
  */
 function scenario(paragraphs: number, where: number, moves = 0, formatted = false) {
   const doc = makeDoc(paragraphs);
-  const style = formatted ? formatDoc(doc) : null;
+  const resolve = formatted ? formatDoc(doc) : null;
   let t = performance.now();
-  const layout = new PagedLayout(setup, measurer, undefined, style);
+  const layout = new PagedLayout(setup, measurer, undefined, resolve);
   layout.update(doc.paragraphs(), null, VIEW * 2);
   const firstScreen = performance.now() - t;
   t = performance.now();
@@ -122,7 +141,7 @@ function scenario(paragraphs: number, where: number, moves = 0, formatted = fals
       '',
       `■ ${paragraphs.toLocaleString()} 문단 / ${layout.pageCount} 쪽 / 캐럿 위치 ${Math.round(where * 100)}%  (heap ${mem.toFixed(0)} MB)` +
         (moves ? ` / 이동 ${moves}회 후 구획 ${doc.segmentCount}개` : '') +
-        (formatted ? ' / 서식 많음' : ''),
+        (formatted ? ' / 서식 많음 (글자 + 문단)' : ''),
       ...(moves ? [`  문단 이동          ${stats(moveMs)}`] : []),
       `  첫 화면 배치       ${firstScreen.toFixed(1)} ms   (나머지 백그라운드 ${background.toFixed(0)} ms, 8ms 조각 ${slices}개)`,
       `  글자 입력          ${stats(typing)}`,

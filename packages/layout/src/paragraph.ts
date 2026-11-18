@@ -7,7 +7,7 @@
  * - 셰이퍼가 없으면 grapheme 단위 폭 합산 (커닝·합자 무시, 0단계 방식)
  * - 줄바꿈: 한글 어절(공백) 단위. 한 어절이 줄보다 길면 글자 단위로 끊음
  * - 금칙: 글자 단위로 끊을 때 닫는 문장부호가 줄 앞에 오지 않게 한 글자 당김
- * - 왼쪽 정렬만
+ * - 문단 상자(ParaBox, 10 §4): 들여쓰기만 줄바꿈에 영향을 준다 (첫 줄 폭, 나머지 줄 폭). 정렬·간격·줄 간격은 쪽 배치(document.ts)에서
  * - 서식 (10 §4): 글자마다 서식 번호(fmt)를 받아 얼굴(굵게)·크기 배율로 잰다. 조각은 서식 번호가 바뀌는 곳에서도 나눈다.
  *   줄마다 높이 배율(그 줄 글자의 가장 큰 크기)을 낸다. fmt가 없으면 서식 없는 경로와 같다
  *
@@ -26,6 +26,20 @@ export interface RunStyle {
 
 export const PLAIN_STYLE: RunStyle = Object.freeze({ face: 0, scale: 1, line: 1 });
 
+/** 문단 속성을 px로 풀어 쓴 값 (편집기가 스타일·직접 속성에서 만든다, 10 §4) */
+export interface ParaBox {
+  align: 'left' | 'center' | 'right' | 'justify';
+  /** 들여쓰기 (px). first는 첫 줄에 더하는 값 (음수면 내어쓰기) */
+  left: number;
+  right: number;
+  first: number;
+  /** 문단 앞·뒤 간격 (px). 쪽 맨 위에서는 앞 간격을 두지 않는다 */
+  before: number;
+  after: number;
+  /** 줄 간격: multiple은 기본 줄 높이의 배수, exact·atLeast는 px. null이면 배수 1 */
+  line: { rule: 'multiple' | 'exact' | 'atLeast'; value: number } | null;
+}
+
 /** 문단의 서식 (레이아웃 입력) */
 export interface ParaFormat {
   /** 글자(코드포인트)마다 서식 번호. null이면 모두 0 */
@@ -34,6 +48,10 @@ export interface ParaFormat {
   mark: number;
   /** 서식 번호 → 영향. 0번은 PLAIN_STYLE이어야 한다 */
   style(id: number): RunStyle;
+  /** 문단 상자. 없으면 기본 (왼쪽 정렬, 들여쓰기 없음, 앞 간격 = setup.paraSpacing) */
+  box?: ParaBox | null;
+  /** 레이아웃 캐시 키에 더할 값: style 함수가 서식 번호 밖의 것(문단 스타일 등)에 따라 달라지면 그것을 나타내는 문자열 */
+  key?: string;
 }
 
 export interface Measurer {
@@ -82,6 +100,10 @@ export interface ParaLayout {
   fonts: Uint8Array | null;
   /** 표시 코드포인트별 서식 번호 (조합 문자열 포함). 모두 0이면 null */
   fmt: Uint16Array | null;
+  /** 문단 상자 (없으면 기본) */
+  box: ParaBox | null;
+  /** 줄 폭 (px): 첫 줄, 나머지 줄 (들여쓰기를 뺀 값) */
+  widths: [number, number];
 }
 
 /** 표시 텍스트의 코드포인트 구간 [a, b) */
@@ -134,6 +156,9 @@ export function layoutParagraph(
       fmt = f;
     }
   }
+  const box = format?.box ?? null;
+  const restW = box ? Math.max(1, width - box.left - box.right) : width;
+  const firstW = box ? Math.max(1, restW - box.first) : width;
   const style = format?.style;
   const dfmt = fmt;
   const st = dfmt && style ? (k: number) => style(dfmt[k]!) : null;
@@ -187,9 +212,9 @@ export function layoutParagraph(
     }
     xs[n] = x;
     const fonts = measurer.advances ? shapeXs(display, n, null, xs, measurer, fmt, st) : null;
-    const lines = breakLines(n, xs, gStart, gFirst, width);
+    const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
     lineScales(lines, st, format);
-    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt };
+    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW] };
   }
   for (const seg of segmenter.segment(display)) {
     const s = seg.segment;
@@ -214,14 +239,14 @@ export function layoutParagraph(
   xs[n] = x;
   const fonts = measurer.advances ? shapeXs(display, n, u16, xs, measurer, fmt, st) : null;
 
-  const lines = breakLines(n, xs, gStart, gFirst, width);
+  const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
   lineScales(lines, st, format);
-  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt };
+  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW] };
 }
 
 /** 줄마다 높이 배율: 줄 글자의 가장 큰 line 배율. 마지막 줄은 ¶도 센다 (빈 줄은 ¶만) */
 function lineScales(lines: LineBox[], st: ((k: number) => RunStyle) | null, format: ParaFormat | null): void {
-  const markScale = format && format.mark !== 0 ? format.style(format.mark).line : 1;
+  const markScale = format ? format.style(format.mark).line : 1;
   if (!st && markScale === 1) return;
   for (let l = 0; l < lines.length; l++) {
     const ln = lines[l]!;
@@ -283,7 +308,7 @@ function shapeXs(
   return fonts;
 }
 
-function breakLines(n: number, xs: Float32Array, starts: number[], first: string[], width: number): LineBox[] {
+function breakLines(n: number, xs: Float32Array, starts: number[], first: string[], restWidth: number, firstWidth = restWidth): LineBox[] {
   if (n === 0) return [{ start: 0, end: 0, scale: 1 }];
 
   const lines: LineBox[] = [];
@@ -298,6 +323,7 @@ function breakLines(n: number, xs: Float32Array, starts: number[], first: string
     const ch = first[g]!;
 
     // 공백은 줄 끝에 매달릴 수 있으므로 넘침 판정에서 제외
+    const width = lines.length === 0 ? firstWidth : restWidth;
     if (!isSpace(ch) && xs[next]! - xs[lineStart]! > width && i > lineStart) {
       let breakAt: number;
       let bg: number;
