@@ -5,12 +5,14 @@
  * - 키 순서를 고정해 직렬화한다(키 사전순, 들여쓰기 2칸, 끝 줄바꿈). 같은 문서는 늘 같은 바이트열 → 해시·diff가 안정적이다.
  * - CRDT 원소 ID·묘비·구획 표식은 들어가지 않는다. 그래서 정본으로 저장했다 다시 열면 구획이 하나뿐인 깨끗한 문서가 된다.
  */
-import { Doc } from '@quire/model';
+import { Doc, MARK_KEYS, type MarkSet, type ParaAttrs } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
 import { readRaw, readState } from './shape';
 
 export interface QuireRun {
   t: string;
+  /** 글자 서식 (10 §2.1, 크기는 1/1000pt). 없으면 서식 없음 */
+  m?: MarkSet;
 }
 
 export interface QuireParagraph {
@@ -69,6 +71,44 @@ export function textFromQuire(q: QuireDoc): string {
     out += '\n';
   });
   return out;
+}
+
+/** 지금 모델이 아는 문단 속성 키 (10 §2.2) */
+const PARA_KEYS = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore'];
+
+/** 서식·문단 속성이 있는 문서 → QuireDoc. 같은 서식이 이어진 글자는 한 런 (정규화) */
+export function quireFromDoc(doc: Doc): QuireDoc {
+  const q = quireFromText('\n');
+  q.stories.body = doc.paragraphRuns().map((p) => ({
+    p: { ...p.attrs },
+    c: p.runs.filter((r) => r.text).map((r) => (Object.keys(r.marks).length ? { t: r.text, m: { ...r.marks } } : { t: r.text })),
+  }));
+  return q;
+}
+
+/**
+ * QuireDoc → 서식·문단 속성이 있는 문서. 모르는 서식 키·문단 속성은 버리고 notes에 적는다 (07 §4의 "모르는 속성 보존"은 아직 없음).
+ */
+export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: string[] } {
+  textFromQuire(q); // 구조 확인 (표·필드 등 아직 담을 수 없는 내용은 오류)
+  const notes = new Set<string>();
+  const paras = q.stories.body.map((block) => {
+    const attrs: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(block.p ?? {})) {
+      if (PARA_KEYS.includes(k)) attrs[k] = v;
+      else notes.add(`문단 속성 ${k}`);
+    }
+    const runs = (block.c ?? []).map((r) => {
+      const marks: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(r.m ?? {})) {
+        if ((MARK_KEYS as readonly string[]).includes(k)) marks[k] = v;
+        else notes.add(`글자 서식 ${k}`);
+      }
+      return { text: r.t, marks: marks as MarkSet };
+    });
+    return { attrs: attrs as ParaAttrs, runs };
+  });
+  return { doc: Doc.fromParagraphRuns(paras, peer), notes: [...notes].map((n) => `${n}: 이 엔진이 모르는 값이라 버림`) };
 }
 
 /** 스키마 확인 + 마이그레이션 (07 §6). 지금은 v1뿐이다 */

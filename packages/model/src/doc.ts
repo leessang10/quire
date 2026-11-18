@@ -76,15 +76,60 @@ export type Op =
    * (되돌릴 자리). 구획 키 대신 원소로 기록한다: 그 사이 다른 피어가 뒤 구획을 나누면 키는 뒷부분에 남기 때문이다.
    */
   | { type: 'move'; segs: SegId[]; before: ElementId | null; back: ElementId | null }
-  | { type: 'hidden'; segs: SegId[]; value: boolean };
+  | { type: 'hidden'; segs: SegId[]; value: boolean }
+  /**
+   * 원소들(카운터)의 글자 서식 키 하나를 after로 바꿨다 (10 §2.5). before = 원소마다 바꾸기 전 서식 묶음 번호.
+   * undo면 되돌리는 방향: 지금 값이 after인 원소만 before의 값으로 (그사이 다른 사용자가 바꾼 원소는 두고).
+   * 다시 하기는 지금 값이 before의 값인 원소만 after로.
+   */
+  | { type: 'format'; ctrs: Int32Array; before: Uint16Array; key: MarkKey; after: unknown; undo?: boolean }
+  /** ¶(카운터) 하나의 문단 속성 키 하나 */
+  | { type: 'para'; ctr: number; key: ParaKey; before: unknown; after: unknown };
+
+/** 글자 서식 묶음 (10 §2.1). 값이 없는 키는 서식 없음. 크기는 1/1000pt */
+export interface MarkSet {
+  bold?: true;
+  italic?: true;
+  underline?: true;
+  strike?: true;
+  font?: string;
+  size?: number;
+  color?: string;
+  highlight?: string;
+  link?: string;
+  script?: 'sup' | 'sub';
+}
+export type MarkKey = keyof MarkSet;
+export const MARK_KEYS: readonly MarkKey[] = ['bold', 'italic', 'underline', 'strike', 'font', 'size', 'color', 'highlight', 'link', 'script'];
+/** 입력할 때 앞 글자에서 이어받는 키 (10 §2.6). 링크는 이어받지 않는다 */
+export const INHERITED_MARKS: ReadonlySet<MarkKey> = new Set(MARK_KEYS.filter((k) => k !== 'link'));
+
+/** 문단 속성 (10 §2.2). 길이는 1/1000pt */
+export interface ParaAttrs {
+  style?: string;
+  align?: 'left' | 'center' | 'right' | 'justify';
+  indent?: { left?: number; right?: number; first?: number };
+  space?: { before?: number; after?: number };
+  line?: { rule: 'multiple' | 'exact' | 'atLeast'; value: number };
+  list?: { id: string; level: number };
+  keepWithNext?: true;
+  keepTogether?: true;
+  pageBreakBefore?: true;
+}
+export type ParaKey = keyof ParaAttrs;
+const NO_ATTRS: ParaAttrs = Object.freeze({});
 
 /**
  * 원소 열·구획 변경 기록 (CRDT 브리지용, 09). 위치·길이는 UTF-16 단위이고 구획 표식은 U+E000 한 글자로 센다.
  * 순서대로 적용하면 상대 문서가 이 Doc과 같아진다.
  */
 export type RawChange =
-  /** segs: text 안의 구획 표식(U+E000)마다 그 구획 키 (순서대로) */
-  | { kind: 'insert'; at: number; text: string; segs?: SegId[] }
+  /** segs: text 안의 구획 표식(U+E000)마다 그 구획 키 (순서대로). marks: 넣은 글자의 서식 (없으면 서식 없음) */
+  | { kind: 'insert'; at: number; text: string; segs?: SegId[]; marks?: MarkSet }
+  /** [at, at+len)의 글자 서식 키 하나 (value undefined = 해제) */
+  | { kind: 'mark'; at: number; len: number; key: MarkKey; value: unknown }
+  /** at에 있는 ¶의 문단 속성 키 하나 (value undefined = 해제) */
+  | { kind: 'para'; at: number; key: ParaKey; value: unknown }
   | { kind: 'delete'; at: number; len: number }
   /** 구획을 순서대로 before 앞으로 옮긴다 (null이면 맨 뒤). 목록에 없던 구획이면 그 자리에 넣는다 */
   | { kind: 'order'; moves: Array<{ seg: SegId; before: SegId | null }> }
@@ -105,6 +150,10 @@ export interface ParagraphInfo {
   end: number;
   /** 변경되지 않은 문단은 같은 문자열 객체를 유지한다 (레이아웃 재사용 판단용) */
   text: string;
+  /** 문단 속성 (없으면 공유하는 빈 객체) */
+  attrs: ParaAttrs;
+  /** 글자마다 서식 묶음 번호 (text의 코드포인트 순, Doc.markSet으로 푼다). 모두 0이면 null */
+  fmt: Uint16Array | null;
 }
 
 interface Seg {
@@ -149,6 +198,8 @@ class Chunk {
   readonly codes = new Uint32Array(CAP);
   readonly ctrs = new Int32Array(CAP);
   readonly dead = new Uint8Array(CAP);
+  /** 글자 서식 묶음 번호 (0 = 서식 없음) */
+  readonly fmt = new Uint16Array(CAP);
 
   /** 카운터의 청크 내 위치 */
   find(ctr: number): number {
@@ -190,6 +241,13 @@ export class Doc {
   private muted = false;
   /** false면 구획 연산(문단 이동·숨김)을 거부한다 */
   segmentsEnabled = true;
+  /** 서식 묶음 표 (10 §2.1): 번호 → 묶음. 0번은 빈 묶음 */
+  private markSets: MarkSet[] = [Object.freeze({})];
+  private markIds = new Map<string, number>([[markKey({}), 0]]);
+  /** (묶음 번호, 키, 값) → 그 키를 바꾼 묶음 번호 */
+  private withMarkCache = new Map<string, number>();
+  /** ¶ 원소 카운터 → 문단 속성 (속성 없는 문단은 없음) */
+  private paraAttrsMap = new Map<number, ParaAttrs>();
 
   constructor(readonly peer = 'local') {}
 
@@ -239,6 +297,8 @@ export class Doc {
       start: k === 0 ? 0 : paraOffsets[k - 1]! + 1,
       end: paraOffsets[k]!,
       text: t,
+      attrs: NO_ATTRS,
+      fmt: null,
     }));
     doc._version++;
     return doc;
@@ -390,10 +450,14 @@ export class Doc {
    * offset 위치(틈)에 텍스트를 삽입한다. '\n'은 문단 표식이 된다.
    * @returns 새로 만든 원소 ID 목록 (실행 취소용)
    */
-  insertText(offset: number, text: string): ElementId[] {
+  insertText(offset: number, text: string, marks?: MarkSet): ElementId[] {
     const codes = toCodes(normalizeNewlines(text));
     if (codes.length === 0) return [];
     offset = clamp(offset, 0, this.maxCaret);
+    // 서식: 주어지면 그것 (편집기의 보류 서식), 아니면 앞 글자에서 이어받는다 (10 §2.6)
+    const fmt = this.internMarks(marks ?? this.inheritedMarks(offset));
+    // 새 ¶는 지금 문단의 속성을 복사한다 (Enter, 10 §2.2)
+    const paraAttrs = codes.includes(PARA_CODE) ? (this.paras[this.paragraphIndexAt(offset)]?.attrs ?? NO_ATTRS) : NO_ATTRS;
     const { seg, raw } = this.toRaw(offset);
     // 자리표시로 보이던 빈 문단에 입력: 사용됨으로 표시 (화면은 그대로)
     const claimed = seg.placeholder && !seg.used;
@@ -404,16 +468,296 @@ export class Doc {
     const { chunk, index } = this.insertPoint(seg, raw);
     const at = this.listener ? this.u16At(chunk, index) : 0;
     const wasOpen = this.isOpen(seg);
-    const first = this.insertIntoChunk(chunk, index, codes, 0);
+    const first = this.insertIntoChunk(chunk, index, codes, 0, fmt);
+    const newParas: Array<{ ctr: number; at: number }> = [];
+    if (paraAttrs !== NO_ATTRS) {
+      let u = at;
+      for (let k = 0; k < codes.length; k++) {
+        if (codes[k] === PARA_CODE) {
+          this.paraAttrsMap.set(first + k, paraAttrs);
+          newParas.push({ ctr: first + k, at: u });
+        }
+        u += width16(codes[k]!);
+      }
+    }
     this.visible += codes.length;
     seg.len += codes.length;
     seg.openCache = null;
     if (this.isOpen(seg) !== wasOpen) this.rebuildParagraphs();
     else this.updateParagraphs(offset, offset + codes.length, codes.length);
     this._version++;
-    this.emit({ kind: 'insert', at, text: fromCodes(codes) });
+    this.emit(fmt ? { kind: 'insert', at, text: fromCodes(codes), marks: this.markSets[fmt]! } : { kind: 'insert', at, text: fromCodes(codes) });
+    for (const p of newParas)
+      for (const key of Object.keys(paraAttrs) as ParaKey[]) this.emit({ kind: 'para', at: p.at, key, value: paraAttrs[key] });
     if (claimed) this.addSpare();
     return this.idRange(first, codes.length);
+  }
+
+  // ── 서식 (10) ────────────────────────────────────────
+
+  /** 서식 묶음 번호 → 묶음 (ParagraphInfo.fmt를 풀 때) */
+  markSet(id: number): MarkSet {
+    return this.markSets[id] ?? this.markSets[0]!;
+  }
+
+  /** 서식 묶음의 번호 (같은 내용이면 같은 번호) */
+  internMarks(m: MarkSet): number {
+    const key = markKey(m);
+    let id = this.markIds.get(key);
+    if (id === undefined) {
+      id = this.markSets.length;
+      if (id > 0xffff) throw new Error('internMarks: too many distinct mark sets');
+      const norm: MarkSet = {};
+      for (const k of MARK_KEYS) if (m[k] !== undefined) (norm as Record<string, unknown>)[k] = m[k];
+      this.markSets.push(Object.freeze(norm));
+      this.markIds.set(key, id);
+    }
+    return id;
+  }
+
+  /** 화면 오프셋 offset에 있는 원소(그 자리 글자)의 서식. 문서 끝이면 빈 묶음 */
+  marksAt(offset: number): MarkSet {
+    if (offset < 0 || offset >= this.length) return this.markSets[0]!;
+    let f = 0;
+    this.forEachFrom(offset, (_code, _ctr, chunk, i) => {
+      f = chunk.fmt[i]!;
+      return true;
+    });
+    return this.markSets[f]!;
+  }
+
+  /**
+   * offset에 입력하면 받을 서식 (10 §2.6): 문단 안이면 앞 글자, 문단 첫머리면 그 자리 글자(빈 문단이면 ¶)의 서식에서
+   * 이어받는 키만.
+   */
+  inheritedMarks(offset: number): MarkSet {
+    if (this.length === 0) return this.markSets[0]!;
+    const p = this.paras[this.paragraphIndexAt(offset)];
+    const src = p && offset > p.start ? offset - 1 : offset;
+    const m = this.marksAt(src);
+    let all = true;
+    for (const k of Object.keys(m) as MarkKey[]) if (!INHERITED_MARKS.has(k)) all = false;
+    if (all) return m;
+    const out: MarkSet = {};
+    for (const k of Object.keys(m) as MarkKey[]) if (INHERITED_MARKS.has(k)) (out as Record<string, unknown>)[k] = m[k];
+    return out;
+  }
+
+  /** [from, to)의 서식 런 (같은 묶음이 이어진 구간) */
+  markRuns(from: number, to: number): Array<{ from: number; to: number; marks: MarkSet }> {
+    const out: Array<{ from: number; to: number; marks: MarkSet }> = [];
+    if (from >= to) return out;
+    let n = to - from;
+    let off = from;
+    this.forEachFrom(from, (_code, _ctr, chunk, i) => {
+      const f = chunk.dead[i] === STRUCT ? 0 : chunk.fmt[i]!;
+      const m = this.markSets[f]!;
+      const last = out[out.length - 1];
+      if (last && last.marks === m) last.to = off + 1;
+      else out.push({ from: off, to: off + 1, marks: m });
+      off++;
+      return --n <= 0;
+    });
+    return out;
+  }
+
+  /**
+   * [from, to) 글자들의 서식 키 하나를 value로 (undefined = 해제). ¶도 서식을 받는다 (빈 줄의 높이·다음 입력).
+   * @returns 실행 취소용 연산 (바뀐 원소가 없으면 빈 목록)
+   */
+  format(from: number, to: number, key: MarkKey, value: unknown): Op[] {
+    from = clamp(from, 0, this.length);
+    to = clamp(to, from, this.length);
+    if (from === to) return [];
+    const ctrs: number[] = [];
+    const before: number[] = [];
+    const changed: Array<{ chunk: Chunk; i: number }> = [];
+    let n = to - from;
+    this.forEachFrom(from, (_code, ctr, chunk, i) => {
+      if (chunk.dead[i] !== STRUCT) {
+        const prev = chunk.fmt[i]!;
+        const next = this.withMark(prev, key, value);
+        if (next !== prev) {
+          chunk.fmt[i] = next;
+          ctrs.push(ctr);
+          before.push(prev);
+          changed.push({ chunk, i });
+        }
+      }
+      return --n <= 0;
+    });
+    if (ctrs.length === 0) return [];
+    this.emitMarks(changed, key, value);
+    this.updateParagraphs(from, to, 0);
+    this._version++;
+    return [{ type: 'format', ctrs: Int32Array.from(ctrs), before: Uint16Array.from(before), key, after: value }];
+  }
+
+  /** 문단 i의 속성 */
+  paraAttrs(i: number): ParaAttrs {
+    return this.paras[i]?.attrs ?? NO_ATTRS;
+  }
+
+  /**
+   * 문단 i의 속성 키 하나를 value로 (undefined = 해제).
+   * 가상 ¶로 끝나는 문단(동시 편집, 09 §6)은 속성을 걸 ¶가 없어 빈 목록을 돌려준다 (2-6에서 실제 ¶를 먼저 넣는다).
+   */
+  setParaAttr(i: number, key: ParaKey, value: unknown): Op[] {
+    const p = this.paras[i];
+    if (!p) return [];
+    const ctr = this.ctrOf(p.id);
+    const chunk = this.chunkOfCtr(ctr);
+    if (chunk.dead[chunk.find(ctr)] === STRUCT) return [];
+    const cur = this.paraAttrsMap.get(ctr) ?? NO_ATTRS;
+    if (sameValue(cur[key], value)) return [];
+    this.writeParaAttr(ctr, i, key, value);
+    return [{ type: 'para', ctr, key, before: cur[key], after: value }];
+  }
+
+  /**
+   * 정본 JSON(07 §4)용: 문단마다 속성과 서식 런. 런은 같은 서식이 이어진 글자들이고 ¶는 넣지 않는다.
+   */
+  paragraphRuns(): Array<{ attrs: ParaAttrs; runs: Array<{ text: string; marks: MarkSet }> }> {
+    return this.paras.map((p) => {
+      const runs: Array<{ text: string; marks: MarkSet }> = [];
+      const cps = Array.from(p.text);
+      let k = 0;
+      while (k < cps.length) {
+        const f = p.fmt ? p.fmt[k]! : 0;
+        let j = k + 1;
+        while (j < cps.length && (p.fmt ? p.fmt[j]! : 0) === f) j++;
+        runs.push({ text: cps.slice(k, j).join(''), marks: this.markSets[f]! });
+        k = j;
+      }
+      return { attrs: p.attrs, runs };
+    });
+  }
+
+  /** paragraphRuns의 반대: 서식·속성이 있는 문서를 만든다 (실행 취소 기록 없음) */
+  static fromParagraphRuns(paras: Array<{ attrs?: ParaAttrs; runs: Array<{ text: string; marks?: MarkSet }> }>, peer?: string): Doc {
+    const doc = Doc.fromText(paras.map((p) => p.runs.map((r) => r.text).join('')).join('\n'), peer);
+    let off = 0;
+    paras.forEach((p, i) => {
+      for (const r of p.runs) {
+        const len = Array.from(r.text).length;
+        if (r.marks) for (const k of Object.keys(r.marks) as MarkKey[]) if (r.marks[k] !== undefined) doc.format(off, off + len, k, r.marks[k]);
+        off += len;
+      }
+      if (p.attrs) for (const k of Object.keys(p.attrs) as ParaKey[]) if (p.attrs[k] !== undefined) doc.setParaAttr(i, k, p.attrs[k]);
+      off++; // ¶
+    });
+    return doc;
+  }
+
+  /** 묶음 id에서 key만 value로 바꾼 묶음의 번호 */
+  private withMark(id: number, key: MarkKey, value: unknown): number {
+    const ck = `${id}|${key}|${typeof value === 'object' ? JSON.stringify(value) : String(value)}`;
+    let r = this.withMarkCache.get(ck);
+    if (r === undefined) {
+      const m: Record<string, unknown> = { ...this.markSets[id] };
+      if (value === undefined || value === null) delete m[key];
+      else m[key] = value;
+      r = this.internMarks(m as MarkSet);
+      if (this.withMarkCache.size > 50_000) this.withMarkCache.clear();
+      this.withMarkCache.set(ck, r);
+    }
+    return r;
+  }
+
+  /** 바뀐 원소들(문서 순서)을 저장 위치가 이어진 구간마다 mark 변경 기록으로 */
+  private emitMarks(changed: Array<{ chunk: Chunk; i: number }>, key: MarkKey, value: unknown): void {
+    if (!this.listener || this.muted || changed.length === 0) return;
+    let start = this.u16At(changed[0]!.chunk, changed[0]!.i);
+    let len = 0;
+    let prev: { chunk: Chunk; i: number } | null = null;
+    for (const e of changed) {
+      if (prev && !this.isNextInStorage(prev, e)) {
+        this.emit({ kind: 'mark', at: start, len, key, value: value ?? undefined });
+        start = this.u16At(e.chunk, e.i);
+        len = 0;
+      }
+      len += width16(e.chunk.codes[e.i]!);
+      prev = e;
+    }
+    this.emit({ kind: 'mark', at: start, len, key, value: value ?? undefined });
+  }
+
+  /** b가 저장 순서에서 a 바로 다음의 묘비 아닌 원소인가 (UTF-16 위치가 이어지는가) */
+  private isNextInStorage(a: { chunk: Chunk; i: number }, b: { chunk: Chunk; i: number }): boolean {
+    let c = a.chunk;
+    let i = a.i + 1;
+    for (;;) {
+      while (i < c.len && c.dead[i] === TOMB) i++;
+      if (i < c.len) return c === b.chunk && i === b.i;
+      const next = this.chunks[c.index + 1];
+      if (!next) return false;
+      c = next;
+      i = 0;
+    }
+  }
+
+  private writeParaAttr(ctr: number, i: number, key: ParaKey, value: unknown): void {
+    const cur = this.paraAttrsMap.get(ctr) ?? NO_ATTRS;
+    const next: Record<string, unknown> = { ...cur };
+    if (value === undefined || value === null) delete next[key];
+    else next[key] = value;
+    const frozen = Object.freeze(next) as ParaAttrs;
+    if (Object.keys(frozen).length === 0) this.paraAttrsMap.delete(ctr);
+    else this.paraAttrsMap.set(ctr, frozen);
+    if (i >= 0 && this.paras[i]) {
+      this.paras[i] = { ...this.paras[i]!, attrs: Object.keys(frozen).length ? frozen : NO_ATTRS };
+      this.changeFrom = Math.min(this.changeFrom, i);
+      this.changeSuffix = Math.min(this.changeSuffix, this.paras.length - 1 - i);
+    }
+    this._version++;
+    if (this.listener && !this.muted) {
+      const chunk = this.chunkOfCtr(ctr);
+      this.emit({ kind: 'para', at: this.u16At(chunk, chunk.find(ctr)), key, value: value ?? undefined });
+    }
+  }
+
+  /** 실행 취소·다시 하기의 서식 연산 */
+  private applyFormat(op: Extract<Op, { type: 'format' }>): void {
+    const changed: Array<{ chunk: Chunk; i: number }> = [];
+    const values = new Map<string, Array<{ chunk: Chunk; i: number }>>();
+    let hint: { chunk: Chunk; i: number } | null = null;
+    for (let k = 0; k < op.ctrs.length; k++) {
+      const ctr = op.ctrs[k]!;
+      let chunk: Chunk;
+      let i: number;
+      if (hint && hint.chunk.ctrs[hint.i + 1] === ctr && hint.i + 1 < hint.chunk.len) {
+        chunk = hint.chunk;
+        i = hint.i + 1;
+      } else {
+        chunk = this.chunkOfCtr(ctr);
+        i = chunk.find(ctr);
+      }
+      hint = { chunk, i };
+      const cur = chunk.fmt[i]!;
+      const curVal = this.markSets[cur]![op.key];
+      const beforeVal = this.markSets[op.before[k]!]![op.key];
+      let target: unknown;
+      if (op.undo) {
+        if (!sameValue(curVal, op.after)) continue;
+        target = beforeVal;
+      } else {
+        if (!sameValue(curVal, beforeVal)) continue;
+        target = op.after;
+      }
+      const next = this.withMark(cur, op.key, target);
+      if (next === cur) continue;
+      chunk.fmt[i] = next;
+      if (chunk.dead[i] === TOMB) continue; // 지워진 글자: 서식만 기억해 두고 기록·화면에는 없다
+      changed.push({ chunk, i });
+      const vk = JSON.stringify(target ?? null);
+      let list = values.get(vk);
+      if (!list) values.set(vk, (list = []));
+      list.push({ chunk, i });
+    }
+    if (changed.length === 0) return;
+    for (const [vk, list] of values) this.emitMarks(list, op.key, JSON.parse(vk) ?? undefined);
+    // 바뀐 원소가 흩어져 있을 수 있어 문단 목록을 다시 만든다 (되돌리기·다시 하기에서만)
+    this.rebuildParagraphs();
   }
 
   /**
@@ -507,10 +851,17 @@ export class Doc {
       if (segEnd < this.length && this.slice(segEnd - 1, segEnd) !== PARA) {
         const p = this.paras[findParaByStart(this.paras, segEnd - 1)]!;
         const tStart = Math.max(p.start, segStart);
-        const tail = this.slice(tStart, segEnd);
+        // 서식도 함께 옮긴다 (런마다 그 서식으로 다시 넣음)
+        const tail = this.markRuns(tStart, segEnd).map((r) => ({ text: this.slice(r.from, r.to), marks: r.marks }));
         ops.push(...this.deleteRange(tStart, segEnd));
         // 꼬리를 지우면 첫 구획은 tStart에서 끝나므로, 같은 화면 위치는 다음 구획의 첫 글자를 가리킨다
-        ops.push({ type: 'insert', ids: this.insertText(tStart, tail) });
+        const ids: ElementId[] = [];
+        let at = tStart;
+        for (const r of tail) {
+          ids.push(...this.insertText(at, r.text, r.marks));
+          at += Array.from(r.text).length;
+        }
+        ops.push({ type: 'insert', ids });
       }
     }
     return ops;
@@ -590,7 +941,13 @@ export class Doc {
     if (op.type === 'insert') this.setDead(op.ids, false);
     else if (op.type === 'delete') this.setDead(op.ids, true);
     else if (op.type === 'move') this.moveSegsBefore(op.segs, op.before);
-    else this.setHidden(op.segs, op.value);
+    else if (op.type === 'hidden') this.setHidden(op.segs, op.value);
+    else if (op.type === 'format') this.applyFormat(op);
+    else {
+      // 문단 속성: 그사이 다른 사용자가 같은 키를 바꿨으면 두지 않고 덮는다 (¶ 속성은 키 하나의 LWW)
+      const i = this.paras.findIndex((p) => p.id === this.idOf(op.ctr));
+      this.writeParaAttr(op.ctr, i, op.key, op.after);
+    }
   }
 
   /** 묘비가 된 원소들을 되살린다 (실행 취소·다시 실행). ids는 문서 순서여야 한다 */
@@ -625,7 +982,7 @@ export class Doc {
           } else {
             const codes = toCodes(op.insert);
             if (codes.includes(BRK_EXT)) throw new Error('applyDelta: segment mark without a key');
-            this.remoteInsert(pos, codes);
+            this.remoteInsert(pos, codes, op.attributes);
           }
           pos += op.insert.length;
         } else if (op.delete !== undefined && op.delete > 0) {
@@ -765,10 +1122,14 @@ export class Doc {
       throw new Error('sentinel segment must be a single paragraph mark');
     // 로컬 문서는 화면에 나오는 구획이 ¶로 끝난다 (동기화 문서는 동시 편집으로 어긋날 수 있음)
     if (!this.sentinel) {
+      // 로컬 문서: ¶ 없이 끝난 구획은 문단 이동 뒤의 실행 취소에서만 생기고, 가상 ¶로 보인다 (isOpen과 일치).
+      // 저장 마지막 구획(tail)은 가상 ¶가 없으므로 ¶로 끝나야 한다
       const shown = this.shownPredicate();
-      for (const s of this.order)
-        if (shown(s) && s.len > 0 && lastCode.get(s) !== PARA_CODE)
-          throw new Error(`segment ${s.id} does not end with a paragraph mark`);
+      for (const s of this.order) {
+        if (!shown(s) || s.len === 0 || lastCode.get(s) === PARA_CODE) continue;
+        if (s.brk < 0 || !this.isOpen(s)) throw new Error(`segment ${s.id} does not end with a paragraph mark`);
+      }
+      if (this.slice(this.length - 1, this.length) !== PARA) throw new Error('the document does not end with a paragraph mark');
     }
     if (this.length === 0) throw new Error('nothing is displayed');
   }
@@ -825,6 +1186,7 @@ export class Doc {
     ctrs: ArrayLike<number> | null,
     dead: ArrayLike<number> | null,
     startIndex: number,
+    fmt: ArrayLike<number> | null = null,
   ): Chunk[] {
     const out: Chunk[] = [];
     const n = codes.length;
@@ -839,6 +1201,7 @@ export class Doc {
         c.ctrs[i] = ctr;
         const d = dead ? dead[k]! : 0;
         c.dead[i] = d;
+        c.fmt[i] = fmt ? fmt[k]! : 0;
         if (!d) c.visible++;
         if (d !== TOMB) c.u16 += width16(codes[k]!);
         this.chunkIdOf[ctr] = c.id;
@@ -850,19 +1213,21 @@ export class Doc {
     return out;
   }
 
-  /** 원소들을 넣고 첫 카운터를 돌려준다. flag가 STRUCT면 보이지 않는 구획 표식 */
-  private insertIntoChunk(chunk: Chunk, index: number, codes: number[], flag: number): number {
+  /** 원소들을 넣고 첫 카운터를 돌려준다. flag가 STRUCT면 보이지 않는 구획 표식. fmt: 넣은 원소의 서식 묶음 번호 */
+  private insertIntoChunk(chunk: Chunk, index: number, codes: number[], flag: number, fmt = 0): number {
     const n = codes.length;
     const first = this.counter;
     if (chunk.len + n <= CAP) {
       chunk.codes.copyWithin(index + n, index, chunk.len);
       chunk.ctrs.copyWithin(index + n, index, chunk.len);
       chunk.dead.copyWithin(index + n, index, chunk.len);
+      chunk.fmt.copyWithin(index + n, index, chunk.len);
       for (let k = 0; k < n; k++) {
         const ctr = this.nextCtr();
         chunk.codes[index + k] = codes[k]!;
         chunk.ctrs[index + k] = ctr;
         chunk.dead[index + k] = flag;
+        chunk.fmt[index + k] = fmt;
         this.chunkIdOf[ctr] = chunk.id;
       }
       chunk.len += n;
@@ -875,18 +1240,22 @@ export class Doc {
     const allCodes = new Uint32Array(total);
     const allCtrs = new Int32Array(total);
     const allDead = new Uint8Array(total);
+    const allFmt = new Uint16Array(total);
     allCodes.set(chunk.codes.subarray(0, index), 0);
     allCtrs.set(chunk.ctrs.subarray(0, index), 0);
     allDead.set(chunk.dead.subarray(0, index), 0);
+    allFmt.set(chunk.fmt.subarray(0, index), 0);
     for (let k = 0; k < n; k++) {
       allCodes[index + k] = codes[k]!;
       allCtrs[index + k] = this.nextCtr();
       allDead[index + k] = flag;
+      allFmt[index + k] = fmt;
     }
     allCodes.set(chunk.codes.subarray(index, chunk.len), index + n);
     allCtrs.set(chunk.ctrs.subarray(index, chunk.len), index + n);
     allDead.set(chunk.dead.subarray(index, chunk.len), index + n);
-    const pieces = this.buildChunks(allCodes, allCtrs, allDead, chunk.index);
+    allFmt.set(chunk.fmt.subarray(index, chunk.len), index + n);
+    const pieces = this.buildChunks(allCodes, allCtrs, allDead, chunk.index, allFmt);
     this.chunkById[chunk.id] = null; // 대체된 청크 해제
     this.chunks.splice(chunk.index, 1, ...pieces);
     for (let c = chunk.index; c < this.chunks.length; c++) this.chunks[c]!.index = c;
@@ -976,6 +1345,15 @@ export class Doc {
     }
   }
 
+  /** 화면 마지막 ¶ 원소의 카운터 (가상 ¶면 -1) */
+  private lastDisplayedPara(): number {
+    const p = this.paras[this.paras.length - 1];
+    if (!p) return -1;
+    const ctr = this.ctrOf(p.id);
+    const ch = this.chunkOfCtr(ctr);
+    return ch.dead[ch.find(ctr)] === STRUCT ? -1 : ctr;
+  }
+
   private setDead(ids: ElementId[], dead: boolean): void {
     const flag = dead ? TOMB : 0;
     const track = this.listener !== null && !this.muted;
@@ -1012,10 +1390,14 @@ export class Doc {
     }
 
     const items: Array<{ chunk: Chunk; i: number; seg: Seg | null }> = [];
+    // 문단을 옮긴 뒤의 실행 취소는 화면 마지막 ¶를 지우려 할 수 있다 (앞으로 하는 삭제는 마지막 ¶를 지우지 않는다).
+    // 로컬 문서에는 보초가 없으므로 그 ¶는 남긴다: 빈 문단이 하나 남을 수 있지만 문서는 늘 ¶로 끝난다
+    const lastPara = dead && !this.sentinel ? this.lastDisplayedPara() : -1;
     for (const id of ids) {
       const ctr = this.ctrOf(id);
       const chunk = this.chunkOfCtr(ctr);
       const i = chunk.find(ctr);
+      if (ctr === lastPara) continue;
       if (chunk.dead[i] !== flag) items.push({ chunk, i, seg: null });
     }
     if (items.length === 0) return;
@@ -1041,8 +1423,11 @@ export class Doc {
     const shownItems = items.filter((it) => shownBefore(it.seg!));
     const touched = [...new Set(items.map((it) => it.seg!))];
     const wasOpen = touched.map((sg) => this.isOpen(sg));
-    let a = 0;
-    if (dead && shownItems.length > 0) a = this.elementDisplay(shownItems[0]!.chunk, shownItems[0]!.i).off;
+    // 바뀐 구간: ID 순서는 문단을 옮긴 뒤 화면 순서와 다를 수 있으므로 화면 위치의 최소·최대를 쓴다.
+    // 원소가 많으면 위치 계산보다 처음부터 다시 만드는 편이 싸다
+    const many = shownItems.length > 2000;
+    let a = Infinity;
+    if (dead && !many) for (const it of shownItems) a = Math.min(a, this.elementDisplay(it.chunk, it.i).off);
     const runs = track ? this.runsOf(items, dead) : null;
     for (const it of items) {
       it.chunk.dead[it.i] = flag;
@@ -1054,13 +1439,17 @@ export class Doc {
     if (runs) this.emitRuns(runs, dead);
     this.visible += dead ? -items.length : items.length;
     void snap;
-    if (this.fallback() !== fb || touched.some((sg, k) => this.isOpen(sg) !== wasOpen[k])) {
+    if (many || this.fallback() !== fb || touched.some((sg, k) => this.isOpen(sg) !== wasOpen[k])) {
       this.rebuildParagraphs();
     } else if (shownItems.length > 0) {
-      const last = shownItems[shownItems.length - 1]!;
-      if (!dead) a = this.elementDisplay(shownItems[0]!.chunk, shownItems[0]!.i).off;
-      const b = this.elementDisplay(last.chunk, last.i).off + (dead ? 0 : 1);
-      this.updateParagraphs(a, b, dead ? -shownItems.length : shownItems.length);
+      // 바뀐 뒤의 좌표: 되살리면 원소 자리, 지우면 원소가 있던 틈
+      let b = -Infinity;
+      for (const it of shownItems) {
+        const off = this.elementDisplay(it.chunk, it.i).off;
+        if (!dead) a = Math.min(a, off);
+        b = Math.max(b, off + (dead ? 0 : 1));
+      }
+      this.updateParagraphs(a, Math.max(a, b), dead ? -shownItems.length : shownItems.length);
     }
     this._version++;
   }
@@ -1143,7 +1532,14 @@ export class Doc {
   }
 
   /** 원격 글자 삽입 */
-  private remoteInsert(pos: number, codes: number[]): void {
+  /** attributes: 원격 글자의 서식 (서식 키만 쓴다. 구획·문단 속성 키는 무시) */
+  private remoteInsert(pos: number, codes: number[], attributes?: Record<string, unknown>): void {
+    let fmt = 0;
+    if (attributes) {
+      const m: Record<string, unknown> = {};
+      for (const k of MARK_KEYS) if (attributes[k] !== undefined && attributes[k] !== null) m[k] = attributes[k];
+      fmt = this.internMarks(m as MarkSet);
+    }
     const { chunk, index, raw } = this.locateU16(pos);
     const seg = this.segAtElement(chunk, index, raw);
     const shown = this.shownPredicate()(seg);
@@ -1151,7 +1547,7 @@ export class Doc {
     const fb = this.fallback();
     const d = shown ? this.dispStartOf(seg) + raw - this.rawStartOf(seg) : 0;
     const wasOpen = this.isOpen(seg);
-    this.insertIntoChunk(chunk, index, codes, 0);
+    this.insertIntoChunk(chunk, index, codes, 0, fmt);
     this.visible += codes.length;
     seg.len += codes.length;
     seg.openCache = null;
@@ -1246,7 +1642,7 @@ export class Doc {
 
   /** 동기화 문서에서 내용이 ¶로 끝나지 않는 구획인가 (화면에 가상 ¶를 둔다) */
   private isOpen(s: Seg): boolean {
-    if (!this.sentinel || s.len === 0 || s.brk < 0) return false;
+    if (s.len === 0 || s.brk < 0) return false;
     if (s.openCache !== null) return s.openCache;
     // 표식 원소에서 뒤로 가며 첫 살아 있는 원소를 찾는다
     let ch = this.chunkOfCtr(s.brk);
@@ -1595,16 +1991,15 @@ export class Doc {
     let n = seg.len;
     let off = ds;
     let pStart = ds;
-    let buf: number[] = [];
+    const acc = new ParaAccumulator();
     let lastCode = -1;
-    this.rawForEach(this.rawStartOf(seg), (code, ctr) => {
+    this.rawForEach(this.rawStartOf(seg), (code, ctr, chunk, i) => {
       lastCode = code;
       if (code === PARA_CODE) {
-        paras.push({ id: this.idOf(ctr), start: pStart, end: off, text: fromCodes(buf) });
+        paras.push(this.paraInfo(ctr, pStart, off, acc));
         pStart = off + 1;
-        buf = [];
       } else {
-        buf.push(code);
+        acc.push(code, chunk.fmt[i]!);
       }
       off++;
       return --n <= 0;
@@ -1612,7 +2007,7 @@ export class Doc {
     if (lastCode === PARA_CODE) return paras;
     if (!this.isOpen(seg)) return null;
     // 가상 ¶로 끝나는 마지막 문단
-    paras.push({ id: this.idOf(seg.brk), start: pStart, end: off, text: fromCodes(buf) });
+    paras.push(this.paraInfo(seg.brk, pStart, off, acc));
     return paras;
   }
 
@@ -1650,23 +2045,59 @@ export class Doc {
     const paras: ParagraphInfo[] = [];
     let off = start;
     let pStart = start;
-    let buf: number[] = [];
+    const acc = new ParaAccumulator();
     let lastParaOffset = start;
-    this.forEachFrom(start, (code, ctr) => {
+    this.forEachFrom(start, (code, ctr, chunk, i) => {
       if (code === PARA_CODE) {
-        paras.push({ id: this.idOf(ctr), start: pStart, end: off, text: fromCodes(buf) });
+        paras.push(this.paraInfo(ctr, pStart, off, acc));
         lastParaOffset = off;
         if (off >= stopAfter) return true;
         pStart = off + 1;
-        buf = [];
       } else {
-        buf.push(code);
+        acc.push(code, chunk.fmt[i]!);
       }
       off++;
       return false;
     });
     return { paras, lastParaOffset };
   }
+
+  /** 문단 정보 하나 (acc를 비운다). ctr = ¶ 원소(가상 ¶면 구획 표식) */
+  private paraInfo(ctr: number, start: number, end: number, acc: ParaAccumulator): ParagraphInfo {
+    const { text, fmt } = acc.take();
+    return { id: this.idOf(ctr), start, end, text, attrs: this.paraAttrsMap.get(ctr) ?? NO_ATTRS, fmt };
+  }
+}
+
+/** 문단 하나의 글자와 서식 번호를 모은다 (서식이 없으면 번호 배열을 만들지 않음) */
+class ParaAccumulator {
+  private codes: number[] = [];
+  private fmt: number[] | null = null;
+
+  push(code: number, f: number): void {
+    if (f !== 0 && !this.fmt) this.fmt = new Array<number>(this.codes.length).fill(0);
+    this.codes.push(code);
+    this.fmt?.push(f);
+  }
+
+  take(): { text: string; fmt: Uint16Array | null } {
+    const r = { text: fromCodes(this.codes), fmt: this.fmt ? Uint16Array.from(this.fmt) : null };
+    this.codes = [];
+    this.fmt = null;
+    return r;
+  }
+}
+
+/** 서식 묶음의 정규형 키 (값 있는 키를 이름순으로) */
+function markKey(m: MarkSet): string {
+  const keys = (Object.keys(m) as MarkKey[]).filter((k) => m[k] !== undefined).sort();
+  return JSON.stringify(keys.map((k) => [k, m[k]]));
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a === null || b === null) return false;
+  return typeof a === 'object' && typeof b === 'object' && JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** start ≤ offset인 마지막 문단 */

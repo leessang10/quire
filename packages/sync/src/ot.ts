@@ -75,6 +75,23 @@ export function mapPos(pos: number, op: RemoteOp | LocalChange): number {
  */
 function pair(a: LocalChange, b: RemoteOp): [LocalChange[], RemoteOp[]] {
   if (a.kind === 'sel') return [[{ kind: 'sel', anchor: mapPos(a.anchor, b), head: mapPos(a.head, b) }], [b]];
+  if (a.kind === 'mark') {
+    // 서식 범위: 원격 삽입이 안에 들어오면 둘로 나눈다 (넣은 글자는 이 서식 대상이 아니다). 원격 삭제는 범위를 줄인다
+    if (b.kind === 'insert') {
+      const lb = len16(b);
+      if (b.at <= a.at) return [[{ ...a, at: a.at + lb }], [b]];
+      if (b.at >= a.at + a.len) return [[a], [b]];
+      return [[{ ...a, len: b.at - a.at }, { ...a, at: b.at + lb, len: a.at + a.len - b.at }], [b]];
+    }
+    const d = delAfterDel({ kind: 'delete', at: a.at, len: a.len }, b.at, b.len);
+    return [d ? [{ ...a, at: d.at, len: d.len }] : [], [b]];
+  }
+  if (a.kind === 'para') {
+    // ¶ 하나의 위치: 앞(같은 자리 포함)에 들어온 삽입만큼 밀리고, ¶가 지워졌으면 버린다
+    if (b.kind === 'insert') return [[b.at <= a.at ? { ...a, at: a.at + len16(b) } : a], [b]];
+    if (a.at >= b.at && a.at < b.at + b.len) return [[], [b]];
+    return [[a.at >= b.at + b.len ? { ...a, at: a.at - b.len } : a], [b]];
+  }
   if (a.kind !== 'insert' && a.kind !== 'delete') return [[a], [b]];
   if (a.kind === 'insert') {
     const la = len16(a);

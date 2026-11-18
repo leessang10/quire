@@ -35,6 +35,11 @@ export function invertOp(op: Op): Op {
       return { type: 'move', segs: op.segs, before: op.back, back: op.before };
     case 'hidden':
       return { type: 'hidden', segs: op.segs, value: !op.value };
+    case 'format':
+      // 되돌리기: 지금 값이 after인 원소만 바꾸기 전 값으로 (10 §2.5, 05 §4)
+      return { ...op, undo: !op.undo };
+    case 'para':
+      return { type: 'para', ctr: op.ctr, key: op.key, before: op.after, after: op.before };
   }
 }
 
