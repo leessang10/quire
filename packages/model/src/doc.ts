@@ -84,7 +84,9 @@ export type Op =
    */
   | { type: 'format'; ctrs: Int32Array; before: Uint16Array; key: MarkKey; after: unknown; undo?: boolean }
   /** ¶(카운터) 하나의 문단 속성 키 하나 */
-  | { type: 'para'; ctr: number; key: ParaKey; before: unknown; after: unknown };
+  | { type: 'para'; ctr: number; key: ParaKey; before: unknown; after: unknown }
+  /** 스타일 정의 하나 (undefined = 없음, 10 §2.3) */
+  | { type: 'style'; name: string; before: Style | undefined; after: Style | undefined };
 
 /** 글자 서식 묶음 (10 §2.1). 값이 없는 키는 서식 없음. 크기는 1/1000pt */
 export interface MarkSet {
@@ -250,6 +252,10 @@ export class Doc {
   private withMarkCache = new Map<string, number>();
   /** ¶ 원소 카운터 → 문단 속성 (속성 없는 문단은 없음) */
   private paraAttrsMap = new Map<number, ParaAttrs>();
+  /** 문단 스타일 (10 §2.3). 기본 스타일로 시작한다 */
+  private styleMap = new Map<string, Style>(DEFAULT_STYLES.map((st) => [st.name, st]));
+  private resolvedStyles = new Map<string, ResolvedStyle>();
+  private _stylesVersion = 0;
 
   constructor(readonly peer = 'local') {}
 
@@ -617,6 +623,79 @@ export class Doc {
     return [{ type: 'para', ctr, key, before: cur[key], after: value }];
   }
 
+  // ── 스타일 (10 §2.3) ─────────────────────────────
+
+  /** 스타일 정의가 바뀔 때마다 오른다 (풀이 캐시 키) */
+  get stylesVersion(): number {
+    return this._stylesVersion;
+  }
+
+  /** 스타일 정의 (없으면 undefined) */
+  style(name: string): Style | undefined {
+    return this.styleMap.get(name);
+  }
+
+  /** 모든 스타일 (정의한 순서) */
+  styles(): Style[] {
+    return [...this.styleMap.values()];
+  }
+
+  /** 스타일 사슬을 풀어 쓴 값 (없는 이름은 본문) */
+  resolvedStyle(name: string = BODY_STYLE): ResolvedStyle {
+    let r = this.resolvedStyles.get(name);
+    if (!r) {
+      r = resolveStyle(name, (n) => this.styleMap.get(n));
+      this.resolvedStyles.set(name, r);
+    }
+    return r;
+  }
+
+  /** 문단 i의 스타일을 풀어 쓴 값 */
+  paraStyle(i: number): ResolvedStyle {
+    return this.resolvedStyle(this.paras[i]?.attrs.style ?? BODY_STYLE);
+  }
+
+  /** 문단 i의 실제 문단 속성: 스타일 사슬 → 직접 속성 */
+  effectiveParaAttrs(i: number): ParaAttrs {
+    const attrs = this.paras[i]?.attrs ?? NO_ATTRS;
+    const base = this.resolvedStyle(attrs.style ?? BODY_STYLE).para;
+    return mergeParaAttrs(base, attrs);
+  }
+
+  /**
+   * 스타일 정의를 바꾼다 (undefined = 지움). 그 스타일을 (사슬로) 쓰는 문단만 바뀐 문단이 되어 다시 조판된다.
+   * @returns 실행 취소용 연산
+   */
+  setStyle(name: string, def: Style | undefined): Op[] {
+    const before = this.styleMap.get(name);
+    if (def && def.name !== name) throw new Error(`setStyle: name mismatch (${def.name} != ${name})`);
+    if (sameValue(before, def)) return [];
+    this.writeStyle(name, def);
+    return [{ type: 'style', name, before, after: def }];
+  }
+
+  private writeStyle(name: string, def: Style | undefined): void {
+    if (def) this.styleMap.set(name, Object.freeze(structuredClone(def)));
+    else this.styleMap.delete(name);
+    this.resolvedStyles.clear();
+    this._stylesVersion++;
+    let lo = -1;
+    let hi = -1;
+    for (let i = 0; i < this.paras.length; i++) {
+      const p = this.paras[i]!;
+      if (this.resolvedStyle(p.attrs.style ?? BODY_STYLE).chain.includes(name) || (p.attrs.style === name)) {
+        this.paras[i] = { ...p };
+        if (lo < 0) lo = i;
+        hi = i;
+      }
+    }
+    if (lo >= 0) {
+      this.changeFrom = Math.min(this.changeFrom, lo);
+      this.changeSuffix = Math.min(this.changeSuffix, this.paras.length - 1 - hi);
+    }
+    this._version++;
+  }
+
   /**
    * 정본 JSON(07 §4)용: 문단마다 속성과 서식 런. 런은 같은 서식이 이어진 글자들이고 ¶는 넣지 않는다.
    */
@@ -946,6 +1025,7 @@ export class Doc {
     else if (op.type === 'move') this.moveSegsBefore(op.segs, op.before);
     else if (op.type === 'hidden') this.setHidden(op.segs, op.value);
     else if (op.type === 'format') this.applyFormat(op);
+    else if (op.type === 'style') this.writeStyle(op.name, op.after);
     else {
       // 문단 속성: 그사이 다른 사용자가 같은 키를 바꿨으면 두지 않고 덮는다 (¶ 속성은 키 하나의 LWW)
       const i = this.paras.findIndex((p) => p.id === this.idOf(op.ctr));
@@ -2168,4 +2248,5 @@ function normalizeNewlines(s: string): string {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
-}
+}import { BODY_STYLE, DEFAULT_STYLES, mergeParaAttrs, resolveStyle, type ResolvedStyle, type Style } from './styles';
+

@@ -40,6 +40,8 @@ export function invertOp(op: Op): Op {
       return { ...op, undo: !op.undo };
     case 'para':
       return { type: 'para', ctr: op.ctr, key: op.key, before: op.after, after: op.before };
+    case 'style':
+      return { type: 'style', name: op.name, before: op.after, after: op.before };
   }
 }
 

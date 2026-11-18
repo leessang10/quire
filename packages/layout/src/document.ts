@@ -18,7 +18,18 @@
  * [validCount, staleFrom) 문단은 직전 레이아웃에서 정확했던 결과다 (수렴 판단에 쓸 수 있음).
  * [staleFrom, 끝) 문단은 줄 나눔만 믿을 수 있고 위치는 믿을 수 없다.
  */
-import { layoutParagraph, type Measurer, type ParaFormat, type ParaLayout, type Preedit, type RunStyle } from './paragraph';
+import { cpSlice, layoutParagraph, type Measurer, type ParaBox, type ParaFormat, type ParaLayout, type Preedit, type RunStyle } from './paragraph';
+
+/**
+ * 문단 → 레이아웃 서식 (편집기가 서식 묶음·스타일·문단 속성에서 만든다). null이면 서식 없는 문단.
+ * force면 조합 문자열에 보류 서식이 있으니 서식 없는 문단이라도 ParaFormat을 돌려야 한다.
+ */
+export type FormatSource = (info: ParaInput, force: boolean) => ParaFormat | null;
+
+/** 글자 서식만 쓰는 FormatSource (서식 번호 → 영향) */
+export function charFormats(style: (id: number) => RunStyle): FormatSource {
+  return (info, force) => (info.fmt || info.mark || force ? { fmt: info.fmt ?? null, mark: info.mark ?? 0, style } : null);
+}
 
 export interface PageSetup {
   width: number;
@@ -60,6 +71,35 @@ export interface PlacedLine {
   height: number;
   /** 문서 전체 기준 기준선 y */
   baseline: number;
+  /**
+   * 양쪽 맞춤의 추가 폭 (lineX가 더한다): adj[d - start] = 줄 시작부터 d 앞까지 늘린 폭 합. 없으면 null.
+   * xs에 더하지 않으므로 문단 레이아웃 캐시(폭과 무관한 xs)를 그대로 쓴다 (10 §4)
+   */
+  adj: Float32Array | null;
+  /** adj가 글자 사이에 나눠졌다 (공백 없는 줄): 그리기를 글자마다 나눠야 한다 */
+  adjChars: boolean;
+}
+
+/** 줄 안 표시 인덱스 d의 x (쪽 왼쪽 기준): 줄 시작 x + 셰이핑 위치 + 양쪽 맞춤 추가 폭 */
+export function lineX(pl: ParaLayout, ln: PlacedLine, d: number): number {
+  const x = ln.x + pl.xs[d]! - pl.xs[ln.start]!;
+  if (!ln.adj) return x;
+  const k = Math.max(0, Math.min(ln.adj.length - 1, d - ln.start));
+  return x + ln.adj[k]!;
+}
+
+const isJustifySpace = (c: string) => c === ' ' || c === '　';
+/** 글자 사이 맞춤의 글자당 상한 (em 비율) */
+const MAX_CHAR_STRETCH = 0.3;
+
+/** 줄 끝 공백을 뺀 끝 인덱스 */
+function trimEnd(pl: ParaLayout, start: number, end: number): number {
+  while (end > start) {
+    const c = cpSlice(pl, end - 1, end);
+    if (c !== ' ' && c !== '\t' && c !== '　') break;
+    end--;
+  }
+  return end;
 }
 
 interface Geometry {
@@ -96,16 +136,18 @@ export class PlacedPara {
     this.first = first;
     this._lines = null;
     const { setup, contentHeight } = this.geo;
-    if (!first && y > 0) y += setup.paraSpacing;
+    const box = this.layout.box;
+    if (!first && y > 0) y += box ? box.before : setup.paraSpacing;
     const src = this.layout.lines;
     for (let k = 0; k < src.length; k++) {
-      const lh = lineHeight(setup, src[k]!.scale);
+      const lh = lineHeight(setup, src[k]!.scale, box?.line);
       if (y + lh > contentHeight && y > 0) {
         page++;
         y = 0;
       }
       y += lh;
     }
+    if (box && box.after > 0) y += box.after;
     this.pageAfter = page;
     this.yAfter = y;
   }
@@ -121,12 +163,14 @@ export class PlacedPara {
     const { setup, contentHeight } = this.geo;
     let page = this.pageBefore;
     let y = this.yBefore;
-    if (!this.first && y > 0) y += setup.paraSpacing;
-    const src = this.layout.lines;
+    const pl = this.layout;
+    const box = pl.box;
+    if (!this.first && y > 0) y += box ? box.before : setup.paraSpacing;
+    const src = pl.lines;
     const lines: PlacedLine[] = new Array(src.length);
     for (let k = 0; k < src.length; k++) {
       const ln = src[k]!;
-      const lh = lineHeight(setup, ln.scale);
+      const lh = lineHeight(setup, ln.scale, box?.line);
       if (y + lh > contentHeight && y > 0) {
         page++;
         y = 0;
@@ -141,11 +185,63 @@ export class PlacedPara {
         y: top,
         height: lh,
         baseline: top + baselineOffset(setup, lh, ln.scale),
+        adj: null,
+        adjChars: false,
       };
+      if (box) this.alignLine(lines[k]!, k === src.length - 1);
       y += lh;
     }
     this._lines = lines;
     return lines;
+  }
+
+  /** 들여쓰기·정렬·양쪽 맞춤 (10 §4) */
+  private alignLine(line: PlacedLine, last: boolean): void {
+    const pl = this.layout;
+    const box = pl.box!;
+    const avail = pl.widths[line.index === 0 ? 0 : 1];
+    line.x += box.left + (line.index === 0 ? box.first : 0);
+    const end = trimEnd(pl, line.start, line.end);
+    const free = avail - (pl.xs[end]! - pl.xs[line.start]!);
+    if (free <= 0) return;
+    if (box.align === 'center') line.x += free / 2;
+    else if (box.align === 'right') line.x += free;
+    else if (box.align === 'justify' && !last) {
+      // 공백(어간)에 나눈다. 공백이 없으면 글자 사이에 나누되 글자당 상한을 둔다
+      const n = end - line.start;
+      const spaces: number[] = [];
+      for (let d = line.start; d < end; d++) if (isJustifySpace(cpSlice(pl, d, d + 1))) spaces.push(d);
+      const adj = new Float32Array(n + 1);
+      if (spaces.length > 0) {
+        const each = free / spaces.length;
+        let acc = 0;
+        let s = 0;
+        for (let d = line.start; d <= end; d++) {
+          adj[d - line.start] = acc;
+          if (s < spaces.length && spaces[s] === d) {
+            acc += each;
+            s++;
+          }
+        }
+      } else {
+        const gaps: number[] = [];
+        for (let d = line.start + 1; d < end; d++) if (pl.stops[d]) gaps.push(d);
+        if (gaps.length === 0) return;
+        const em = this.geo.setup.fontSize ?? this.geo.setup.lineHeight / 1.7;
+        const each = Math.min(free / gaps.length, em * MAX_CHAR_STRETCH);
+        let acc = 0;
+        let g = 0;
+        for (let d = line.start; d <= end; d++) {
+          if (g < gaps.length && gaps[g] === d) {
+            acc += each;
+            g++;
+          }
+          adj[d - line.start] = acc;
+        }
+        line.adjChars = true;
+      }
+      line.adj = adj;
+    }
   }
 }
 
@@ -172,8 +268,12 @@ export interface LayoutCounts {
 }
 
 /** 줄 높이 배율 → 줄 높이 (px). 배율 1이면 setup.lineHeight 그대로 */
-export function lineHeight(setup: PageSetup, scale: number): number {
-  return scale === 1 ? setup.lineHeight : Math.round(setup.lineHeight * scale);
+export function lineHeight(setup: PageSetup, scale: number, rule?: ParaBox['line']): number {
+  const natural = scale === 1 ? setup.lineHeight : Math.round(setup.lineHeight * scale);
+  if (!rule) return natural;
+  if (rule.rule === 'multiple') return rule.value === 1 ? natural : Math.round(setup.lineHeight * scale * rule.value);
+  if (rule.rule === 'exact') return Math.round(rule.value);
+  return Math.max(natural, Math.round(rule.value));
 }
 
 /**
@@ -239,7 +339,9 @@ function formatKey(f: ParaFormat): string {
       k = j;
     }
   }
-  return `${out}¶${f.mark}`;
+  const b = f.box;
+  const bk = b ? `|${JSON.stringify(b)}` : '';
+  return `${out}¶${f.mark}${bk}${f.key ? `|${f.key}` : ""}`;
 }
 
 interface Pending {
@@ -266,8 +368,8 @@ export class PagedLayout {
     readonly setup: PageSetup,
     private readonly measurer: Measurer,
     private readonly cache: LayoutCache = new LayoutCache(),
-    /** 서식 번호 → 레이아웃 영향 (없으면 서식을 무시) */
-    private readonly style: ((id: number) => RunStyle) | null = null,
+    /** 문단 → 레이아웃 서식 (없으면 서식을 무시). charFormats(style)이면 글자 서식만 */
+    private readonly format: FormatSource | null = null,
   ) {
     this.contentWidth = setup.width - setup.margin * 2;
     this.geo = { setup, contentHeight: setup.height - setup.margin * 2 };
@@ -499,24 +601,22 @@ export class PagedLayout {
     const para = this.paras[ref.para]!;
     const ln = para.lines[ref.line]!;
     const d = Math.min(docToDisplay(para, offset), ln.end);
-    const xs = para.layout.xs;
-    return { page: ln.page, x: ln.x + xs[d]! - xs[ln.start]!, y: ln.y, height: ln.height, ref };
+    return { page: ln.page, x: lineX(para.layout, ln, d), y: ln.y, height: ln.height, ref };
   }
 
   /** 줄 안에서 x에 가장 가까운 캐럿 오프셋 */
   offsetInLine(ref: LineRef, x: number): number {
     const para = this.para(ref.para);
     const ln = para.lines[ref.line]!;
-    const { xs, stops } = para.layout;
+    const { stops } = para.layout;
     const isLastLine = ref.line === para.lines.length - 1;
     // 줄바꿈된 줄의 끝(=다음 줄 시작)에는 캐럿을 두지 않는다
     const maxD = isLastLine ? ln.end : ln.end - 1;
-    const local = x - ln.x + xs[ln.start]!;
     let best = ln.start;
     let bestDist = Infinity;
     for (let d = ln.start; d <= Math.max(ln.start, maxD); d++) {
       if (!stops[d]) continue;
-      const dist = Math.abs(xs[d]! - local);
+      const dist = Math.abs(lineX(para.layout, ln, d) - x);
       if (dist < bestDist) {
         bestDist = dist;
         best = d;
@@ -607,8 +707,7 @@ export class PagedLayout {
         if (m === this.preeditPara && this.preedit) {
           pe = { at: this.preedit.offset - info.start, text: this.preedit.text, fmt: this.preedit.fmt };
         }
-        const format: ParaFormat | null =
-          this.style && (info.fmt || info.mark || pe?.fmt) ? { fmt: info.fmt ?? null, mark: info.mark ?? 0, style: this.style } : null;
+        const format: ParaFormat | null = this.format ? this.format(info, pe?.fmt !== undefined) : null;
         layout = this.cache.get(info.text, this.contentWidth, this.measurer, pe, format);
         this.counts.reflowed++;
       }

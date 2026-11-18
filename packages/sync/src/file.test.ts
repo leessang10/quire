@@ -172,6 +172,25 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
     expect(canonicalJson(quireFromDoc(back))).toBe(json);
   });
 
+  it('stores only styles that differ from the defaults, and restores them (2-4)', async () => {
+    const { Doc } = await import('@quire/model');
+    const { quireFromDoc, docFromQuire } = await import('./canonical');
+    const doc = Doc.fromText('제목\n본문\n');
+    expect(quireFromDoc(doc).styles).toEqual({});
+    doc.setStyle('h1', { ...doc.style('h1')!, marks: { bold: true, size: 30000, color: '#1a5fb4' } });
+    doc.setStyle('note', { name: 'note', label: '메모', basedOn: 'body', marks: { size: 9000 } });
+    doc.setStyle('quote', undefined);
+    doc.setParaAttr(0, 'style', 'h1');
+    const json = canonicalJson(quireFromDoc(doc));
+    const q = JSON.parse(json);
+    expect(Object.keys(q.styles).sort()).toEqual(['h1', 'note', 'quote']);
+    expect(q.styles.quote).toBeNull();
+    const { doc: back } = docFromQuire(q);
+    expect(back.styles()).toEqual(doc.styles());
+    expect(back.paraStyle(0).marks.size).toBe(30000);
+    expect(canonicalJson(quireFromDoc(back))).toBe(json);
+  });
+
   it('drops keys this engine does not know, with notes', async () => {
     const { docFromQuire } = await import('./canonical');
     const q = quireFromText('가나\n');
