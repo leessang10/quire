@@ -32,7 +32,31 @@ export interface Manifest {
  * 저장: 화면 텍스트로 document.json을 만들고, loro를 주면 그 스냅샷을 history/crdt.bin으로 넣는다.
  * loro를 주면 text는 loro의 화면 텍스트를 쓴다.
  */
-export async function packQuire(src: { text: string } | { loro: LoroDoc } | { doc: Doc }): Promise<Uint8Array<ArrayBuffer>> {
+/** 자산 하나 (11 §2.2): ID = 내용 SHA-256 앞 32자 (16진) */
+export interface QuireAsset {
+  id: string;
+  mime: string;
+  bytes: Uint8Array;
+}
+
+const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
+const MIME: Record<string, string> = Object.fromEntries(Object.entries(EXT).map(([m, e]) => [e, m]));
+
+/** 자산 ID: 내용 SHA-256의 앞 32자 */
+export async function assetIdOf(bytes: Uint8Array): Promise<string> {
+  return (await sha256Hex(bytes)).slice(0, 32);
+}
+
+/** 문서가 가리키는 자산 ID들 */
+export function assetIdsOf(doc: Doc): string[] {
+  const ids = new Set<string>();
+  for (const p of doc.paragraphs()) if (p.objs) for (const o of p.objs.values()) if (o.asset) ids.add(o.asset);
+  return [...ids].sort();
+}
+
+export async function packQuire(
+  src: ({ text: string } | { loro: LoroDoc } | { doc: Doc }) & { assets?: readonly QuireAsset[] },
+): Promise<Uint8Array<ArrayBuffer>> {
   // 서식이 있으면 함께 (10, 07 §4)
   const doc = 'loro' in src ? quireFromDoc(docFromLoro(src.loro)) : 'doc' in src ? quireFromDoc(src.doc) : quireFromText(src.text);
   const json = encoder.encode(canonicalJson(doc));
@@ -42,6 +66,12 @@ export async function packQuire(src: { text: string } | { loro: LoroDoc } | { do
     { name: 'manifest.json', data: new Uint8Array(), deflate: true },
     { name: 'document.json', data: json, deflate: true },
   ];
+  // 자산: assets/<ID>.<확장자> (07 §2). 이미 압축된 형식이라 deflate하지 않는다
+  for (const a of [...(src.assets ?? [])].sort((x, y) => (x.id < y.id ? -1 : 1))) {
+    const name = `assets/${a.id}.${EXT[a.mime] ?? 'bin'}`;
+    files[name] = { sha256: await sha256Hex(a.bytes) };
+    entries.push({ name, data: a.bytes });
+  }
   if ('loro' in src) {
     const crdt = src.loro.export({ mode: 'snapshot' });
     files['history/crdt.bin'] = { sha256: await sha256Hex(crdt), stateHash: await stateHash(doc) };
@@ -56,6 +86,8 @@ export interface OpenedQuire {
   doc: QuireDoc;
   /** 화면 텍스트 (끝 ¶ 포함) */
   text: string;
+  /** 들어 있는 자산 (assets/) */
+  assets: QuireAsset[];
   /** 이력을 쓸 수 있으면 CRDT 스냅샷, 아니면 null */
   crdt: Uint8Array | null;
   readOnly: boolean;
@@ -98,5 +130,15 @@ export async function openQuire(bytes: Uint8Array): Promise<OpenedQuire> {
       crdt = null;
     }
   }
-  return { doc, text, crdt, readOnly, notes };
+  const assets: QuireAsset[] = [];
+  for (const e of entries) {
+    const am = /^assets\/([0-9a-f]{32})\.(\w+)$/.exec(e.name);
+    if (!am) continue;
+    if ((await assetIdOf(e.data)) !== am[1]) {
+      notes.push(`${e.name}: content does not match its name; dropped`);
+      continue;
+    }
+    assets.push({ id: am[1]!, mime: MIME[am[2]!] ?? 'application/octet-stream', bytes: e.data });
+  }
+  return { doc, text, crdt, readOnly, notes, assets };
 }

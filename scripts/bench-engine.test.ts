@@ -79,9 +79,22 @@ function formatDoc(doc: Doc): FormatSource {
  * moves > 0이면 측정 전에 문단 이동 moves번 + 문단 삭제(숨김) moves/5번을 해서 구획을 만든다.
  * formatted면 서식 많은 문서에서, 서식 구간 안(굵게)에 입력한다.
  */
-function scenario(paragraphs: number, where: number, moves = 0, formatted: boolean | 'list' = false) {
+/** 이미지 (11 G1): 열 문단에 하나씩 개체 (폭 200px, 높이 120px) */
+function imageDoc(doc: Doc): FormatSource {
+  const n = doc.paragraphs().length;
+  for (let i = n - 1; i >= 0; i -= 10) doc.insertObject(doc.paragraphs()[i]!.start + 3, { id: `i${i}`, kind: 'image', asset: 'a'.repeat(32), w: 150000, h: 90000 });
+  doc.takeParagraphChanges();
+  const pt = (v = 0) => (v / 1000) * (96 / 72);
+  return (info, force) => {
+    const objs = (info as unknown as { objs: Map<number, { w?: number; h?: number }> | null }).objs;
+    const sizes = objs ? new Map([...objs].map(([k, o]) => [k, { w: pt(o.w), h: pt(o.h) }])) : null;
+    return info.fmt || info.mark || force || sizes ? { fmt: info.fmt ?? null, mark: info.mark ?? 0, style: () => PLAIN_STYLE, objs: sizes } : null;
+  };
+}
+
+function scenario(paragraphs: number, where: number, moves = 0, formatted: boolean | 'list' | 'images' = false) {
   const doc = makeDoc(paragraphs);
-  const resolve = formatted ? formatDoc(doc) : null;
+  const resolve = formatted === 'images' ? imageDoc(doc) : formatted ? formatDoc(doc) : null;
   let t = performance.now();
   const layout = new PagedLayout(setup, measurer, undefined, resolve);
   layout.update(doc.paragraphs(), null, VIEW * 2);
@@ -114,6 +127,7 @@ function scenario(paragraphs: number, where: number, moves = 0, formatted: boole
     // 굵게 구간 안. 'list'면 목록 항목 안 (Enter가 새 항목을 만들어 번호를 다시 센다)
     let pi = doc.paragraphIndexAt(caret);
     if (formatted === 'list') while (!doc.paragraphs()[pi]!.attrs.list) pi++;
+    if (formatted === 'images') while (!doc.paragraphs()[pi]!.objs) pi++;
     caret = doc.paragraphs()[pi]!.start + 5;
   }
   let caretY = layout.caretRect(caret).y;
@@ -150,7 +164,7 @@ function scenario(paragraphs: number, where: number, moves = 0, formatted: boole
       '',
       `■ ${paragraphs.toLocaleString()} 문단 / ${layout.pageCount} 쪽 / 캐럿 위치 ${Math.round(where * 100)}%  (heap ${mem.toFixed(0)} MB)` +
         (moves ? ` / 이동 ${moves}회 후 구획 ${doc.segmentCount}개` : '') +
-        (formatted ? ` / 서식 많음 (글자 + 문단 + 목록)${formatted === 'list' ? ', 목록 항목에서' : ''}` : ''),
+        (formatted === 'images' ? ` / 이미지 ${Math.ceil(paragraphs / 10).toLocaleString()}개, 이미지 문단에서` : formatted ? ` / 서식 많음 (글자 + 문단 + 목록)${formatted === 'list' ? ', 목록 항목에서' : ''}` : ''),
       ...(moves ? [`  문단 이동          ${stats(moveMs)}`] : []),
       `  첫 화면 배치       ${firstScreen.toFixed(1)} ms   (나머지 백그라운드 ${background.toFixed(0)} ms, 8ms 조각 ${slices}개)`,
       `  글자 입력          ${stats(typing)}`,
@@ -173,5 +187,7 @@ it('engine benchmark', () => {
   scenario(10_000, 0.5, 0, true);
   scenario(100_000, 0.5, 0, true);
   scenario(10_000, 0.5, 0, 'list');
+  // 이미지 (11 G1: 1,000쪽 문서에 이미지 1,000개)
+  scenario(10_000, 0.5, 0, 'images');
   scenario(100_000, 0.5, 0, 'list');
 }, 600_000);

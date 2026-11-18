@@ -8,6 +8,7 @@
  *   epochs/<판>/base.bin  그 판의 처음 상태 (압축으로 만든 판만)
  *   epochs/<판>/final.bin 그 판의 마지막 상태 (다음 판으로 압축할 때)
  *   epochs/<판>/next      다음 판 ID
+ *   assets/<ID>           자산(이미지 원본, 11 §2.2). 파일 이름 = 내용 해시, assets/<ID>.type = MIME
  *
  * 첫 판의 ID는 ''이고 디렉터리 이름은 '_'이다. 쓰기는 임시 파일에 쓴 뒤 이름을 바꾼다 (중간에 죽어도 반쪽 파일이 남지 않음).
  * 로그 끝의 잘린 레코드(덧붙이다 죽음)는 버린다.
@@ -30,6 +31,9 @@ export interface RoomStore {
   epochFinal(id: string): { final: Uint8Array; next: string } | null;
   epochBase(id: string): Uint8Array | null;
   documentJson(): string | null;
+  /** 자산 (내용 주소: 같은 ID는 같은 바이트) */
+  putAsset(id: string, mime: string, bytes: Uint8Array): void;
+  getAsset(id: string): { mime: string; bytes: Uint8Array } | null;
 }
 
 export interface Storage {
@@ -120,6 +124,19 @@ class FileRoom implements RoomStore {
     const b = this.read('document.json');
     return b ? new TextDecoder().decode(b) : null;
   }
+
+  putAsset(id: string, mime: string, bytes: Uint8Array): void {
+    if (existsSync(this.path('assets', id))) return;
+    this.write(mime, 'assets', `${id}.type`);
+    this.write(bytes, 'assets', id);
+  }
+
+  getAsset(id: string): { mime: string; bytes: Uint8Array } | null {
+    const bytes = this.read('assets', id);
+    if (!bytes) return null;
+    const t = this.read('assets', `${id}.type`);
+    return { mime: t ? new TextDecoder().decode(t) : 'application/octet-stream', bytes };
+  }
 }
 
 /** 메모리 저장소 (서버 프로세스가 사는 동안만) */
@@ -165,5 +182,12 @@ class MemoryRoom implements RoomStore {
   }
   documentJson() {
     return this.json;
+  }
+  private readonly assets = new Map<string, { mime: string; bytes: Uint8Array }>();
+  putAsset(id: string, mime: string, bytes: Uint8Array): void {
+    if (!this.assets.has(id)) this.assets.set(id, { mime, bytes });
+  }
+  getAsset(id: string) {
+    return this.assets.get(id) ?? null;
   }
 }

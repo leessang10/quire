@@ -9,7 +9,7 @@
  *   새 판 = 새 판 처음 상태 + diff(F → M)
  * diff는 화면 텍스트의 문단·글자 차이라서, 오프라인 동안의 문단 이동은 "지우고 다시 넣기"가 된다.
  */
-import { DEFAULT_STYLES, MARK_KEYS, PARA_KEYS, type Doc, type MarkKey } from '@quire/model';
+import { DEFAULT_STYLES, MARK_KEYS, OBJ_KEYS, PARA_KEYS, type Doc, type MarkKey } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
 import { LoroWriter, docFromLoro, initLoro, newLoro, writeFormats, type PeerId } from './shape';
 
@@ -264,7 +264,13 @@ export function syncFormats(doc: Doc, target: Doc): void {
     const pa = doc.paragraphs()[i]!;
     const pb = target.paragraphs()[i]!;
     // 양쪽 다 서식·속성이 없는 문단은 건너뛴다 (큰 문서 재기반의 대부분)
-    if (!pa.fmt && !pb.fmt && pa.mark === 0 && pb.mark === 0 && !hasKeys(pa.attrs) && !hasKeys(pb.attrs)) continue;
+    if (!pa.fmt && !pb.fmt && pa.mark === 0 && pb.mark === 0 && !hasKeys(pa.attrs) && !hasKeys(pb.attrs) && !pa.objs && !pb.objs) continue;
+    // 개체 속성 (같은 위치의 개체끼리)
+    if (pb.objs)
+      for (const [k, ob] of pb.objs) {
+        const oa = doc.paragraphs()[i]!.objs?.get(k) ?? {};
+        for (const key of OBJ_KEYS) if (!same((oa as Record<string, unknown>)[key], ob[key])) doc.setObjAttr(pa.start + k, key, ob[key]);
+      }
     const len = pb.end - pb.start + 1; // ¶ 포함
     const want = (k: number) => (k < len - 1 ? (pb.fmt ? pb.fmt[k]! : 0) : pb.mark);
     const have = (k: number) => {

@@ -140,7 +140,7 @@ export class PlacedPara {
     if (!first && y > 0) y += box ? box.before : setup.paraSpacing;
     const src = this.layout.lines;
     for (let k = 0; k < src.length; k++) {
-      const lh = lineHeight(setup, src[k]!.scale, box?.line);
+      const lh = lineHeight(setup, src[k]!.scale, box?.line) + objExtra(setup, src[k]!, box?.line);
       if (y + lh > contentHeight && y > 0) {
         page++;
         y = 0;
@@ -170,7 +170,8 @@ export class PlacedPara {
     const lines: PlacedLine[] = new Array(src.length);
     for (let k = 0; k < src.length; k++) {
       const ln = src[k]!;
-      const lh = lineHeight(setup, ln.scale, box?.line);
+      const extra = objExtra(setup, ln, box?.line);
+      const lh = lineHeight(setup, ln.scale, box?.line) + extra;
       if (y + lh > contentHeight && y > 0) {
         page++;
         y = 0;
@@ -184,7 +185,7 @@ export class PlacedPara {
         x: setup.margin,
         y: top,
         height: lh,
-        baseline: top + baselineOffset(setup, lh, ln.scale),
+        baseline: top + baselineOffset(setup, lh - extra, ln.scale) + extra,
         adj: null,
         adjChars: false,
       };
@@ -277,6 +278,16 @@ export function lineHeight(setup: PageSetup, scale: number, rule?: ParaBox['line
 }
 
 /**
+ * 개체가 글자보다 높으면 줄을 그만큼 늘린다 (11 §4.1): 개체는 기준선 위에 서므로 늘어나는 몫 = 개체 높이 − 글자 ascent.
+ * 고정 줄 간격(exact)은 늘리지 않는다
+ */
+export function objExtra(setup: PageSetup, ln: { scale: number; objH?: number }, rule?: ParaBox['line']): number {
+  if (!ln.objH || rule?.rule === 'exact') return 0;
+  const em = (setup.fontSize ?? setup.lineHeight / 1.7) * ln.scale;
+  return Math.max(0, Math.round(ln.objH - (setup.ascent ?? 0.8) * em));
+}
+
+/**
  * 줄 위쪽에서 기준선까지 (10 §4): 줄 가운데에 그 줄 가장 큰 글자의 글꼴 상자(ascent + descent)를 세운다.
  * 크기가 섞인 줄도 기준선 하나에 모든 글자를 놓는다.
  */
@@ -340,7 +351,10 @@ function formatKey(f: ParaFormat): string {
     }
   }
   const b = f.box;
-  const bk = (b ? `|${JSON.stringify(b)}` : '') + (f.marker ? `|#${f.marker.id},${f.marker.hanging},${f.marker.text}` : '');
+  const bk =
+    (b ? `|${JSON.stringify(b)}` : '') +
+    (f.marker ? `|#${f.marker.id},${f.marker.hanging},${f.marker.text}` : '') +
+    (f.objs && f.objs.size ? `|o${[...f.objs].map(([k, o]) => `${k}:${o.w}x${o.h}`).join(',')}` : '');
   return `${out}¶${f.mark}${bk}${f.key ? `|${f.key}` : ""}`;
 }
 

@@ -46,6 +46,9 @@ export interface Position {
 /** 문서 텍스트에서 문단 표식을 나타내는 문자 */
 export const PARA = '\n';
 const PARA_CODE = 10;
+/** 개체 원소 (11 §2.1): 인라인 이미지 등. 글자 한 칸 */
+export const OBJ = '\uFFFC';
+const OBJ_CODE = 0xfffc;
 /** 구획 표식(내부 값). 유니코드 범위 밖 값이라 사용자 글자와 겹치지 않는다 */
 const BRK_CODE = 0x110000;
 /** 원소 상태(dead 배열): 0 = 살아 있음, TOMB = 묘비, STRUCT = 구획 표식(보이지 않지만 살아 있음) */
@@ -88,7 +91,9 @@ export type Op =
   /** 스타일 정의 하나 (undefined = 없음, 10 §2.3) */
   | { type: 'style'; name: string; before: Style | undefined; after: Style | undefined }
   /** 목록 정의 하나 (undefined = 없음, 10 §2.4) */
-  | { type: 'list'; id: string; before: ListDef | undefined; after: ListDef | undefined };
+  | { type: 'list'; id: string; before: ListDef | undefined; after: ListDef | undefined }
+  /** 개체 원소(카운터) 하나의 속성 키 하나 (11 §2.1) */
+  | { type: 'obj'; ctr: number; key: ObjKey; before: unknown; after: unknown };
 
 /** 글자 서식 묶음 (10 §2.1). 값이 없는 키는 서식 없음. 크기는 1/1000pt */
 export interface MarkSet {
@@ -121,6 +126,23 @@ export interface ParaAttrs {
   pageBreakBefore?: true;
 }
 export type ParaKey = keyof ParaAttrs;
+
+/** 개체 속성 (11 §2.1). 길이는 1/1000pt */
+export interface ObjAttrs {
+  /** 개체 ID (동시 이동으로 생긴 중복을 가릴 때) */
+  id?: string;
+  kind?: 'image';
+  /** 자산 ID (이미지 원본의 SHA-256 앞 32자) */
+  asset?: string;
+  w?: number;
+  h?: number;
+  /** 대체 텍스트 */
+  alt?: string;
+}
+export type ObjKey = keyof ObjAttrs;
+export const OBJ_KEYS: readonly ObjKey[] = ['id', 'kind', 'asset', 'w', 'h', 'alt'];
+/** Loro에서 개체 속성 마크 키의 접두사 */
+export const OBJ_MARK_PREFIX = 'o_';
 /** Loro에서 문단 속성 마크 키의 접두사 (마크 키에는 ':'를 쓸 수 없다, 10 §3) */
 export const PARA_MARK_PREFIX = 'p_';
 /** 모델이 아는 문단 속성 키 */
@@ -148,7 +170,9 @@ export type RawChange =
   /** 스타일 정의 하나 (null = 없음, 10 §3: Loro 맵 styles) */
   | { kind: 'style'; name: string; def: Style | null }
   /** 목록 정의 하나 (null = 없음, Loro 맵 lists) */
-  | { kind: 'listDef'; id: string; def: ListDef | null };
+  | { kind: 'listDef'; id: string; def: ListDef | null }
+  /** 개체 속성 키 하나 (at = 개체 글자의 UTF-16 위치, Loro 마크 o_<키>) */
+  | { kind: 'obj'; at: number; key: ObjKey; value: unknown };
 
 /** 원격 텍스트 델타 (UTF-16 단위). 구획 표식은 attributes.seg에 키를 가진다 */
 export type TextDelta = Array<{ retain?: number; insert?: string; delete?: number; attributes?: Record<string, unknown> }>;
@@ -168,6 +192,8 @@ export interface ParagraphInfo {
   fmt: Uint16Array | null;
   /** 문단 ¶의 서식 묶음 번호 (빈 줄의 높이, 10 §2.1). 가상 ¶는 0 */
   mark: number;
+  /** 문단 안 개체: 코드포인트 위치 → 속성 (11 §2.1). 없으면 null */
+  objs: ReadonlyMap<number, ObjAttrs> | null;
 }
 
 interface Seg {
@@ -265,6 +291,8 @@ export class Doc {
   private withMarkCache = new Map<string, number>();
   /** ¶ 원소 카운터 → 문단 속성 (속성 없는 문단은 없음) */
   private paraAttrsMap = new Map<number, ParaAttrs>();
+  /** 개체 원소 카운터 → 속성 (지운 개체도 기억한다) */
+  private objAttrsMap = new Map<number, ObjAttrs>();
   /** 문단 스타일 (10 §2.3). 기본 스타일로 시작한다 */
   private styleMap = new Map<string, Style>(DEFAULT_STYLES.map((st) => [st.name, st]));
   private resolvedStyles = new Map<string, ResolvedStyle>();
@@ -327,6 +355,7 @@ export class Doc {
       attrs: NO_ATTRS,
       fmt: null,
       mark: 0,
+      objs: null,
     }));
     doc._version++;
     return doc;
@@ -650,7 +679,7 @@ export class Doc {
    * 묶음이 남아 있으면 false. 저장·재기반의 빠른 길에 쓴다.
    */
   get plain(): boolean {
-    if (this.markSets.length > 1 || this.paraAttrsMap.size > 0 || this.listMap.size > 0) return false;
+    if (this.markSets.length > 1 || this.paraAttrsMap.size > 0 || this.listMap.size > 0 || this.objAttrsMap.size > 0) return false;
     if (this.styleMap.size !== DEFAULT_STYLES.length) return false;
     return DEFAULT_STYLES.every((st) => this.styleMap.get(st.name) === st);
   }
@@ -725,6 +754,64 @@ export class Doc {
       this.changeSuffix = Math.min(this.changeSuffix, this.paras.length - 1 - hi);
     }
     this._version++;
+  }
+
+  // ── 개체 (11 §2.1) ───────────────────────────────
+
+  /**
+   * offset에 개체 하나를 넣는다 (서식은 보통 입력처럼 이어받는다). 실행 취소 연산: 삽입 + 속성.
+   * 속성은 지워도 기억하므로 되살리면 그대로다.
+   */
+  insertObject(offset: number, attrs: ObjAttrs, marks?: MarkSet): Op[] {
+    const ids = this.insertText(offset, OBJ, marks);
+    const ctr = this.ctrOf(ids[0]!);
+    const ops: Op[] = [{ type: 'insert', ids }];
+    for (const k of OBJ_KEYS) if (attrs[k] !== undefined) ops.push(...this.setObjAttrCtr(ctr, k, attrs[k]));
+    return ops;
+  }
+
+  /** 화면 오프셋 offset의 원소가 개체면 그 속성 */
+  objAt(offset: number): ObjAttrs | null {
+    if (offset < 0 || offset >= this.length) return null;
+    let out: ObjAttrs | null = null;
+    this.forEachFrom(offset, (code, ctr) => {
+      if (code === OBJ_CODE) out = this.objAttrsMap.get(ctr) ?? NO_OBJ;
+      return true;
+    });
+    return out;
+  }
+
+  /** 화면 오프셋 offset의 개체 속성 키 하나 (개체가 아니면 빈 목록) */
+  setObjAttr(offset: number, key: ObjKey, value: unknown): Op[] {
+    let ctr = -1;
+    this.forEachFrom(offset, (code, c) => {
+      if (code === OBJ_CODE) ctr = c;
+      return true;
+    });
+    return ctr < 0 ? [] : this.setObjAttrCtr(ctr, key, value);
+  }
+
+  private setObjAttrCtr(ctr: number, key: ObjKey, value: unknown): Op[] {
+    const cur = this.objAttrsMap.get(ctr) ?? NO_OBJ;
+    if (sameValue(cur[key], value)) return [];
+    this.writeObjAttr(ctr, key, value);
+    return [{ type: 'obj', ctr, key, before: cur[key], after: value }];
+  }
+
+  private writeObjAttr(ctr: number, key: ObjKey, value: unknown): void {
+    const cur = this.objAttrsMap.get(ctr) ?? NO_OBJ;
+    const next: Record<string, unknown> = { ...cur };
+    if (value === undefined || value === null) delete next[key];
+    else next[key] = value;
+    this.objAttrsMap.set(ctr, Object.freeze(next) as ObjAttrs);
+    this._version++;
+    const chunk = this.chunkOfCtr(ctr);
+    const i = chunk.find(ctr);
+    if (chunk.dead[i] === TOMB) return; // 지운 개체: 속성만 기억
+    // 그 개체가 든 문단을 새로 만든다 (레이아웃이 알아채게)
+    const { off, hidden } = this.elementDisplay(chunk, i);
+    if (!hidden) this.updateParagraphs(off, off + 1, 0);
+    if (this.listener && !this.muted) this.emit({ kind: 'obj', at: this.u16At(chunk, i), key, value: value ?? undefined });
   }
 
   // ── 목록 (10 §2.4) ───────────────────────────────
@@ -823,15 +910,22 @@ export class Doc {
   /**
    * 정본 JSON(07 §4)용: 문단마다 속성과 서식 런. 런은 같은 서식이 이어진 글자들이고 ¶는 넣지 않는다.
    */
-  paragraphRuns(): Array<{ attrs: ParaAttrs; runs: Array<{ text: string; marks: MarkSet }> }> {
+  paragraphRuns(): Array<{ attrs: ParaAttrs; runs: Array<{ text: string; marks: MarkSet; obj?: ObjAttrs }> }> {
     return this.paras.map((p) => {
-      const runs: Array<{ text: string; marks: MarkSet }> = [];
+      const runs: Array<{ text: string; marks: MarkSet; obj?: ObjAttrs }> = [];
       const cps = Array.from(p.text);
       let k = 0;
       while (k < cps.length) {
         const f = p.fmt ? p.fmt[k]! : 0;
+        // 개체는 혼자 한 런
+        const o = p.objs?.get(k);
+        if (o) {
+          runs.push({ text: OBJ, marks: this.markSets[f]!, obj: o });
+          k++;
+          continue;
+        }
         let j = k + 1;
-        while (j < cps.length && (p.fmt ? p.fmt[j]! : 0) === f) j++;
+        while (j < cps.length && (p.fmt ? p.fmt[j]! : 0) === f && !p.objs?.has(j)) j++;
         runs.push({ text: cps.slice(k, j).join(''), marks: this.markSets[f]! });
         k = j;
       }
@@ -840,13 +934,14 @@ export class Doc {
   }
 
   /** paragraphRuns의 반대: 서식·속성이 있는 문서를 만든다 (실행 취소 기록 없음) */
-  static fromParagraphRuns(paras: Array<{ attrs?: ParaAttrs; runs: Array<{ text: string; marks?: MarkSet }> }>, peer?: string): Doc {
+  static fromParagraphRuns(paras: Array<{ attrs?: ParaAttrs; runs: Array<{ text: string; marks?: MarkSet; obj?: ObjAttrs }> }>, peer?: string): Doc {
     const doc = Doc.fromText(paras.map((p) => p.runs.map((r) => r.text).join('')).join('\n'), peer);
     let off = 0;
     paras.forEach((p, i) => {
       for (const r of p.runs) {
         const len = Array.from(r.text).length;
         if (r.marks) for (const k of Object.keys(r.marks) as MarkKey[]) if (r.marks[k] !== undefined) doc.format(off, off + len, k, r.marks[k]);
+        if (r.obj) for (const k of OBJ_KEYS) if (r.obj[k] !== undefined) doc.setObjAttr(off, k, r.obj[k]);
         off += len;
       }
       if (p.attrs) for (const k of Object.keys(p.attrs) as ParaKey[]) if (p.attrs[k] !== undefined) doc.setParaAttr(i, k, p.attrs[k]);
@@ -1152,6 +1247,7 @@ export class Doc {
     else if (op.type === 'format') this.applyFormat(op);
     else if (op.type === 'style') this.writeStyle(op.name, op.after);
     else if (op.type === 'list') this.writeList(op.id, op.after);
+    else if (op.type === 'obj') this.writeObjAttr(op.ctr, op.key, op.after);
     else {
       // 문단 속성: 그사이 다른 사용자가 같은 키를 바꿨으면 두지 않고 덮는다 (¶ 속성은 키 하나의 LWW)
       const i = this.paras.findIndex((p) => p.id === this.idOf(op.ctr));
@@ -1760,6 +1856,7 @@ export class Doc {
         let at = this.u16At(run.chunk, run.i);
         let k = 0;
         const paras: Array<{ at: number; attrs: ParaAttrs }> = [];
+        const objs: Array<{ at: number; attrs: ObjAttrs }> = [];
         while (k < run.codes.length) {
           let j = k + 1;
           while (j < run.codes.length && run.fmts[j] === run.fmts[k]) j++;
@@ -1771,11 +1868,16 @@ export class Doc {
               const attrs = this.paraAttrsMap.get(run.ctrs[q]!);
               if (attrs) paras.push({ at, attrs });
             }
+            if (run.codes[q] === OBJ_CODE) {
+              const oa = this.objAttrsMap.get(run.ctrs[q]!);
+              if (oa) objs.push({ at, attrs: oa });
+            }
             at += width16(run.codes[q]!);
           }
           k = j;
         }
         for (const p of paras) for (const key of Object.keys(p.attrs) as ParaKey[]) this.emit({ kind: 'para', at: p.at, key, value: p.attrs[key] });
+        for (const o of objs) for (const key of Object.keys(o.attrs) as ObjKey[]) this.emit({ kind: 'obj', at: o.at, key, value: o.attrs[key] });
       }
     }
   }
@@ -1804,8 +1906,16 @@ export class Doc {
     const d = shown ? this.dispStartOf(seg) + raw - this.rawStartOf(seg) : 0;
     const wasOpen = this.isOpen(seg);
     const first = this.insertIntoChunk(chunk, index, codes, 0, fmt);
-    // 넣은 ¶의 문단 속성 (p_* 마크, ¶에 붙은 것만)
+    // 넣은 ¶의 문단 속성 (p_* 마크, ¶에 붙은 것만), 넣은 개체의 속성 (o_* 마크, 개체 글자에 붙은 것만)
     if (attributes) {
+      const ok = Object.keys(attributes).filter((k) => k.startsWith(OBJ_MARK_PREFIX) && attributes[k] !== null && attributes[k] !== undefined);
+      if (ok.length)
+        for (let k = 0; k < codes.length; k++)
+          if (codes[k] === OBJ_CODE) {
+            const a: Record<string, unknown> = {};
+            for (const key of ok) a[key.slice(OBJ_MARK_PREFIX.length)] = attributes[key];
+            this.objAttrsMap.set(first + k, Object.freeze(a) as ObjAttrs);
+          }
       const paraKeys = Object.keys(attributes).filter((k) => k.startsWith(PARA_MARK_PREFIX) && attributes[k] !== null && attributes[k] !== undefined);
       if (paraKeys.length)
         for (let k = 0; k < codes.length; k++)
@@ -1827,11 +1937,13 @@ export class Doc {
   private remoteFormat(pos: number, len16: number, attributes: Record<string, unknown>): void {
     const marks: Array<[MarkKey, unknown]> = [];
     const paraKeys: Array<[ParaKey, unknown]> = [];
+    const objKeys: Array<[ObjKey, unknown]> = [];
     for (const [k, v] of Object.entries(attributes)) {
       if ((MARK_KEYS as readonly string[]).includes(k)) marks.push([k as MarkKey, v ?? undefined]);
       else if (k.startsWith(PARA_MARK_PREFIX)) paraKeys.push([k.slice(PARA_MARK_PREFIX.length) as ParaKey, v ?? undefined]);
+      else if (k.startsWith(OBJ_MARK_PREFIX)) objKeys.push([k.slice(OBJ_MARK_PREFIX.length) as ObjKey, v ?? undefined]);
     }
-    if (marks.length === 0 && paraKeys.length === 0) return;
+    if (marks.length === 0 && paraKeys.length === 0 && objKeys.length === 0) return;
     const { chunk, index } = this.locateU16(pos);
     let left = len16;
     let lo = Infinity;
@@ -1849,6 +1961,22 @@ export class Doc {
           if (f !== ch.fmt[i]) {
             ch.fmt[i] = f;
             changed = true;
+          }
+          if (objKeys.length && ch.codes[i] === OBJ_CODE) {
+            const ctr = ch.ctrs[i]!;
+            const cur = this.objAttrsMap.get(ctr) ?? NO_OBJ;
+            const next: Record<string, unknown> = { ...cur };
+            let diff = false;
+            for (const [k, v] of objKeys) {
+              if (sameValue(cur[k], v)) continue;
+              if (v === undefined) delete next[k];
+              else next[k] = v;
+              diff = true;
+            }
+            if (diff) {
+              this.objAttrsMap.set(ctr, Object.freeze(next) as ObjAttrs);
+              changed = true;
+            }
           }
           if (paraKeys.length && ch.codes[i] === PARA_CODE) {
             const ctr = ch.ctrs[i]!;
@@ -2322,7 +2450,7 @@ export class Doc {
         paras.push(this.paraInfo(ctr, pStart, off, acc, chunk.fmt[i]!));
         pStart = off + 1;
       } else {
-        acc.push(code, chunk.fmt[i]!);
+        acc.push(code, chunk.fmt[i]!, code === OBJ_CODE ? (this.objAttrsMap.get(ctr) ?? NO_OBJ) : null);
       }
       off++;
       return --n <= 0;
@@ -2380,7 +2508,7 @@ export class Doc {
         if (off >= stopAfter) return true;
         pStart = off + 1;
       } else {
-        acc.push(code, chunk.fmt[i]!);
+        acc.push(code, chunk.fmt[i]!, code === OBJ_CODE ? (this.objAttrsMap.get(ctr) ?? NO_OBJ) : null);
       }
       off++;
       return false;
@@ -2390,8 +2518,8 @@ export class Doc {
 
   /** 문단 정보 하나 (acc를 비운다). ctr = ¶ 원소(가상 ¶면 구획 표식) */
   private paraInfo(ctr: number, start: number, end: number, acc: ParaAccumulator, mark: number): ParagraphInfo {
-    const { text, fmt } = acc.take();
-    return { id: this.idOf(ctr), start, end, text, attrs: this.paraAttrsMap.get(ctr) ?? NO_ATTRS, fmt, mark };
+    const { text, fmt, objs } = acc.take();
+    return { id: this.idOf(ctr), start, end, text, attrs: this.paraAttrsMap.get(ctr) ?? NO_ATTRS, fmt, mark, objs };
   }
 }
 
@@ -2399,20 +2527,25 @@ export class Doc {
 class ParaAccumulator {
   private codes: number[] = [];
   private fmt: number[] | null = null;
+  private objs: Map<number, ObjAttrs> | null = null;
 
-  push(code: number, f: number): void {
+  push(code: number, f: number, obj: ObjAttrs | null): void {
     if (f !== 0 && !this.fmt) this.fmt = new Array<number>(this.codes.length).fill(0);
+    if (obj) (this.objs ??= new Map()).set(this.codes.length, obj);
     this.codes.push(code);
     this.fmt?.push(f);
   }
 
-  take(): { text: string; fmt: Uint16Array | null } {
-    const r = { text: fromCodes(this.codes), fmt: this.fmt ? Uint16Array.from(this.fmt) : null };
+  take(): { text: string; fmt: Uint16Array | null; objs: Map<number, ObjAttrs> | null } {
+    const r = { text: fromCodes(this.codes), fmt: this.fmt ? Uint16Array.from(this.fmt) : null, objs: this.objs };
     this.codes = [];
     this.fmt = null;
+    this.objs = null;
     return r;
   }
 }
+
+const NO_OBJ: ObjAttrs = Object.freeze({});
 
 /** 서식 묶음의 정규형 키 (값 있는 키를 이름순으로) */
 function markKey(m: MarkSet): string {

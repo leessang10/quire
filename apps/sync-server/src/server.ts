@@ -31,7 +31,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { LoroDoc, VersionVector } from 'loro-crdt';
-import { canonicalJson, compactDoc, docFromLoro, docFromQuire, openQuire, packQuire, quireFromDoc, quireFromText, readEpoch } from '@quire/sync';
+import { assetIdOf, assetIdsOf, canonicalJson, compactDoc, docFromLoro, docFromQuire, openQuire, packQuire, quireFromDoc, quireFromText, readEpoch, type QuireAsset } from '@quire/sync';
 import { fileStorage, memoryStorage, type RoomStore, type Storage } from './store';
 
 export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6 } as const;
@@ -186,6 +186,52 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
 
   const jsonReply = (res: ServerResponse, status: number, body: unknown) => reply(res, status, JSON.stringify(body), 'application/json; charset=utf-8');
 
+  /** 자산 한 개를 이만큼까지 받는다 */
+  const MAX_ASSET = 20 * 1024 * 1024;
+
+  function onAsset(req: IncomingMessage, res: ServerResponse, name: string, id: string): void {
+    const room = roomOf(name);
+    const store = room.store;
+    if (req.method === 'GET') {
+      const a = store.getAsset(id);
+      if (!a) reply(res, 404, 'no such asset');
+      else reply(res, 200, a.bytes, a.mime, { 'cache-control': 'public, max-age=31536000, immutable' });
+      idle(room);
+      return;
+    }
+    if (req.method !== 'PUT') {
+      reply(res, 405, 'method not allowed');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size <= MAX_ASSET) chunks.push(c);
+    });
+    req.on('end', () => {
+      if (size > MAX_ASSET) {
+        reply(res, 413, 'asset too large');
+        return;
+      }
+      const bytes = new Uint8Array(Buffer.concat(chunks));
+      void assetIdOf(bytes).then((got) => {
+        if (got !== id) {
+          reply(res, 400, 'content does not match the asset id');
+          return;
+        }
+        const mime = String(req.headers['content-type'] ?? 'application/octet-stream').split(';')[0]!;
+        if (!/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(mime)) {
+          reply(res, 415, 'unsupported asset type');
+          return;
+        }
+        store.putAsset(id, mime, bytes);
+        reply(res, 201, 'ok');
+        idle(room);
+      });
+    });
+  }
+
   function onHttp(req: IncomingMessage, res: ServerResponse): void {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
@@ -197,6 +243,12 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       return;
     }
     const path = decodeURIComponent((req.url ?? '/').split('?')[0]!.replace(/^\/+/, ''));
+    // 자산 (11 §2.2): <방>/assets/<ID>. ID는 내용 해시라 PUT은 내용을 확인한다
+    const am = /^(.+)\/assets\/([0-9a-f]{32})$/.exec(path);
+    if (am) {
+      onAsset(req, res, am[1]!, am[2]!);
+      return;
+    }
     const m = /^(.+)\.(json|quire)$/.exec(path);
     if (!m) {
       reply(res, 200, `quire sync server: ${rooms.size} room(s) loaded\n`);
@@ -224,7 +276,12 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       idle(room);
       return;
     }
-    void packQuire({ loro: room.doc }).then((bytes) => {
+    const assets: QuireAsset[] = [];
+    for (const id of assetIdsOf(docFromLoro(room.doc))) {
+      const a = room.store.getAsset(id);
+      if (a) assets.push({ id, ...a });
+    }
+    void packQuire({ loro: room.doc, assets }).then((bytes) => {
       reply(res, 200, bytes, 'application/vnd.quire', { 'content-disposition': `attachment; filename="${encodeURIComponent(name)}.quire"` });
       idle(room);
     });
@@ -243,6 +300,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       update = compactDoc(docFromQuire(opened.doc).doc, randomEpoch(), randomPeer()).export({ mode: 'snapshot' });
     }
     room.doc.import(update);
+    for (const a of opened.assets) room.store.putAsset(a.id, a.mime, a.bytes);
     room.epoch = readEpoch(room.doc);
     room.store.append(update);
     room.dirty++;

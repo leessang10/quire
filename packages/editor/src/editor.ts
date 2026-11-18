@@ -8,6 +8,7 @@ import {
   History,
   MARK_KEYS,
   MAX_LIST_LEVEL,
+  OBJ,
   mergeParaAttrs,
   type MarkKey,
   type MarkSet,
@@ -15,6 +16,8 @@ import {
   type ParaAttrs,
   type ParaKey,
   type ListLabel,
+  type ObjAttrs,
+  type ObjKey,
   type ParagraphInfo,
   type Position,
   type ResolvedStyle,
@@ -35,9 +38,11 @@ import {
   type ParaBox,
   type ParaLayout,
   type PlacedLine,
+  type PlacedPara,
   type RunStyle,
 } from '@quire/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
+import { MemoryAssets, type AssetStore } from './assets';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 
 export interface EditorOptions {
@@ -63,6 +68,8 @@ export interface EditorOptions {
   onChange?: (editor: Editor) => void;
   /** 선택 영역(캐럿)이 바뀌었을 때 (프레즌스 전송용). 화면 오프셋 */
   onSelectionChange?: (anchor: number, head: number) => void;
+  /** 이미지 원본 저장소 (11 §2.2). 없으면 메모리 */
+  assets?: AssetStore;
 }
 
 /** 엔진이 불러올 글꼴 파일 (TTF·OTF: HarfBuzz가 woff2를 읽지 못하므로 압축 안 된 sfnt) */
@@ -262,13 +269,22 @@ export class Editor {
     const styled = hasKeys(rs.marks);
     const label = attrs.list ? this.doc.listLabel(p) : null;
     const box = this.paraBox(attrs, rs, label);
-    if (!p.fmt && !p.mark && !force && !box && !styled) return null;
+    if (!p.fmt && !p.mark && !force && !box && !styled && !p.objs) return null;
     const marker = label ? { text: label.text, id: p.mark ?? 0, hanging: pt(label.def.levels[label.level]!.hanging) } : null;
+    const objs = p.objs ? objSizes(p.objs) : null;
     const sty = styled ? (attrs.style ?? BODY_STYLE) : '';
     // 스타일 글자 서식은 서식 번호 0에도 걸리므로 fmt가 없으면 0으로 채운 열을 준다
     const fmt = p.fmt ?? (styled ? new Uint16Array(cpCount(p.text)) : null);
-    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty), box, marker, key: styled ? `${sty}@${this.doc.stylesVersion}` : undefined };
+    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty), box, marker, objs, key: styled ? `${sty}@${this.doc.stylesVersion}` : undefined };
   };
+  private readonly assets: AssetStore;
+  /** 자산 ID → 그릴 이미지 (불러오는 중 null) */
+  private readonly images = new Map<string, ImageBitmap | null | 'error'>();
+  /** 자산마다 마지막으로 그린 프레임 번호 (화면 밖 이미지를 풀어 메모리를 돌려준다, 11 §8) */
+  private readonly imageUsed = new Map<string, number>();
+  private frame = 0;
+  /** 크기 조절 중인 개체: 오프셋과 미리 보기 크기 (px) */
+  private resizing: { offset: number; w: number; h: number } | null = null;
   /** 캐럿에서 다음 입력이 받을 서식 (Ctrl+B 등을 선택 없이 눌렀을 때). at: 그 캐럿 오프셋 */
   private pending: { at: number; marks: MarkSet } | null = null;
   /** 상태 표시: 측정 방식 */
@@ -297,6 +313,7 @@ export class Editor {
 
   constructor(private readonly opts: EditorOptions) {
     this.fontSize = opts.fontSize ?? 16;
+    this.assets = opts.assets ?? new MemoryAssets();
     const family = opts.fontFamily ?? `'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`;
     this.font = `${this.fontSize}px ${family}`;
     this.family = family;
@@ -388,6 +405,22 @@ export class Editor {
     this.listen(scroller, 'mousemove', (e) => this.onHover(e as MouseEvent));
     this.listen(scroller, 'mouseleave', () => this.setHover(-1, false));
     this.listen(scroller, 'scroll', () => this.scheduleRender());
+    // 이미지 끌어 놓기 (11 §5.3): 놓은 자리에 넣는다
+    this.listen(scroller, 'dragover', (e) => {
+      const d = (e as DragEvent).dataTransfer;
+      if (d && [...d.items].some((it) => it.kind === 'file' && it.type.startsWith('image/'))) e.preventDefault();
+    });
+    this.listen(scroller, 'drop', (e) => {
+      const ev = e as DragEvent;
+      const files = [...(ev.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('image/'));
+      if (!files.length) return;
+      ev.preventDefault();
+      const p = this.docPoint(ev);
+      const at = this.layout.hitTest(p.x, Math.min(p.y, this.layout.validBottom - 1));
+      void (async () => {
+        for (const [k, f] of files.entries()) await this.insertImage(f, undefined, k === 0 ? at : undefined);
+      })();
+    });
     this.listen(this.input.el, 'focus', () => { this.focused = true; this.scheduleRender(); });
     this.listen(this.input.el, 'blur', () => { this.focused = false; this.scheduleRender(); });
     this.resizeObserver = new ResizeObserver(() => this.refresh());
@@ -807,8 +840,9 @@ export class Editor {
       // 글자
       ctx.fillStyle = COLORS.text;
       const midY = baseY;
-      if (this.shapedFonts || para.layout.fmt || ln.adj) {
+      if (this.shapedFonts || para.layout.fmt || ln.adj || para.layout.objs) {
         this.drawRuns(para.layout, ln, px, baseY, sty);
+        if (para.layout.objs) this.drawObjects(para, ln, px, baseY);
         if (para.layout.fmt) this.drawDecorations(para.layout, ln, px, baseY, sty);
         ctx.font = this.font;
         ctx.fillStyle = COLORS.text;
@@ -866,6 +900,7 @@ export class Editor {
       this.scheduleRender();
     }
 
+    this.releaseImages();
     this.updateCaret();
     this.updateMirror(visibleParas);
     this.reportSelection();
@@ -978,7 +1013,7 @@ export class Editor {
     const end = ln.end;
     const fontAt = (k: number) => (fonts ? fonts[k]! : 0);
     const idAt = (k: number) => (fmt ? fmt[k]! : 0);
-    const blank = (c: string) => c === ' ' || c === '\t' || c === '　';
+    const blank = (c: string) => c === ' ' || c === '\t' || c === '　' || c === OBJ;
     const perChar = ln.adjChars;
     let lastFont = '';
     let k = start;
@@ -1060,6 +1095,180 @@ export class Editor {
         ctx.fillRect(x, y - m.strikePosition * em - th / 2, w, th);
       }
     });
+  }
+
+  // ── 개체 (11 §2.1, §4.1, §5) ─────────────────────────
+
+  /** 자산의 그릴 이미지. 없으면 불러오기를 시작하고 null (다 되면 다시 그린다) */
+  private image(asset: string): ImageBitmap | null | 'error' {
+    this.imageUsed.set(asset, this.frame);
+    if (this.images.has(asset)) return this.images.get(asset)!;
+    this.images.set(asset, null);
+    void this.assets
+      .get(asset)
+      .then((blob) => (blob ? createImageBitmap(blob) : Promise.reject(new Error('missing'))))
+      .then(
+        (bmp) => this.images.set(asset, bmp),
+        () => this.images.set(asset, 'error'),
+      )
+      .then(() => this.scheduleRender());
+    return null;
+  }
+
+  /** 그린 이미지가 많으면 이번 프레임에 그리지 않은 것을 푼다 (다시 보이면 저장소에서 다시 디코드) */
+  private releaseImages(): void {
+    this.frame++;
+    if (this.images.size <= 64) return;
+    for (const [id, img] of this.images) {
+      if ((this.imageUsed.get(id) ?? -1) >= this.frame - 1 || img === null) continue;
+      if (img !== 'error') img.close();
+      this.images.delete(id);
+      this.imageUsed.delete(id);
+    }
+  }
+
+  /** 줄의 개체 그리기: 기준선 위에 선 상자. 원본이 없으면 자리표시(회색 상자 + 대체 텍스트) */
+  private drawObjects(para: PlacedPara, ln: PlacedLine, px: number, baseY: number): void {
+    const { ctx } = this;
+    const pl = para.layout;
+    const info = para.info as ParagraphInfo;
+    const [selFrom, selTo] = this.range();
+    for (const [k, box] of pl.objs!) {
+      if (k < ln.start || k >= ln.end) continue;
+      const attrs = info.objs?.get(pl.preedit && k >= pl.preedit[0] ? k - (pl.preedit[1] - pl.preedit[0]) : k);
+      const x = px + lineX(pl, ln, k);
+      let { w, h } = box;
+      const offset = info.start + k;
+      if (this.resizing && this.resizing.offset === offset) ({ w, h } = this.resizing);
+      const y = baseY - h;
+      const img = attrs?.asset ? this.image(attrs.asset) : 'error';
+      if (img && img !== 'error') ctx.drawImage(img, x, y, w, h);
+      else {
+        ctx.fillStyle = '#e9e9ec';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = '#c7c7cc';
+        ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+        ctx.fillStyle = COLORS.placeholderText;
+        ctx.font = `${Math.min(13, this.fontSize)}px ${this.family}`;
+        ctx.fillText(img === 'error' ? `이미지 없음${attrs?.alt ? `: ${attrs.alt}` : ''}` : (attrs?.alt ?? '불러오는 중…'), x + 6, y + Math.min(h - 6, 18), w - 12);
+      }
+      // 선택한 개체: 테두리와 손잡이
+      if (selTo - selFrom === 1 && selFrom === offset) {
+        ctx.strokeStyle = COLORS.gripActive;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x, y, w, h);
+        ctx.lineWidth = 1;
+        ctx.fillStyle = '#ffffff';
+        for (const [hx, hy] of handlePoints(x, y, w, h)) {
+          ctx.fillRect(hx - 4, hy - 4, 8, 8);
+          ctx.strokeRect(hx - 4 + 0.5, hy - 4 + 0.5, 7, 7);
+        }
+      }
+    }
+  }
+
+  /** 문서 좌표 (x, y)에 있는 개체: 오프셋, 화면 상자 (쪽 왼쪽 기준 x, 문서 y) */
+  private objectAt(x: number, y: number): { offset: number; x: number; y: number; w: number; h: number } | null {
+    const ref = this.layout.firstLineBelow(y, false);
+    if (!ref) return null;
+    for (const r of [ref, this.layout.stepLine(ref, -1)]) {
+      if (!r) continue;
+      const para = this.layout.para(r.para);
+      const pl = para.layout;
+      if (!pl.objs) continue;
+      const ln = para.lines[r.line]!;
+      for (const [k, box] of pl.objs) {
+        if (k < ln.start || k >= ln.end) continue;
+        const bx = lineX(pl, ln, k);
+        const by = ln.baseline - box.h;
+        if (x >= bx - 5 && x <= bx + box.w + 5 && y >= by - 5 && y <= ln.baseline + 5)
+          return { offset: (para.info as ParagraphInfo).start + k, x: bx, y: by, w: box.w, h: box.h };
+      }
+    }
+    return null;
+  }
+
+  /** 선택한 개체 하나 (선택이 개체 글자 하나일 때)의 오프셋과 속성 */
+  selectedObject(): { offset: number; attrs: ObjAttrs } | null {
+    const [from, to] = this.range();
+    if (to - from !== 1) return null;
+    const attrs = this.doc.objAt(from);
+    return attrs ? { offset: from, attrs } : null;
+  }
+
+  /** 선택한 개체의 속성 하나 (대체 텍스트 등). 실행 취소 한 단계 */
+  setObjectAttr(key: ObjKey, value: unknown): void {
+    const o = this.selectedObject();
+    if (!o) return;
+    const before: Selection = { ...this.sel };
+    const ops = this.doc.setObjAttr(o.offset, key, value);
+    if (ops.length === 0) return;
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
+  /**
+   * 이미지 넣기 (붙여넣기·끌어 놓기·메뉴): 원본을 자산 저장소에 넣고 캐럿 자리에 개체를 넣는다. 크기는 원래 크기(px)이고,
+   * 본문 폭보다 넓으면 본문 폭으로 줄인다. 자산 올리기를 기다리지 않는다.
+   */
+  async insertImage(blob: Blob, alt?: string, at?: number): Promise<void> {
+    const bmp = await createImageBitmap(blob);
+    const asset = await this.assets.put(blob);
+    this.images.set(asset, bmp);
+    const maxW = this.setup.width - this.setup.margin * 2;
+    const scale = Math.min(1, maxW / bmp.width);
+    const toPt = (v: number) => Math.round(v * 0.75 * 1000); // px(96dpi) → 1/1000pt
+    const attrs: ObjAttrs = { id: crypto.randomUUID().slice(0, 8), kind: 'image', asset, w: toPt(bmp.width * scale), h: toPt(bmp.height * scale), ...(alt ? { alt } : {}) };
+    this.input.commitComposition();
+    if (at !== undefined) this.setSelection(at);
+    const before: Selection = { ...this.sel };
+    const [from, to] = this.range();
+    const ops: Op[] = [];
+    if (from !== to) ops.push(...this.doc.deleteRange(from, to));
+    ops.push(...this.doc.insertObject(from, attrs));
+    this.setSelection(from, from + 1); // 넣은 이미지를 선택
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
+  /** 개체 손잡이를 끌어 크기 조절: 모서리는 비율 유지, 변은 한 방향 (11 §5.1) */
+  private startResize(obj: { offset: number; x: number; y: number; w: number; h: number }, handle: number, e: MouseEvent): void {
+    const start = this.docPoint(e);
+    const ratio = obj.h / obj.w;
+    const corner = handle % 2 === 0;
+    const onMove = (ev: MouseEvent) => {
+      const q = this.docPoint(ev);
+      const dx = q.x - start.x;
+      const dy = q.y - start.y;
+      // 손잡이 번호: 0 왼쪽 위, 1 위, 2 오른쪽 위, 3 오른쪽, 4 오른쪽 아래, 5 아래, 6 왼쪽 아래, 7 왼쪽
+      const sx = handle === 0 || handle === 6 || handle === 7 ? -1 : handle === 1 || handle === 5 ? 0 : 1;
+      const sy = handle <= 2 ? -1 : handle === 3 || handle === 7 ? 0 : 1;
+      let w = Math.max(16, obj.w + sx * dx);
+      let h = Math.max(16, obj.h + sy * dy);
+      if (corner) h = w * ratio;
+      if (sx === 0) w = obj.w;
+      if (sy === 0) h = obj.h;
+      this.resizing = { offset: obj.offset, w, h };
+      this.scheduleRender();
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const r = this.resizing;
+      this.resizing = null;
+      if (!r) return;
+      const toPt = (v: number) => Math.round(v * 0.75 * 1000);
+      const before: Selection = { ...this.sel };
+      const ops = [...this.doc.setObjAttr(r.offset, 'w', toPt(r.w)), ...this.doc.setObjAttr(r.offset, 'h', toPt(r.h))];
+      this.history.seal();
+      if (ops.length) this.commit(ops, before);
+      else this.render();
+      this.history.seal();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }
 
   /** 목록 번호: 본문 왼쪽에서 내어 쓴 자리, ¶ 서식으로 (10 §4) */
@@ -1499,17 +1708,28 @@ export class Editor {
     // 제목·인용은 h1–h3·blockquote로 (04 §3): 스크린리더가 구조를 읽는다
     const tag = forceTag ?? ({ h1: 'h1', h2: 'h2', h3: 'h3', quote: 'blockquote' } as Record<string, string>)[info.attrs.style ?? ''] ?? 'p';
     const p = document.createElement(tag);
-    if (!info.fmt) {
+    if (!info.fmt && !info.objs) {
       p.textContent = info.text;
       return p;
     }
     // 굵게·기울임은 strong·em으로 (04 §3, 10 §4)
     const cps = Array.from(info.text);
+    const fmt = info.fmt ?? new Uint16Array(cps.length);
     let k = 0;
     while (k < cps.length) {
+      // 이미지: 대체 텍스트를 읽는 img (11 §7)
+      const o = info.objs?.get(k);
+      if (o) {
+        const img = document.createElement('span');
+        img.setAttribute('role', 'img');
+        img.setAttribute('aria-label', o.alt || '이미지');
+        p.append(img);
+        k++;
+        continue;
+      }
       let j = k + 1;
-      while (j < cps.length && info.fmt[j] === info.fmt[k]) j++;
-      const m = this.doc.markSet(info.fmt[k]!);
+      while (j < cps.length && fmt[j] === fmt[k] && !info.objs?.has(j)) j++;
+      const m = this.doc.markSet(fmt[k]!);
       let node: Node = document.createTextNode(cps.slice(k, j).join(''));
       if (m.italic) {
         const em = document.createElement('em');
@@ -1714,6 +1934,10 @@ export class Editor {
       }
       case 'paste':
         this.history.seal();
+        if (i.files?.length) {
+          for (const f of i.files) void this.insertImage(f);
+          break;
+        }
         this.replaceSelection(i.text);
         break;
     }
@@ -1921,6 +2145,23 @@ export class Editor {
         this.startParagraphDrag(ref.para, e);
         return;
       }
+    }
+    // 개체: 선택한 개체의 손잡이면 크기 조절, 개체를 누르면 개체 선택 (11 §5.1)
+    const obj = this.objectAt(p.x, p.y);
+    const sel = this.selectedObject();
+    if (obj && sel && sel.offset === obj.offset) {
+      const h = handlePoints(obj.x, obj.y, obj.w, obj.h).findIndex(([hx, hy]) => Math.abs(hx - p.x) <= 6 && Math.abs(hy - p.y) <= 6);
+      if (h >= 0) {
+        this.startResize(obj, h, e);
+        return;
+      }
+    }
+    if (obj && !e.shiftKey && e.detail === 1) {
+      this.setSelection(obj.offset, obj.offset + 1);
+      this.history.seal();
+      this.render();
+      this.opts.onChange?.(this);
+      return;
     }
     const offset = this.layout.hitTest(p.x, p.y);
 
@@ -2156,4 +2397,19 @@ function cpCount(t: string): number {
 /** 1/1000pt → px (96dpi) */
 function pt(v: number | undefined): number {
   return ((v ?? 0) / 1000) * (96 / 72);
+}
+
+/** 개체 속성 → 레이아웃 크기 (px). 크기가 없으면 100px 정사각형 */
+function objSizes(objs: ReadonlyMap<number, ObjAttrs>): Map<number, { w: number; h: number }> {
+  const out = new Map<number, { w: number; h: number }>();
+  for (const [k, o] of objs) out.set(k, { w: o.w ? pt(o.w) : 100, h: o.h ? pt(o.h) : 100 });
+  return out;
+}
+
+/** 크기 조절 손잡이 8곳 (왼쪽 위부터 시계 방향) */
+function handlePoints(x: number, y: number, w: number, h: number): Array<[number, number]> {
+  return [
+    [x, y], [x + w / 2, y], [x + w, y], [x + w, y + h / 2],
+    [x + w, y + h], [x + w / 2, y + h], [x, y + h], [x, y + h / 2],
+  ];
 }

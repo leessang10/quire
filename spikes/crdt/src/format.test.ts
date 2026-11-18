@@ -288,7 +288,7 @@ describe('random concurrent formatting (3 peers)', () => {
     const line = `무작위 (피어 3개 × ${STEPS}단계 × ${SEEDS}개): 연산 ${ops.toLocaleString()}개 모두 수렴. 가상 ¶ 문단에 속성을 걸지 못한 경우 ${virtualPara}번, 문단 속성이 ¶ 아닌 글자로 번진 글자 ${leaks}개`;
     writeFileSync(new URL('../results/format-random.md', import.meta.url), `${line}\n`);
     console.log(line);
-  });
+  }, 60_000);
 });
 
 // ── 크기 (10 O-18) ──

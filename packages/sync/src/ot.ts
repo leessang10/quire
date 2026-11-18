@@ -8,7 +8,7 @@
  * 위치는 UTF-16 단위의 살아 있는 원소 열(= Loro 텍스트) 기준이다. 구획 표식도 한 글자다.
  * 같은 자리에 양쪽이 넣으면 원격(Worker 쪽에 먼저 있던 것)이 앞, 로컬이 뒤다.
  */
-import { PARA_MARK_PREFIX, type RawChange } from '@quire/model';
+import { OBJ_MARK_PREFIX, PARA_MARK_PREFIX, type RawChange } from '@quire/model';
 
 /** 원격 텍스트 연산 (Loro 이벤트 델타를 차례로 적용할 단위로 편 것) */
 export type RemoteOp =
@@ -126,6 +126,7 @@ function pairFormat(a: LocalChange, b: Fmt): [LocalChange[], RemoteOp[]] {
   }
   if (a.kind === 'mark') return [[a], withoutKey(b, a.key, a.at, a.at + a.len)];
   if (a.kind === 'para') return [[a], withoutKey(b, PARA_MARK_PREFIX + a.key, a.at, a.at + 1)];
+  if (a.kind === 'obj') return [[a], withoutKey(b, OBJ_MARK_PREFIX + a.key, a.at, a.at + 1)];
   return [[a], [b]];
 }
 
@@ -143,8 +144,8 @@ function pair(a: LocalChange, b: RemoteOp): [LocalChange[], RemoteOp[]] {
     const d = delAfterDel({ kind: 'delete', at: a.at, len: a.len }, b.at, b.len);
     return [d ? [{ ...a, at: d.at, len: d.len }] : [], [b]];
   }
-  if (a.kind === 'para') {
-    // ¶ 하나의 위치: 앞(같은 자리 포함)에 들어온 삽입만큼 밀리고, ¶가 지워졌으면 버린다
+  if (a.kind === 'para' || a.kind === 'obj') {
+    // ¶·개체 하나의 위치: 앞(같은 자리 포함)에 들어온 삽입만큼 밀리고, 그 글자가 지워졌으면 버린다
     if (b.kind === 'insert') return [[b.at <= a.at ? { ...a, at: a.at + len16(b) } : a], [b]];
     if (a.at >= b.at && a.at < b.at + b.len) return [[], [b]];
     return [[a.at >= b.at + b.len ? { ...a, at: a.at - b.len } : a], [b]];

@@ -197,4 +197,31 @@ describe('server storage', () => {
     expect(a.client.doc.paraAttrs(1)).toEqual({ align: 'center' });
     expect(a.client.doc.style('h1')!.marks).toEqual({ bold: true, size: 30000 });
   });
+
+  it('stores assets by content hash, and puts them into and takes them out of .quire files (2-8)', async () => {
+    const s = await serve({});
+    const name = room();
+    const { assetIdOf, packQuire, openQuire } = await import('./quire-file');
+    const { Doc } = await import('@quire/model');
+    const bytes = new Uint8Array([137, 80, 78, 71, 9, 9, 9, 9]);
+    const id = await assetIdOf(bytes);
+    const url = `http://localhost:${s.port}/${name}/assets/${id}`;
+    expect((await fetch(url)).status).toBe(404);
+    // 내용과 ID가 다르면 거절, 이미지가 아니면 거절
+    expect((await fetch(`http://localhost:${s.port}/${name}/assets/${'0'.repeat(32)}`, { method: 'PUT', body: bytes, headers: { 'content-type': 'image/png' } })).status).toBe(400);
+    expect((await fetch(url, { method: 'PUT', body: bytes, headers: { 'content-type': 'text/html' } })).status).toBe(415);
+    expect((await fetch(url, { method: 'PUT', body: bytes, headers: { 'content-type': 'image/png' } })).status).toBe(201);
+    const got = await fetch(url);
+    expect(got.headers.get('content-type')).toBe('image/png');
+    expect(new Uint8Array(await got.arrayBuffer())).toEqual(bytes);
+    // .quire 올리기: 자산도 방에 들어간다. 내려받기: 문서가 가리키는 자산이 들어 있다
+    const name2 = room();
+    const doc = Doc.fromText('그림 ');
+    doc.insertObject(3, { id: 'i1', kind: 'image', asset: id, w: 1000, h: 1000 });
+    const put = await fetch(`http://localhost:${s.port}/${name2}.quire`, { method: 'PUT', body: await packQuire({ doc, assets: [{ id, mime: 'image/png', bytes }] }) });
+    expect(put.status).toBe(201);
+    expect((await fetch(`http://localhost:${s.port}/${name2}/assets/${id}`)).status).toBe(200);
+    const file = await openQuire(new Uint8Array(await (await fetch(`http://localhost:${s.port}/${name2}.quire`)).arrayBuffer()));
+    expect(file.assets.map((a) => a.id)).toEqual([id]);
+  });
 });
