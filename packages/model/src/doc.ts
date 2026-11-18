@@ -86,7 +86,9 @@ export type Op =
   /** ¶(카운터) 하나의 문단 속성 키 하나 */
   | { type: 'para'; ctr: number; key: ParaKey; before: unknown; after: unknown }
   /** 스타일 정의 하나 (undefined = 없음, 10 §2.3) */
-  | { type: 'style'; name: string; before: Style | undefined; after: Style | undefined };
+  | { type: 'style'; name: string; before: Style | undefined; after: Style | undefined }
+  /** 목록 정의 하나 (undefined = 없음, 10 §2.4) */
+  | { type: 'list'; id: string; before: ListDef | undefined; after: ListDef | undefined };
 
 /** 글자 서식 묶음 (10 §2.1). 값이 없는 키는 서식 없음. 크기는 1/1000pt */
 export interface MarkSet {
@@ -256,6 +258,12 @@ export class Doc {
   private styleMap = new Map<string, Style>(DEFAULT_STYLES.map((st) => [st.name, st]));
   private resolvedStyles = new Map<string, ResolvedStyle>();
   private _stylesVersion = 0;
+  /** 목록 정의 (10 §2.4) */
+  private listMap = new Map<string, ListDef>();
+  /** 목록 구조(목록 문단의 화면 순서·수준·정의)가 바뀔 때마다 오른다. 번호 캐시 키 */
+  private _listEpoch = 0;
+  private labels: { epoch: number; map: Map<ElementId, ListLabel> } | null = null;
+  private listSeq = 0;
 
   constructor(readonly peer = 'local') {}
 
@@ -428,6 +436,7 @@ export class Doc {
    * 레이아웃이 문단 목록 전체를 비교하지 않아도 되게 하는 힌트다.
    */
   takeParagraphChanges(): { from: number; suffix: number } {
+    this.refreshListLabels();
     const r = { from: this.changeFrom, suffix: this.changeSuffix };
     this.changeFrom = Infinity;
     this.changeSuffix = Infinity;
@@ -696,6 +705,98 @@ export class Doc {
     this._version++;
   }
 
+  // ── 목록 (10 §2.4) ───────────────────────────────
+
+  /** 목록 정의 */
+  listDef(id: string): ListDef | undefined {
+    return this.listMap.get(id);
+  }
+
+  lists(): ListDef[] {
+    return [...this.listMap.values()];
+  }
+
+  /** 목록 구조 판 (번호가 바뀔 수 있는 변경마다 오름) */
+  get listEpoch(): number {
+    return this._listEpoch;
+  }
+
+  /**
+   * 새 목록 정의 (기본 모양). id는 이 문서 안에서 겹치지 않게 피어 이름과 차례로 만든다.
+   * @returns [id, 실행 취소용 연산]
+   */
+  createList(kind: 'bullet' | 'number'): [string, Op[]] {
+    let id: string;
+    do id = `${this.peer}-l${++this.listSeq}`;
+    while (this.listMap.has(id));
+    return [id, this.setList(id, defaultListDef(id, kind))];
+  }
+
+  /** 목록 정의를 바꾼다 (undefined = 지움). 그 목록 문단이 다시 조판된다 */
+  setList(id: string, def: ListDef | undefined): Op[] {
+    const before = this.listMap.get(id);
+    if (def && def.id !== id) throw new Error(`setList: id mismatch (${def.id} != ${id})`);
+    if (sameValue(before, def)) return [];
+    this.writeList(id, def);
+    return [{ type: 'list', id, before, after: def }];
+  }
+
+  private writeList(id: string, def: ListDef | undefined): void {
+    if (def) this.listMap.set(id, Object.freeze(structuredClone(def)));
+    else this.listMap.delete(id);
+    this._listEpoch++;
+    let lo = -1;
+    let hi = -1;
+    for (let i = 0; i < this.paras.length; i++) {
+      const pi = this.paras[i]!;
+      if (pi.attrs.list?.id === id) {
+        this.paras[i] = { ...pi };
+        if (lo < 0) lo = i;
+        hi = i;
+      }
+    }
+    if (lo >= 0) {
+      this.changeFrom = Math.min(this.changeFrom, lo);
+      this.changeSuffix = Math.min(this.changeSuffix, this.paras.length - 1 - hi);
+    }
+    this._version++;
+  }
+
+  /** 문단의 목록 번호 (목록 문단이 아니면 null). 화면 순서로 센 값을 목록 구조 판마다 캐시한다 */
+  listLabel(p: ParagraphInfo): ListLabel | null {
+    if (!p.attrs.list) return null;
+    this.refreshListLabels();
+    return this.labels!.map.get(p.id) ?? null;
+  }
+
+  /**
+   * 목록 구조가 바뀌었으면 번호를 다시 센다. 번호가 바뀐 문단은 새 객체로 바꾸고 바뀐 구간에 넣는다 (레이아웃이 다시 그린다:
+   * 위에 항목을 넣으면 아래 항목들의 번호가 바뀐다)
+   */
+  private refreshListLabels(): void {
+    if (this.labels && this.labels.epoch === this._listEpoch) return;
+    const old = this.labels?.map ?? null;
+    const map = this.listMap.size ? numberLists(this.paras, this.listMap) : new Map<ElementId, ListLabel>();
+    this.labels = { epoch: this._listEpoch, map };
+    if (!old || (old.size === 0 && map.size === 0)) return;
+    let lo = -1;
+    let hi = -1;
+    for (let i = 0; i < this.paras.length; i++) {
+      const pi = this.paras[i]!;
+      if (!pi.attrs.list) continue;
+      const a = old.get(pi.id);
+      const b = map.get(pi.id);
+      if (a?.text === b?.text && a?.level === b?.level && a?.def === b?.def) continue;
+      this.paras[i] = { ...pi };
+      if (lo < 0) lo = i;
+      hi = i;
+    }
+    if (lo >= 0) {
+      this.changeFrom = Math.min(this.changeFrom, lo);
+      this.changeSuffix = Math.min(this.changeSuffix, this.paras.length - 1 - hi);
+    }
+  }
+
   /**
    * 정본 JSON(07 §4)용: 문단마다 속성과 서식 런. 런은 같은 서식이 이어진 글자들이고 ¶는 넣지 않는다.
    */
@@ -779,6 +880,7 @@ export class Doc {
   }
 
   private writeParaAttr(ctr: number, i: number, key: ParaKey, value: unknown): void {
+    if (key === 'list') this._listEpoch++;
     const cur = this.paraAttrsMap.get(ctr) ?? NO_ATTRS;
     const next: Record<string, unknown> = { ...cur };
     if (value === undefined || value === null) delete next[key];
@@ -1026,6 +1128,7 @@ export class Doc {
     else if (op.type === 'hidden') this.setHidden(op.segs, op.value);
     else if (op.type === 'format') this.applyFormat(op);
     else if (op.type === 'style') this.writeStyle(op.name, op.after);
+    else if (op.type === 'list') this.writeList(op.id, op.after);
     else {
       // 문단 속성: 그사이 다른 사용자가 같은 키를 바꿨으면 두지 않고 덮는다 (¶ 속성은 키 하나의 LWW)
       const i = this.paras.findIndex((p) => p.id === this.idOf(op.ctr));
@@ -2057,11 +2160,13 @@ export class Doc {
     this.changeFrom = Math.min(this.changeFrom, from);
     this.changeSuffix = Math.min(this.changeSuffix, suffix);
     this.paras = next;
+    this._listEpoch++; // 문단 순서가 바뀌었다 (구획 이동·숨김): 목록 번호를 다시 센다
     this._version++;
   }
 
   /** 문단 목록을 처음부터 다시 만든다 (드문 경우: 동시 편집으로 구획·문단 경계가 어긋났거나 대체 자리표시가 바뀜) */
   private rebuildParagraphs(): void {
+    this._listEpoch++;
     this.paras = this.scanParagraphs(0, Infinity).paras;
     this.changeFrom = 0;
     this.changeSuffix = 0;
@@ -2115,6 +2220,9 @@ export class Doc {
     // 바뀐 구간 기록: [0, i)와 뒤쪽 old.length-(j+1)개 문단은 같은 객체로 남는다
     this.changeFrom = Math.min(this.changeFrom, i);
     this.changeSuffix = Math.min(this.changeSuffix, old.length - (j + 1));
+    // 목록 번호: 바뀐 문단들 가운데 목록 문단의 (ID, 목록, 수준) 열이 그대로면 번호도 그대로다 (글자 입력, 목록 아닌 문단의
+    // Enter·합치기). 번호는 ¶ ID로 찾으므로 보통 문단이 늘거나 줄어도 다시 셀 필요가 없다
+    if (this.listMap.size > 0 && !sameListSeq(old, i, j + 1, rebuilt)) this._listEpoch++;
     old.splice(i, j - i + 1, ...rebuilt);
     for (let k = i + rebuilt.length; k < old.length; k++) {
       const p = old[k]!;
@@ -2183,6 +2291,22 @@ function sameValue(a: unknown, b: unknown): boolean {
   return typeof a === 'object' && typeof b === 'object' && JSON.stringify(a) === JSON.stringify(b);
 }
 
+/** old[a, b)와 rebuilt의 목록 문단 열이 같은가 (ID·목록·수준) */
+function sameListSeq(old: ParagraphInfo[], a: number, b: number, rebuilt: ParagraphInfo[]): boolean {
+  let k = a;
+  let m = 0;
+  for (;;) {
+    while (k < b && !old[k]!.attrs.list) k++;
+    while (m < rebuilt.length && !rebuilt[m]!.attrs.list) m++;
+    if (k >= b || m >= rebuilt.length) return k >= b && m >= rebuilt.length;
+    const x = old[k]!;
+    const y = rebuilt[m]!;
+    if (x.id !== y.id || x.attrs.list!.id !== y.attrs.list!.id || x.attrs.list!.level !== y.attrs.list!.level) return false;
+    k++;
+    m++;
+  }
+}
+
 /** start ≤ offset인 마지막 문단 */
 function findParaByStart(paras: ParagraphInfo[], offset: number): number {
   let lo = 0;
@@ -2248,5 +2372,6 @@ function normalizeNewlines(s: string): string {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
-}import { BODY_STYLE, DEFAULT_STYLES, mergeParaAttrs, resolveStyle, type ResolvedStyle, type Style } from './styles';
+}import { defaultListDef, numberLists, type ListDef, type ListLabel } from './lists';
+import { BODY_STYLE, DEFAULT_STYLES, mergeParaAttrs, resolveStyle, type ResolvedStyle, type Style } from './styles';
 

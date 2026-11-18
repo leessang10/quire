@@ -191,6 +191,24 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
     expect(canonicalJson(quireFromDoc(back))).toBe(json);
   });
 
+  it('stores list definitions in settings.lists and list attributes on paragraphs, not the numbers (2-5)', async () => {
+    const { Doc } = await import('@quire/model');
+    const { quireFromDoc, docFromQuire } = await import('./canonical');
+    const doc = Doc.fromText('가\n나\n다\n');
+    const [id] = doc.createList('number');
+    doc.setParaAttr(0, 'list', { id, level: 0 });
+    doc.setParaAttr(1, 'list', { id, level: 1 });
+    doc.setParaAttr(2, 'list', { id, level: 0 });
+    const json = canonicalJson(quireFromDoc(doc));
+    const q = JSON.parse(json);
+    expect(Object.keys(q.settings.lists)).toEqual([id]);
+    expect(q.stories.body[1].p).toEqual({ list: { id, level: 1 } });
+    expect(json).not.toContain('"2."');
+    const { doc: back } = docFromQuire(q);
+    expect(back.paragraphs().map((p) => back.listLabel(p)?.text)).toEqual(['1.', '가.', '2.', undefined]);
+    expect(canonicalJson(quireFromDoc(back))).toBe(json);
+  });
+
   it('drops keys this engine does not know, with notes', async () => {
     const { docFromQuire } = await import('./canonical');
     const q = quireFromText('가나\n');

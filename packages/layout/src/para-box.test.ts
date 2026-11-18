@@ -134,3 +134,31 @@ describe('paragraph box', () => {
     expect(cache.get('가나다라', 1000, mono, null, f(box({ left: 20 })))).toBe(b);
   });
 });
+
+describe('list marker', () => {
+  const fmt = (text: string, hanging: number) => ({ fmt: null, mark: 0, style, box: box({ left: 40 }), marker: { text, id: 0, hanging } });
+
+  it('puts the marker in the hanging space left of the text and keeps the first line aligned with the rest', () => {
+    const pl = layoutParagraph('가나다라마바사아자차카', 100, mono, null, fmt('1.', 30));
+    expect(pl.marker).toMatchObject({ text: '1.', width: 20, x: -30, shift: 0 });
+    expect(pl.widths).toEqual([60, 60]);
+  });
+
+  it('pushes the first line right when the marker (+ one space) is wider than the hanging space', () => {
+    const pl = layoutParagraph('가나다라마바사아자차카', 100, mono, null, fmt('(10)', 30));
+    // 폭 40 + 공백 10 − 내어쓰기 30 = 20만큼
+    expect(pl.marker!.shift).toBe(20);
+    expect(pl.widths).toEqual([40, 60]);
+    const placed = new PagedLayout(SETUP, mono, new LayoutCache(), () => fmt('(10)', 30));
+    placed.update([{ id: 'a', start: 0, text: '가나다' }]);
+    expect(placed.para(0).lines[0]!.x).toBe(50 + 40 + 20);
+  });
+
+  it('keys the cache on the marker text (numbers change without text changes)', () => {
+    const cache = new LayoutCache();
+    const a = cache.get('가나', 1000, mono, null, fmt('1.', 30));
+    const b = cache.get('가나', 1000, mono, null, fmt('2.', 30));
+    expect(a).not.toBe(b);
+    expect(b.marker!.text).toBe('2.');
+  });
+});

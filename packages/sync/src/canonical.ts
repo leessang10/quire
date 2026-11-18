@@ -5,7 +5,7 @@
  * - 키 순서를 고정해 직렬화한다(키 사전순, 들여쓰기 2칸, 끝 줄바꿈). 같은 문서는 늘 같은 바이트열 → 해시·diff가 안정적이다.
  * - CRDT 원소 ID·묘비·구획 표식은 들어가지 않는다. 그래서 정본으로 저장했다 다시 열면 구획이 하나뿐인 깨끗한 문서가 된다.
  */
-import { DEFAULT_STYLES, Doc, MARK_KEYS, type MarkSet, type ParaAttrs, type Style } from '@quire/model';
+import { DEFAULT_STYLES, Doc, MARK_KEYS, type ListDef, type MarkSet, type ParaAttrs, type Style } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
 import { readRaw, readState } from './shape';
 
@@ -87,6 +87,9 @@ export function quireFromDoc(doc: Doc): QuireDoc {
   const defaults = new Map(DEFAULT_STYLES.map((st) => [st.name, JSON.stringify(st)]));
   for (const st of doc.styles()) if (defaults.get(st.name) !== JSON.stringify(st)) q.styles[st.name] = structuredClone(st);
   for (const name of defaults.keys()) if (!doc.style(name)) q.styles[name] = null;
+  // 목록 정의 (10 §2.4): 문서 설정의 lists (id → 정의). 번호는 저장하지 않는다 (파생 값)
+  const lists = doc.lists();
+  if (lists.length) q.settings.lists = Object.fromEntries(lists.map((l) => [l.id, structuredClone(l)]));
   return q;
 }
 
@@ -118,6 +121,9 @@ export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: str
     if (def === null) doc.setStyle(name, undefined);
     else if (def && typeof def === 'object') doc.setStyle(name, { ...(def as Style), name });
   }
+  const lists = q.settings?.lists;
+  if (lists && typeof lists === 'object')
+    for (const [id, def] of Object.entries(lists as Record<string, ListDef>)) if (def && typeof def === 'object') doc.setList(id, { ...def, id });
   doc.takeParagraphChanges();
   return { doc, notes: [...notes].map((n) => `${n}: 이 엔진이 모르는 값이라 버림`) };
 }

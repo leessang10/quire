@@ -7,12 +7,14 @@ import {
   Doc,
   History,
   MARK_KEYS,
+  MAX_LIST_LEVEL,
   mergeParaAttrs,
   type MarkKey,
   type MarkSet,
   type Op,
   type ParaAttrs,
   type ParaKey,
+  type ListLabel,
   type ParagraphInfo,
   type Position,
   type ResolvedStyle,
@@ -258,12 +260,14 @@ export class Editor {
     const attrs = p.attrs ?? {};
     const rs = this.doc.resolvedStyle(attrs.style ?? BODY_STYLE);
     const styled = hasKeys(rs.marks);
-    const box = this.paraBox(attrs, rs);
+    const label = attrs.list ? this.doc.listLabel(p) : null;
+    const box = this.paraBox(attrs, rs, label);
     if (!p.fmt && !p.mark && !force && !box && !styled) return null;
+    const marker = label ? { text: label.text, id: p.mark ?? 0, hanging: pt(label.def.levels[label.level]!.hanging) } : null;
     const sty = styled ? (attrs.style ?? BODY_STYLE) : '';
     // 스타일 글자 서식은 서식 번호 0에도 걸리므로 fmt가 없으면 0으로 채운 열을 준다
     const fmt = p.fmt ?? (styled ? new Uint16Array(cpCount(p.text)) : null);
-    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty), box, key: styled ? `${sty}@${this.doc.stylesVersion}` : undefined };
+    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty), box, marker, key: styled ? `${sty}@${this.doc.stylesVersion}` : undefined };
   };
   /** 캐럿에서 다음 입력이 받을 서식 (Ctrl+B 등을 선택 없이 눌렀을 때). at: 그 캐럿 오프셋 */
   private pending: { at: number; marks: MarkSet } | null = null;
@@ -797,6 +801,9 @@ export class Editor {
         ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
       }
 
+      // 목록 번호·글머리 (첫 줄, 내어쓴 자리)
+      if (ln.index === 0 && para.layout.marker) this.drawMarker(para.layout, px, baseY, sty);
+
       // 글자
       ctx.fillStyle = COLORS.text;
       const midY = baseY;
@@ -929,15 +936,16 @@ export class Editor {
   }
 
   /** 문단 속성(스타일 사슬 → 직접 속성)을 px 상자로. 레이아웃에 영향이 없으면 null (기본 문단과 같은 빠른 경로) */
-  private paraBox(attrs: ParaAttrs, rs: ResolvedStyle): ParaBox | null {
+  private paraBox(attrs: ParaAttrs, rs: ResolvedStyle, label: ListLabel | null = null): ParaBox | null {
     const a = hasKeys(rs.para) ? mergeParaAttrs(rs.para, attrs) : attrs;
-    if (!a.align && !a.indent && !a.space && !a.line) return null;
-    const pt = (v: number | undefined) => ((v ?? 0) / 1000) * (96 / 72);
+    if (!a.align && !a.indent && !a.space && !a.line && !label) return null;
+    // 목록 문단: 왼쪽 들여쓰기는 목록 수준의 값, 첫 줄은 본문과 나란히 (번호는 내어쓴 자리에, 10 §4)
+    const lv = label ? label.def.levels[label.level]! : null;
     return {
       align: a.align ?? 'left',
-      left: pt(a.indent?.left),
+      left: lv ? pt(lv.indent) : pt(a.indent?.left),
       right: pt(a.indent?.right),
-      first: pt(a.indent?.first),
+      first: lv ? 0 : pt(a.indent?.first),
       before: a.space?.before !== undefined ? pt(a.space.before) : this.setup.paraSpacing,
       after: pt(a.space?.after),
       line: a.line ? (a.line.rule === 'multiple' ? { rule: 'multiple', value: a.line.value } : { rule: a.line.rule, value: pt(a.line.value) }) : null,
@@ -1054,6 +1062,112 @@ export class Editor {
     });
   }
 
+  /** 목록 번호: 본문 왼쪽에서 내어 쓴 자리, ¶ 서식으로 (10 §4) */
+  private drawMarker(pl: ParaLayout, px: number, baseY: number, sty: string): void {
+    const mk = pl.marker!;
+    const { ctx } = this;
+    const d = this.drawStyle(mk.id, sty);
+    const x0 = px + this.setup.margin + (pl.box?.left ?? 0) + mk.x;
+    ctx.fillStyle = d.color ?? COLORS.text;
+    // 글꼴이 바뀌는 곳마다 (글머리 기호가 대체 글꼴에 있을 수 있다)
+    const cps = Array.from(mk.text);
+    let x = x0;
+    let k = 0;
+    while (k < cps.length) {
+      const f = mk.fonts ? mk.fonts[k]! : 0;
+      let j = k + 1;
+      while (j < cps.length && (mk.fonts ? mk.fonts[j]! : 0) === f) j++;
+      ctx.font = this.cssFont(f, d);
+      const t = cps.slice(k, j).join('');
+      ctx.fillText(t, x, baseY + d.shift);
+      x += ctx.measureText(t).width;
+      k = j;
+    }
+  }
+
+  // ── 목록 (10 §2.4) ──────────────────────────────────
+
+  /** 선택한 문단들이 모두 이 종류의 목록인가 */
+  private allInList(kind: 'bullet' | 'number'): boolean {
+    const [i, j] = this.selectedParagraphs();
+    for (let k = i; k <= j; k++) {
+      const li = this.doc.paraAttrs(k).list;
+      if (!li || this.doc.listDef(li.id)?.kind !== kind) return false;
+    }
+    return true;
+  }
+
+  /**
+   * 글머리·번호 목록 켜고 끄기 (Ctrl+Shift+8 / 7). 모두 그 목록이면 목록을 푼다. 아니면 바로 앞 문단이 같은 종류의 목록이면
+   * 그 목록을 이어 가고(번호가 이어짐), 아니면 새 목록을 만든다. 수준은 지금 수준(없으면 0)을 둔다.
+   */
+  toggleList(kind: 'bullet' | 'number'): void {
+    this.input.commitComposition();
+    const [i, j] = this.selectedParagraphs();
+    const before: Selection = { ...this.sel };
+    const ops: Op[] = [];
+    if (this.allInList(kind)) {
+      for (let k = i; k <= j; k++) ops.push(...this.doc.setParaAttr(k, 'list', undefined));
+    } else {
+      const prev = i > 0 ? this.doc.paraAttrs(i - 1).list : undefined;
+      let id = prev && this.doc.listDef(prev.id)?.kind === kind ? prev.id : null;
+      if (!id) {
+        const [nid, created] = this.doc.createList(kind);
+        id = nid;
+        ops.push(...created);
+      }
+      for (let k = i; k <= j; k++) {
+        const level = this.doc.paraAttrs(k).list?.level ?? 0;
+        ops.push(...this.doc.setParaAttr(k, 'list', { id, level }));
+      }
+    }
+    if (ops.length === 0) return;
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
+  /** 선택한 목록 문단들의 수준 ±1 (Tab / Shift+Tab). 목록 문단이 없으면 false */
+  listLevel(dir: 1 | -1): boolean {
+    const [i, j] = this.selectedParagraphs();
+    const before: Selection = { ...this.sel };
+    const ops: Op[] = [];
+    let any = false;
+    for (let k = i; k <= j; k++) {
+      const li = this.doc.paraAttrs(k).list;
+      if (!li) continue;
+      any = true;
+      const level = Math.max(0, Math.min(MAX_LIST_LEVEL, li.level + dir));
+      if (level !== li.level) ops.push(...this.doc.setParaAttr(k, 'list', { id: li.id, level }));
+    }
+    if (ops.length > 0) {
+      this.history.seal();
+      this.commit(ops, before);
+      this.history.seal();
+    }
+    return any;
+  }
+
+  /** 캐럿이 목록 문단의 첫머리에 있는가 (선택 없음) */
+  private caretAtListStart(): { i: number; empty: boolean } | null {
+    const [from, to] = this.range();
+    if (from !== to) return null;
+    const i = this.doc.paragraphIndexAt(from);
+    const p = this.doc.paragraphs()[i]!;
+    if (!p.attrs.list || from !== p.start) return null;
+    return { i, empty: p.start === p.end };
+  }
+
+  /** 목록 문단 하나의 수준을 한 단계 올리거나(수준 0이면 목록 해제) — 빈 항목 Enter, 첫머리 Backspace */
+  private outdentListItem(i: number, unlist: boolean): void {
+    const li = this.doc.paraAttrs(i).list!;
+    const before: Selection = { ...this.sel };
+    const ops = unlist || li.level === 0 ? this.doc.setParaAttr(i, 'list', undefined) : this.doc.setParaAttr(i, 'list', { id: li.id, level: li.level - 1 });
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
   // ── 문단 서식 (10 §2.2–2.3) ──────────────────────────
 
   /** 선택한 문단들의 문단 서식 (툴바 상태). 많으면 앞 1,000문단만 본다 */
@@ -1131,6 +1245,12 @@ export class Editor {
 
   /** Enter (10 §2.2): 문단 끝에서 Enter면 다음 문단은 스타일의 next (제목 → 본문) */
   private insertParagraph(): void {
+    // 빈 목록 항목에서 Enter: 수준을 올리고, 수준 0이면 목록을 끝낸다 (10 §2.4)
+    const at = this.caretAtListStart();
+    if (at?.empty) {
+      this.outdentListItem(at.i, false);
+      return;
+    }
     const [from, to] = this.range();
     const pi = this.doc.paragraphIndexAt(from);
     const p = this.doc.paragraphs()[pi]!;
@@ -1347,42 +1467,64 @@ export class Editor {
 
   private updateMirror(paras: Set<number>): void {
     const infos = [...paras].sort((a, b) => a - b).map((p) => this.doc.paragraphs()[p]).filter((p) => p !== undefined);
-    const key = infos.map((p) => `${p.attrs.style ?? ''}\u0002${p.fmt ? `${p.text}\u0001${p.fmt.join(',')}` : p.text}`).join('\n');
+    const key = infos
+      .map((p) => `${p.attrs.style ?? ''}\u0002${this.doc.listLabel(p)?.text ?? ''}\u0003${p.fmt ? `${p.text}\u0001${p.fmt.join(',')}` : p.text}`)
+      .join('\n');
     if (this.mirror.dataset.key === key) return;
     this.mirror.dataset.key = key;
-    this.mirror.replaceChildren(
-      ...infos.map((info) => {
-        // 제목·인용은 h1–h3·blockquote로 (04 §3): 스크린리더가 구조를 읽는다
-        const tag = ({ h1: 'h1', h2: 'h2', h3: 'h3', quote: 'blockquote' } as Record<string, string>)[info.attrs.style ?? ''] ?? 'p';
-        const p = document.createElement(tag);
-        if (!info.fmt) {
-          p.textContent = info.text;
-          return p;
-        }
-        // 굵게·기울임은 strong·em으로 (04 §3, 10 §4)
-        const cps = Array.from(info.text);
-        let k = 0;
-        while (k < cps.length) {
-          let j = k + 1;
-          while (j < cps.length && info.fmt[j] === info.fmt[k]) j++;
-          const m = this.doc.markSet(info.fmt[k]!);
-          let node: Node = document.createTextNode(cps.slice(k, j).join(''));
-          if (m.italic) {
-            const em = document.createElement('em');
-            em.append(node);
-            node = em;
-          }
-          if (m.bold) {
-            const strong = document.createElement('strong');
-            strong.append(node);
-            node = strong;
-          }
-          p.append(node);
-          k = j;
-        }
-        return p;
-      }),
-    );
+    // 목록 문단은 같은 목록이 이어지는 동안 ul/ol 하나에 li로. 번호는 글자로 앞에 붙인다 (화면과 같은 번호를 읽게)
+    const out: HTMLElement[] = [];
+    let group: { id: string; el: HTMLElement } | null = null;
+    for (const info of infos) {
+      const label = this.doc.listLabel(info);
+      if (!label) {
+        group = null;
+        out.push(this.mirrorPara(info));
+        continue;
+      }
+      if (!group || group.id !== label.def.id) {
+        group = { id: label.def.id, el: document.createElement(label.def.kind === 'bullet' ? 'ul' : 'ol') };
+        out.push(group.el);
+      }
+      const li = this.mirrorPara(info, 'li');
+      li.setAttribute('aria-level', String(label.level + 1));
+      if (label.def.kind === 'number') li.prepend(`${label.text} `);
+      group.el.append(li);
+    }
+    this.mirror.replaceChildren(...out);
+  }
+
+  /** 문단 하나의 미러 요소 */
+  private mirrorPara(info: ParagraphInfo, forceTag?: string): HTMLElement {
+    // 제목·인용은 h1–h3·blockquote로 (04 §3): 스크린리더가 구조를 읽는다
+    const tag = forceTag ?? ({ h1: 'h1', h2: 'h2', h3: 'h3', quote: 'blockquote' } as Record<string, string>)[info.attrs.style ?? ''] ?? 'p';
+    const p = document.createElement(tag);
+    if (!info.fmt) {
+      p.textContent = info.text;
+      return p;
+    }
+    // 굵게·기울임은 strong·em으로 (04 §3, 10 §4)
+    const cps = Array.from(info.text);
+    let k = 0;
+    while (k < cps.length) {
+      let j = k + 1;
+      while (j < cps.length && info.fmt[j] === info.fmt[k]) j++;
+      const m = this.doc.markSet(info.fmt[k]!);
+      let node: Node = document.createTextNode(cps.slice(k, j).join(''));
+      if (m.italic) {
+        const em = document.createElement('em');
+        em.append(node);
+        node = em;
+      }
+      if (m.bold) {
+        const strong = document.createElement('strong');
+        strong.append(node);
+        node = strong;
+      }
+      p.append(node);
+      k = j;
+    }
+    return p;
   }
 
   private scrollCaretIntoView(): void {
@@ -1595,6 +1737,12 @@ export class Editor {
       return;
     }
 
+    // 목록 (10 §5): Ctrl+Shift+8 글머리, Ctrl+Shift+7 번호
+    if (mod && shift && !e.altKey && (e.code === 'Digit8' || e.code === 'Digit7')) {
+      this.toggleList(e.code === 'Digit8' ? 'bullet' : 'number');
+      e.preventDefault();
+      return;
+    }
     // 문단 스타일 (10 §5): Ctrl+Alt+1–3 제목, Ctrl+Alt+0 본문
     if (mod && e.altKey && !shift && /^Digit[0-3]$/.test(e.code)) {
       const n = Number(e.code.slice(5));
@@ -1669,7 +1817,8 @@ export class Editor {
     } else {
       switch (e.key) {
         case 'Backspace':
-          if (from !== to) this.deleteRange(from, to);
+          if (this.caretAtListStart()) this.outdentListItem(this.caretAtListStart()!.i, true); // 목록 첫머리: 번호부터 지운다
+          else if (from !== to) this.deleteRange(from, to);
           else if (head > 0) this.deleteRange(this.layout.prevStop(head), head, 'delete');
           break;
         case 'Delete':
@@ -1707,7 +1856,8 @@ export class Editor {
           break;
         }
         case 'Tab':
-          this.replaceSelection('\t', 'type');
+          // 목록 문단이면 수준 ±1 (10 §2.4), 아니면 탭 문자 (Shift+Tab은 목록에서만)
+          if (!this.listLevel(shift ? -1 : 1) && !shift) this.replaceSelection('\t', 'type');
           break;
         default:
           handled = false;
@@ -2001,4 +2151,9 @@ function cpCount(t: string): number {
     n++;
   }
   return n;
+}
+
+/** 1/1000pt → px (96dpi) */
+function pt(v: number | undefined): number {
+  return ((v ?? 0) / 1000) * (96 / 72);
 }

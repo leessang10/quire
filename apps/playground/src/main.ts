@@ -1,5 +1,5 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
-import { Doc, type MarkSet, type ParaAttrs } from '@quire/model';
+import { Doc, defaultListDef, type MarkSet, type ParaAttrs } from '@quire/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
 
@@ -18,7 +18,8 @@ function formatSample(): Doc {
   const pa = (attrs: ParaAttrs, ...runs: Array<{ text: string; marks: MarkSet }>) => ({ attrs, runs });
   const long =
     '양쪽 맞춤은 마지막 줄을 뺀 줄에서 남는 폭을 어절 사이 공백에 나눠 줍니다. 추가 폭은 셰이핑 위치에 더하지 않고 줄마다 따로 들고 있다가 캐럿 위치와 그리기에서 더하므로, 정렬을 바꿔도 문단을 다시 셰이핑하지 않습니다.';
-  return Doc.fromParagraphRuns([
+  const li = (id: string, level: number, text: string) => pa({ list: { id, level } }, r(text));
+  const doc = Doc.fromParagraphRuns([
     pa({ style: 'h1' }, r('서식 예제')),
     pa({ style: 'h2' }, r('문단 서식')),
     pa({ align: 'justify' }, r(long)),
@@ -27,6 +28,16 @@ function formatSample(): Doc {
     pa({ indent: { left: 36000, first: -18000 } }, r('내어쓰기: 왼쪽 36pt 들여쓰고 첫 줄은 18pt 내어 씁니다. 번호나 글머리를 붙일 자리를 만드는 방식이고, 둘째 줄부터는 들여쓴 자리에서 시작합니다.')),
     pa({ indent: { first: 24000 }, line: { rule: 'multiple', value: 1.5 } }, r('첫 줄 들여쓰기 24pt와 줄 간격 1.5배입니다. 한국어 문서에서 흔한 첫 줄 들여쓰기 모양이고, 줄 간격은 기본 줄 높이의 배수로 정합니다.')),
     pa({ style: 'quote' }, r('인용 스타일: 양쪽 24pt 들여쓰기, 기울임, 회색. 스타일의 기본 글자 서식은 직접 서식 아래에 깔립니다.')),
+    pa({ style: 'h2' }, r('목록')),
+    li('ex-n', 0, '번호 목록: 번호는 저장하지 않고 화면 순서대로 셉니다.'),
+    li('ex-n', 1, '수준 2는 가, 나, 다 순서입니다. Tab으로 수준을 내리고 Shift+Tab으로 올립니다.'),
+    li('ex-n', 1, '항목을 끌어 옮기거나(Alt+Shift+↑↓) 지워도 번호가 다시 매겨집니다.'),
+    li('ex-n', 2, '수준 3은 1), 2), 3) 입니다.'),
+    li('ex-n', 0, '수준 1로 돌아오면 아래 수준 번호는 처음부터 다시 셉니다.'),
+    li('ex-n', 1, '빈 항목에서 Enter를 누르면 수준이 올라가고, 수준 1이면 목록이 끝납니다.'),
+    li('ex-b', 0, '글머리 목록: 수준마다 •, ◦, ▪ 기호를 씁니다.'),
+    li('ex-b', 1, '목록 첫머리에서 Backspace를 누르면 글머리부터 지웁니다.'),
+    li('ex-b', 0, '번호가 내어쓴 자리보다 넓으면 첫 줄 본문을 그만큼 밉니다.'),
     pa({ style: 'h2' }, r('글자 서식')),
     p(
       r('본문 사이에 '),
@@ -54,6 +65,10 @@ function formatSample(): Doc {
     p(),
     p(r('위 빈 줄은 ¶에 서식이 없어 보통 높이입니다. 글자를 선택하고 위의 단추나 단축키(Ctrl+B·I·U, Ctrl+Shift+X, Ctrl+. ·, , Ctrl+\\)로 서식을 바꿔 보세요. 선택 없이 Ctrl+B를 누르면 다음에 입력하는 글자가 굵게 들어갑니다.')),
   ]);
+  doc.setList('ex-n', defaultListDef('ex-n', 'number'));
+  doc.setList('ex-b', defaultListDef('ex-b', 'bullet'));
+  doc.takeParagraphChanges();
+  return doc;
 }
 
 const LOREM =
@@ -248,6 +263,12 @@ document.getElementById('para-indent')!.addEventListener('click', () => {
   editor.indent(1);
   editor.focus();
 });
+document.querySelectorAll<HTMLButtonElement>('[data-list]').forEach((b) =>
+  b.addEventListener('click', () => {
+    editor.toggleList(b.dataset.list as 'bullet' | 'number');
+    editor.focus();
+  }),
+);
 document.getElementById('para-outdent')!.addEventListener('click', () => {
   editor.indent(-1);
   editor.focus();
@@ -272,6 +293,8 @@ function showMarks(): void {
   document.querySelectorAll<HTMLButtonElement>('[data-align]').forEach((b) => {
     b.setAttribute('aria-pressed', ps.mixed.has('align') ? 'mixed' : String(b.dataset.align === align));
   });
+  const li = ps.attrs.list ? editor.doc.listDef(ps.attrs.list.id)?.kind : undefined;
+  document.querySelectorAll<HTMLButtonElement>('[data-list]').forEach((b) => b.setAttribute('aria-pressed', String(li === b.dataset.list)));
   lineSel.value = ps.mixed.has('line') || ps.attrs.line?.rule !== 'multiple' ? '' : String(ps.attrs.line.value);
 
   const { marks, mixed } = editor.selectionMarks();

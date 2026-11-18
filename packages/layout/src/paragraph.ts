@@ -50,6 +50,11 @@ export interface ParaFormat {
   style(id: number): RunStyle;
   /** 문단 상자. 없으면 기본 (왼쪽 정렬, 들여쓰기 없음, 앞 간격 = setup.paraSpacing) */
   box?: ParaBox | null;
+  /**
+   * 목록 번호·글머리 (10 §4): 본문 왼쪽(box.left)에서 hanging(px)만큼 내어 둔다. id는 번호의 서식 번호(보통 ¶의 것).
+   * 번호가 자리보다 넓으면 첫 줄 본문을 그만큼(+ 공백 하나) 민다
+   */
+  marker?: { text: string; id: number; hanging: number } | null;
   /** 레이아웃 캐시 키에 더할 값: style 함수가 서식 번호 밖의 것(문단 스타일 등)에 따라 달라지면 그것을 나타내는 문자열 */
   key?: string;
 }
@@ -104,6 +109,40 @@ export interface ParaLayout {
   box: ParaBox | null;
   /** 줄 폭 (px): 첫 줄, 나머지 줄 (들여쓰기를 뺀 값) */
   widths: [number, number];
+  /** 목록 번호 (없으면 null) */
+  marker: MarkerLayout | null;
+}
+
+export interface MarkerLayout {
+  text: string;
+  /** 서식 번호 (그리기) */
+  id: number;
+  /** 폭 (px) */
+  width: number;
+  /** 본문 왼쪽(margin + box.left) 기준 번호의 x (음수 = 왼쪽) */
+  x: number;
+  /** 번호가 넓어 첫 줄 본문을 민 폭 (px) */
+  shift: number;
+  /** 번호의 코드포인트별 글꼴 번호 (셰이퍼), 모두 0이면 null */
+  fonts: Uint8Array | null;
+}
+
+/** 목록 번호를 잰다 (셰이퍼가 있으면 조각 하나로 셰이핑) */
+function measureMarker(m: Measurer, format: ParaFormat): MarkerLayout | null {
+  const mk = format.marker;
+  if (!mk || !mk.text) return null;
+  const r = format.style(mk.id);
+  let w = 0;
+  let fonts: Uint8Array | null = null;
+  if (m.advances) {
+    const a = r.face === 0 ? m.advances(mk.text) : m.advances(mk.text, r.face);
+    for (let i = 0; i < a.length; i++) w += a[i]!;
+    fonts = (r.face === 0 ? m.fontsOf?.(mk.text) : m.fontsOf?.(mk.text, r.face)) ?? null;
+  } else for (const g of segmenter.segment(mk.text)) w += r.face === 0 ? m.width(g.segment) : m.width(g.segment, r.face);
+  w *= r.scale;
+  const gap = (r.face === 0 ? m.width(' ') : m.width(' ', r.face)) * r.scale;
+  const shift = Math.max(0, w + gap - mk.hanging);
+  return { text: mk.text, id: mk.id, width: w, x: -mk.hanging, shift, fonts };
 }
 
 /** 표시 텍스트의 코드포인트 구간 [a, b) */
@@ -157,8 +196,9 @@ export function layoutParagraph(
     }
   }
   const box = format?.box ?? null;
+  const marker = format ? measureMarker(measurer, format) : null;
   const restW = box ? Math.max(1, width - box.left - box.right) : width;
-  const firstW = box ? Math.max(1, restW - box.first) : width;
+  const firstW = box ? Math.max(1, restW - box.first - (marker?.shift ?? 0)) : width;
   const style = format?.style;
   const dfmt = fmt;
   const st = dfmt && style ? (k: number) => style(dfmt[k]!) : null;
@@ -214,7 +254,7 @@ export function layoutParagraph(
     const fonts = measurer.advances ? shapeXs(display, n, null, xs, measurer, fmt, st) : null;
     const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
     lineScales(lines, st, format);
-    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW] };
+    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker };
   }
   for (const seg of segmenter.segment(display)) {
     const s = seg.segment;
@@ -241,7 +281,7 @@ export function layoutParagraph(
 
   const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
   lineScales(lines, st, format);
-  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW] };
+  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker };
 }
 
 /** 줄마다 높이 배율: 줄 글자의 가장 큰 line 배율. 마지막 줄은 ¶도 센다 (빈 줄은 ¶만) */

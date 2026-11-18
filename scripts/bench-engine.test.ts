@@ -8,7 +8,7 @@
  * 글자 폭은 고정값(한글 16, 그 외 8)이므로 실제 브라우저의 measureText 비용은 포함되지 않는다.
  */
 import { it } from 'vitest';
-import { Doc } from '@quire/model';
+import { Doc, defaultListDef } from '@quire/model';
 import { PLAIN_STYLE, PagedLayout, type FormatSource, type Measurer, type PageSetup, type ParaBox, type RunStyle } from '@quire/layout';
 
 const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };
@@ -44,8 +44,9 @@ function formatDoc(doc: Doc): FormatSource {
     } else if (i % 5 === 0) {
       doc.setParaAttr(i, 'align', 'center');
       doc.setParaAttr(i, 'line', { rule: 'multiple', value: 1.5 });
-    }
+    } else if (i % 4 === 1) doc.setParaAttr(i, 'list', { id: 'bench', level: i % 8 === 1 ? 0 : 1 }); // 목록 항목 (2-5)
   }
+  doc.setList('bench', defaultListDef('bench', 'number'));
   for (const p of [...doc.paragraphs()].reverse()) {
     const a = p.start;
     doc.format(a + 3, a + 9, 'bold', true);
@@ -64,10 +65,13 @@ function formatDoc(doc: Doc): FormatSource {
   const pt = (v = 0) => (v / 1000) * (96 / 72);
   return (info, force) => {
     const a = (info as unknown as { attrs: import('@quire/model').ParaAttrs }).attrs;
-    const box: ParaBox | null = a.align || a.indent || a.line
-      ? { align: a.align ?? 'left', left: pt(a.indent?.left), right: pt(a.indent?.right), first: pt(a.indent?.first), before: setup.paraSpacing, after: 0, line: a.line ?? null }
+    const label = a.list ? doc.listLabel(info as unknown as import('@quire/model').ParagraphInfo) : null;
+    const lv = label ? label.def.levels[label.level]! : null;
+    const box: ParaBox | null = a.align || a.indent || a.line || lv
+      ? { align: a.align ?? 'left', left: pt(lv ? lv.indent : a.indent?.left), right: pt(a.indent?.right), first: lv ? 0 : pt(a.indent?.first), before: setup.paraSpacing, after: 0, line: a.line ?? null }
       : null;
-    return info.fmt || info.mark || force || box ? { fmt: info.fmt ?? null, mark: info.mark ?? 0, style, box } : null;
+    const marker = label ? { text: label.text, id: info.mark ?? 0, hanging: pt(lv!.hanging) } : null;
+    return info.fmt || info.mark || force || box ? { fmt: info.fmt ?? null, mark: info.mark ?? 0, style, box, marker } : null;
   };
 }
 
@@ -75,7 +79,7 @@ function formatDoc(doc: Doc): FormatSource {
  * moves > 0이면 측정 전에 문단 이동 moves번 + 문단 삭제(숨김) moves/5번을 해서 구획을 만든다.
  * formatted면 서식 많은 문서에서, 서식 구간 안(굵게)에 입력한다.
  */
-function scenario(paragraphs: number, where: number, moves = 0, formatted = false) {
+function scenario(paragraphs: number, where: number, moves = 0, formatted: boolean | 'list' = false) {
   const doc = makeDoc(paragraphs);
   const resolve = formatted ? formatDoc(doc) : null;
   let t = performance.now();
@@ -106,7 +110,12 @@ function scenario(paragraphs: number, where: number, moves = 0, formatted = fals
   }
 
   let caret = Math.floor(doc.length * where);
-  if (formatted) caret = doc.paragraphs()[doc.paragraphIndexAt(caret)]!.start + 5; // 굵게 구간 안
+  if (formatted) {
+    // 굵게 구간 안. 'list'면 목록 항목 안 (Enter가 새 항목을 만들어 번호를 다시 센다)
+    let pi = doc.paragraphIndexAt(caret);
+    if (formatted === 'list') while (!doc.paragraphs()[pi]!.attrs.list) pi++;
+    caret = doc.paragraphs()[pi]!.start + 5;
+  }
   let caretY = layout.caretRect(caret).y;
   const step = (edit: () => void) => {
     const s = performance.now();
@@ -141,7 +150,7 @@ function scenario(paragraphs: number, where: number, moves = 0, formatted = fals
       '',
       `■ ${paragraphs.toLocaleString()} 문단 / ${layout.pageCount} 쪽 / 캐럿 위치 ${Math.round(where * 100)}%  (heap ${mem.toFixed(0)} MB)` +
         (moves ? ` / 이동 ${moves}회 후 구획 ${doc.segmentCount}개` : '') +
-        (formatted ? ' / 서식 많음 (글자 + 문단)' : ''),
+        (formatted ? ` / 서식 많음 (글자 + 문단 + 목록)${formatted === 'list' ? ', 목록 항목에서' : ''}` : ''),
       ...(moves ? [`  문단 이동          ${stats(moveMs)}`] : []),
       `  첫 화면 배치       ${firstScreen.toFixed(1)} ms   (나머지 백그라운드 ${background.toFixed(0)} ms, 8ms 조각 ${slices}개)`,
       `  글자 입력          ${stats(typing)}`,
@@ -163,4 +172,6 @@ it('engine benchmark', () => {
   // 서식 많은 문서 (10 §6: 입력 p95 16 ms 이하)
   scenario(10_000, 0.5, 0, true);
   scenario(100_000, 0.5, 0, true);
+  scenario(10_000, 0.5, 0, 'list');
+  scenario(100_000, 0.5, 0, 'list');
 }, 600_000);
