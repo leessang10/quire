@@ -14,7 +14,8 @@
 import { Doc, type Position, type RawChange, type SegState } from '@quire/model';
 import { applyHunks, diffText, rebaseHunks } from './epoch';
 import { mapPosThrough, opToDelta, transform, type LocalChange } from './ot';
-import type { RemoteSel, ToMain, ToWorker } from './protocol';
+import type { Defs, RemoteSel, ToMain, ToWorker } from './protocol';
+import { applyFormats, type FormatState } from './shape';
 import type { RemoteSelection } from './presence';
 
 export interface ClientOptions {
@@ -31,6 +32,8 @@ export interface ClientOptions {
 }
 
 const isSeg = (c: LocalChange) => c.kind === 'order' || c.kind === 'list' || c.kind === 'hidden' || c.kind === 'flag';
+/** 스타일·목록 정의 변경 (Worker의 정의 상태는 통째로 오므로 구획 상태처럼 다룬다) */
+const isDef = (c: LocalChange) => c.kind === 'style' || c.kind === 'listDef';
 
 export class SyncClient {
   private current: Doc;
@@ -42,6 +45,8 @@ export class SyncClient {
   private buffer: LocalChange[] = [];
   /** 로컬 구획 변경이 아직 Worker에 닿지 않아 미룬 구획 상태 */
   private deferredState: SegState | null = null;
+  /** 로컬 정의 변경이 아직 Worker에 닿지 않아 미룬 정의 상태 */
+  private deferredDefs: Defs | null = null;
   private readonly remotePos = new Map<string, { name: string; color: string; anchor: Position; head: Position }>();
   private presenceVersion = 0;
   private cache: { docVersion: number; presenceVersion: number; list: RemoteSelection[] } | null = null;
@@ -59,8 +64,9 @@ export class SyncClient {
     return this.current;
   }
 
-  private attach(init: { raw: string; keys: string[]; state: SegState; peer: string }): Doc {
+  private attach(init: { raw: string; keys: string[]; state: SegState; peer: string; formats: FormatState }): Doc {
     const doc = Doc.fromRaw(init.raw, init.keys, init.state, init.peer);
+    applyFormats(doc, init.formats);
     doc.observe((c: RawChange) => {
       this.buffer.push(c);
       this.send();
@@ -89,6 +95,7 @@ export class SyncClient {
         this.rev++;
         this.outstanding = null;
         this.takeState(msg.state ?? null);
+        this.takeDefs(msg.defs ?? null);
         this.send();
         break;
       case 'remote': {
@@ -98,6 +105,7 @@ export class SyncClient {
         [this.buffer, ops] = transform(this.buffer, ops);
         for (const op of ops) this.current.applyDelta(opToDelta(op));
         if (msg.state) this.takeState(msg.state);
+        if (msg.defs) this.takeDefs(msg.defs);
         this.opts.onRemoteChange?.();
         break;
       }
@@ -145,7 +153,7 @@ export class SyncClient {
     const changes = this.buffer;
     this.buffer = [];
     this.outstanding = changes;
-    const wantState = this.deferredState !== null || changes.some(isSeg);
+    const wantState = this.deferredState !== null || this.deferredDefs !== null || changes.some(isSeg) || changes.some(isDef);
     this.opts.post({ t: 'ops', rev: this.rev, changes, wantState });
   }
 
@@ -158,6 +166,7 @@ export class SyncClient {
     this.outstanding = null;
     this.buffer = [];
     this.deferredState = null;
+    this.deferredDefs = null;
     this.remotePos.clear();
     this.cache = null;
     this.presenceVersion++;
@@ -181,6 +190,19 @@ export class SyncClient {
     }
     this.deferredState = null;
     this.current.applySegState(candidate);
+    this.opts.onRemoteChange?.();
+  }
+
+  /** Worker의 정의 상태: 로컬 정의 변경이 아직 가는 중이면 미룬다 */
+  private takeDefs(defs: Defs | null): void {
+    const candidate = defs ?? this.deferredDefs;
+    if (!candidate) return;
+    if ((this.outstanding?.some(isDef) ?? false) || this.buffer.some(isDef)) {
+      this.deferredDefs = candidate;
+      return;
+    }
+    this.deferredDefs = null;
+    this.current.applyRemoteDefs(candidate.styles ?? {}, candidate.lists ?? {});
     this.opts.onRemoteChange?.();
   }
 

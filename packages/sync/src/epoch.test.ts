@@ -7,9 +7,10 @@ import type { LoroDoc } from 'loro-crdt';
 import { displayText } from './canonical';
 import { SyncClient } from './client';
 import { SyncCore } from './core';
-import { applyHunks, compactLoro, diffText, readEpoch, rebaseHunks, rebaseOnto, type Hunk } from './epoch';
+import { applyHunks, compactDoc, compactLoro, diffText, readEpoch, rebaseHunks, rebaseOnto, type Hunk } from './epoch';
+import { formatState, stable } from './format-state.test-util';
 import type { ToMain, ToWorker } from './protocol';
-import { LoroWriter, initLoro, newLoro, readRaw, readState } from './shape';
+import { LoroWriter, docFromLoro, initLoro, newLoro, readRaw } from './shape';
 
 function rng(seed: number) {
   let s = seed >>> 0 || 1;
@@ -121,8 +122,7 @@ describe('rebaseHunks', () => {
 
 /** Loro 문서에 붙인 편집용 Doc */
 function editable(loro: LoroDoc): Doc {
-  const { raw, keys } = readRaw(loro);
-  const doc = Doc.fromRaw(raw, keys, readState(loro), loro.peerIdStr);
+  const doc = docFromLoro(loro);
   const w = new LoroWriter(loro, () => doc.segmentOrder());
   doc.observe((c) => w.apply(c));
   return doc;
@@ -189,6 +189,54 @@ describe('compaction and rebase', () => {
     loro.import(c.export({ mode: 'update' }));
     expect(displayText(c)).toBe(displayText(loro));
     expect(displayText(c)).toMatch(/^(CA|AC)둘\n하나B\n$/);
+  });
+
+  it('keeps formats, paragraph attributes, styles and lists through compaction and rebases offline formatting (2-6)', () => {
+    const a = newLoro(1);
+    initLoro(a, ['제목', '본문 가나다라', '항목 하나', '항목 둘'].join(String.fromCharCode(10)), 1);
+    const docA = editable(a);
+    docA.setParaAttr(0, 'style', 'h1');
+    docA.format(3, 5, 'bold', true);
+    const [list] = docA.createList('number');
+    docA.setParaAttr(2, 'list', { id: list, level: 0 });
+    docA.setParaAttr(3, 'list', { id: list, level: 0 });
+    a.commit();
+    const server = newLoro(50);
+    server.import(a.export({ mode: 'snapshot' }));
+    // B는 옛 판에서 서식을 바꾼다
+    const b = newLoro(2);
+    b.import(server.export({ mode: 'snapshot' }));
+    const docB = editable(b);
+    docB.format(5, 8, 'italic', true);
+    docB.setParaAttr(1, 'align', 'center');
+    b.commit();
+    server.import(b.export({ mode: 'update', from: server.oplogVersion() }));
+    // A는 오프라인: 글자·서식·문단 속성·스타일·목록 정의
+    docA.insertText(0, '새 ');
+    docA.format(0, 2, 'color', '#c01c28');
+    docA.setParaAttr(3, 'list', { id: list, level: 1 });
+    docA.setStyle('h1', { ...docA.style('h1')!, marks: { bold: true, size: 30000 } });
+    docA.setList(list, { ...docA.listDef(list)!, levels: docA.listDef(list)!.levels.map((l) => ({ ...l, start: 3 })) });
+    a.commit();
+    // 서버 압축: 서식이 새 판으로 옮겨진다
+    const fresh = compactDoc(docFromLoro(server), 'e1', 99);
+    expect(stable(formatState(docFromLoro(fresh)))).toBe(stable(formatState(docFromLoro(server))));
+    expect(docFromLoro(fresh).marksAt(6)).toEqual({ italic: true });
+    const { loro, lost } = rebaseOnto(
+      a,
+      { epoch: 'e1', oldVV: server.oplogVersion().encode(), update: server.export({ mode: 'update', from: a.oplogVersion() }), base: fresh.export({ mode: 'snapshot' }) },
+      1,
+    );
+    expect(lost).toBe(false);
+    // 새 판 = 옛 판에서 A가 B의 변경까지 받은 상태 (서식 포함)
+    const want = docFromLoro(a);
+    const got = docFromLoro(loro);
+    expect(got.text()).toBe(want.text());
+    expect(stable(formatState(got))).toBe(stable(formatState(want)));
+    expect(got.marksAt(0)).toEqual({ color: '#c01c28' });
+    expect(got.paraAttrs(1)).toEqual({ align: 'center' });
+    expect(got.style('h1')!.marks!.size).toBe(30000);
+    expect(got.paragraphs().map((p) => got.listLabel(p)?.text ?? null)).toEqual([null, null, '3.', '다.']); // 모든 수준이 3부터
   });
 
   it('reports lost edits when the server does not know the old epoch', () => {

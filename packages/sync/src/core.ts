@@ -4,7 +4,7 @@
  */
 import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector } from 'loro-crdt';
 import { type RemoteOp, type LocalChange, deltaToOps, transform } from './ot';
-import { LoroWriter, SEG_MARK, TEXT, displayOrderFromLoro, initLoro, newLoro, readRaw, readState, type PeerId } from './shape';
+import { LISTS, LoroWriter, SEG_MARK, STYLES, TEXT, displayOrderFromLoro, initLoro, newLoro, readDefs, readFormats, readRaw, readState, type PeerId } from './shape';
 import { PresenceStore } from './presence-store';
 import type { RemoteSel, ToMain, ToWorker } from './protocol';
 import type { PresenceUser } from './presence';
@@ -47,6 +47,8 @@ export class SyncCore {
   /** 가져오기 중 모은 원격 텍스트 연산과 구획 상태 변경 여부 */
   private incoming: RemoteOp[] = [];
   private segDirty = false;
+  private defsDirty = false;
+  private readonly defIds: Set<string>;
   private readonly unsubscribe: () => void;
   private closed = false;
 
@@ -67,12 +69,13 @@ export class SyncCore {
     this.loro = loro;
     this.opts = opts;
     this.text = loro.getText(TEXT);
+    this.defIds = new Set([loro.getMap(STYLES).id, loro.getMap(LISTS).id]);
     this.writer = new LoroWriter(loro, () => displayOrderFromLoro(loro));
     this.store = new PresenceStore(loro.peerIdStr, opts.presenceTimeoutMs ?? 30000);
     this.exported = loro.oplogVersion();
     this.unsubscribe = loro.subscribe((e) => this.onEvent(e));
     const { raw, keys } = readRaw(loro);
-    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr };
+    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr, formats: readFormats(loro) };
     opts.post(opts.reset ? { t: 'reset', ...init, lost: opts.reset.lost } : { t: 'init', ...init });
     this.heartbeat = setInterval(() => this.tick(), (opts.presenceTimeoutMs ?? 30000) / 2);
   }
@@ -176,7 +179,7 @@ export class SyncCore {
     this.len++;
     // 메인의 다음 묶음은 이 ack까지 받은 뒤에 만든 것이므로 지금까지의 항목은 다시 쓰지 않는다
     this.log.clear();
-    this.opts.post(wantState ? { t: 'ack', state: readState(this.loro) } : { t: 'ack' });
+    this.opts.post(wantState ? { t: 'ack', state: readState(this.loro), defs: readDefs(this.loro) } : { t: 'ack' });
     if (sel) this.setSelection(sel.anchor, sel.head);
     if (this.pendingExport) this.schedule();
   }
@@ -206,6 +209,10 @@ export class SyncCore {
   private onEvent(e: LoroEventBatch): void {
     if (e.by === 'local') return;
     for (const ev of e.events) {
+      if (this.defIds.has(ev.target)) {
+        this.defsDirty = true;
+        continue;
+      }
       if (ev.target === this.text.id && ev.diff.type === 'text') {
         const delta = ev.diff.diff;
         deltaToOps(delta, this.incoming);
@@ -219,12 +226,19 @@ export class SyncCore {
   private emitRemote(): void {
     const ops = this.incoming;
     const dirty = this.segDirty;
+    const defs = this.defsDirty;
     this.incoming = [];
     this.segDirty = false;
-    if (ops.length > 0 || dirty) {
+    this.defsDirty = false;
+    if (ops.length > 0 || dirty || defs) {
       this.log.set(this.len, ops);
       this.len++;
-      this.opts.post(dirty ? { t: 'remote', ops, state: readState(this.loro) } : { t: 'remote', ops });
+      this.opts.post({
+        t: 'remote',
+        ops,
+        ...(dirty ? { state: readState(this.loro) } : {}),
+        ...(defs ? { defs: readDefs(this.loro) } : {}),
+      });
     }
     if (this.store.states.size > 0) this.postRemotes();
   }

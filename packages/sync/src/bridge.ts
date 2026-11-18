@@ -15,7 +15,7 @@
  */
 import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector } from 'loro-crdt';
 import { Doc, type RawChange, type TextDelta } from '@quire/model';
-import { LoroWriter, SEG_MARK, TEXT, initLoro, newLoro, readRaw, readState, type PeerId } from './shape';
+import { LISTS, LoroWriter, SEG_MARK, STYLES, TEXT, docFromLoro, initLoro, newLoro, readDefs, readState, type PeerId } from './shape';
 
 const LOCAL_ORIGIN = 'quire-local';
 
@@ -36,6 +36,8 @@ export class SyncBridge {
   private readonly text: LoroText;
   private readonly writer: LoroWriter;
   private readonly opts: SyncOptions;
+  private readonly stylesId: string;
+  private readonly listsId: string;
   /** 마지막으로 내보낸 시점의 버전 (그 사이 가져온 원격 연산 포함) */
   private exported: VersionVector;
   private inbox: Uint8Array[] = [];
@@ -59,9 +61,7 @@ export class SyncBridge {
   }
 
   private static fromLoro(loro: LoroDoc, opts: SyncOptions): SyncBridge {
-    const { raw, keys } = readRaw(loro);
-    const doc = Doc.fromRaw(raw, keys, readState(loro), String(opts.peer));
-    return new SyncBridge(doc, loro, opts);
+    return new SyncBridge(docFromLoro(loro, String(opts.peer)), loro, opts);
   }
 
   private constructor(doc: Doc, loro: LoroDoc, opts: SyncOptions) {
@@ -69,6 +69,8 @@ export class SyncBridge {
     this.loro = loro;
     this.opts = opts;
     this.text = loro.getText(TEXT);
+    this.stylesId = loro.getMap(STYLES).id;
+    this.listsId = loro.getMap(LISTS).id;
     this.writer = new LoroWriter(loro, () => doc.segmentOrder());
     this.exported = loro.oplogVersion();
     doc.observe((c) => this.onLocal(c));
@@ -170,7 +172,12 @@ export class SyncBridge {
     // (importBatch) 'checkout'으로 온다 → 로컬이 아닌 것은 모두 적용한다.
     if (e.by === 'local') return;
     let segDirty = false;
+    let defsDirty = false;
     for (const ev of e.events) {
+      if (ev.target === this.stylesId || ev.target === this.listsId) {
+        defsDirty = true;
+        continue;
+      }
       if (ev.target === this.text.id && ev.diff.type === 'text') {
         const delta = ev.diff.diff as TextDelta;
         this.doc.applyDelta(delta);
@@ -181,6 +188,10 @@ export class SyncBridge {
     }
     // 텍스트(새 구획 표식)를 먼저 적용한 뒤 구획 상태를 맞춘다
     if (segDirty) this.doc.applySegState(readState(this.loro));
+    if (defsDirty) {
+      const d = readDefs(this.loro);
+      this.doc.applyRemoteDefs(d.styles ?? {}, d.lists ?? {});
+    }
   }
 
   private schedule(): void {

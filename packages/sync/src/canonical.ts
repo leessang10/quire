@@ -78,6 +78,7 @@ const PARA_KEYS = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWit
 
 /** 서식·문단 속성이 있는 문서 → QuireDoc. 같은 서식이 이어진 글자는 한 런 (정규화) */
 export function quireFromDoc(doc: Doc): QuireDoc {
+  if (doc.plain) return quireFromText(doc.text()); // 서식 없는 문서: 빠른 길 (같은 결과)
   const q = quireFromText('\n');
   q.stories.body = doc.paragraphRuns().map((p) => ({
     p: { ...p.attrs },
@@ -97,7 +98,10 @@ export function quireFromDoc(doc: Doc): QuireDoc {
  * QuireDoc → 서식·문단 속성이 있는 문서. 모르는 서식 키·문단 속성은 버리고 notes에 적는다 (07 §4의 "모르는 속성 보존"은 아직 없음).
  */
 export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: string[] } {
-  textFromQuire(q); // 구조 확인 (표·필드 등 아직 담을 수 없는 내용은 오류)
+  const text = textFromQuire(q); // 구조 확인 (표·필드 등 아직 담을 수 없는 내용은 오류)
+  // 서식 없는 문서: 빠른 길
+  const plainBody = q.stories.body.every((b) => Object.keys(b.p ?? {}).length === 0 && (b.c ?? []).every((r) => !r.m || Object.keys(r.m).length === 0));
+  if (plainBody && Object.keys(q.styles ?? {}).length === 0 && !q.settings?.lists) return { doc: Doc.fromText(text.slice(0, -1), peer), notes: [] };
   const notes = new Set<string>();
   const paras = q.stories.body.map((block) => {
     const attrs: Record<string, unknown> = {};
