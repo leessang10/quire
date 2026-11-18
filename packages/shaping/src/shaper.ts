@@ -13,7 +13,10 @@
  * 있는 글꼴은 브라우저(전체 HarfBuzz)와 폭이 달라지므로, GPOS에 kern 기능이 없을 때 kern 표(형식 0)를 직접 적용한다
  * (HarfBuzz와 같은 규칙: GPOS kern이 있으면 옛 표는 쓰지 않음).
  *
- * 결과는 조각 문자열로 캐시한다. 결정성: 같은 글꼴 파일·같은 WASM이면 글꼴 단위 정수가 같고, px 변환은 같은 산술이다.
+ * 굵게 (10 §4): 글꼴 자리마다 굵은 얼굴(bold 자리)을 둘 수 있다. 글꼴 고르기는 보통 굵기의 범위로 하고, 셰이핑은 그 자리의
+ * 굵은 얼굴로 한다 (굵은 얼굴이 없으면 보통 굵기로 재고 그리기에서 합성 굵게). 크기는 셰이핑하지 않고 레이아웃이 배율을 곱한다.
+ *
+ * 결과는 (얼굴, 조각 문자열)로 캐시한다. 결정성: 같은 글꼴 파일·같은 WASM이면 글꼴 단위 정수가 같고, px 변환은 같은 산술이다.
  * 대체 측정기로 잰 글자(엔진이 불러오지 않은 글꼴)는 기기마다 다를 수 있다.
  */
 import * as hb from 'harfbuzzjs';
@@ -22,9 +25,22 @@ import type { Measurer } from '@quire/layout';
 /** 대체 측정기로 잰 글자의 글꼴 번호 */
 export const FALLBACK_FONT = 255;
 
+/** 글꼴 치수 (em 비율, 위가 양수) */
+export interface FontMetrics {
+  ascent: number;
+  descent: number;
+  /** 밑줄 위치 (기준선 기준, 보통 음수 = 아래)·두께 */
+  underlinePosition: number;
+  underlineThickness: number;
+  /** 취소선 위치 (기준선 위)·두께 */
+  strikePosition: number;
+  strikeThickness: number;
+}
+
 export interface ShapingFont {
   name: string;
   upem: number;
+  metrics: FontMetrics;
   hb: hb.Font;
   /** 옛 kern 표의 쌍 (왼쪽 글리프 × 65536 + 오른쪽 → 값). GPOS kern이 있거나 표가 없으면 null */
   legacyKern: Map<number, number> | null;
@@ -40,6 +56,8 @@ export interface FontSlot {
   name: string;
   covers(cp: number): boolean;
   font: ShapingFont | null;
+  /** 같은 범위의 굵은 얼굴 (없으면 보통 굵기로 재고 합성 굵게로 그린다) */
+  bold?: FontSlot | null;
 }
 
 export function slotOf(font: ShapingFont): FontSlot {
@@ -54,6 +72,7 @@ export function loadShapingFont(bytes: Uint8Array | ArrayBuffer, name: string): 
   return {
     name,
     upem: face.upem,
+    metrics: readMetrics(face, face.upem),
     hb: font,
     legacyKern: gposKern ? null : parseKern(face.referenceTable('kern')),
     has(cp) {
@@ -66,6 +85,25 @@ export function loadShapingFont(bytes: Uint8Array | ArrayBuffer, name: string): 
       return v;
     },
   };
+}
+
+/** hhea·post·OS/2 표에서 치수를 읽는다 (없으면 크기 비례 기본값) */
+function readMetrics(face: hb.Face, upem: number): FontMetrics {
+  const view = (t: Uint8Array | undefined, need: number) => (t && t.length >= need ? new DataView(t.buffer, t.byteOffset, t.byteLength) : null);
+  const hhea = view(face.referenceTable('hhea'), 8);
+  const post = view(face.referenceTable('post'), 12);
+  const os2 = view(face.referenceTable('OS/2'), 30);
+  const m: FontMetrics = {
+    ascent: hhea ? hhea.getInt16(4) / upem : 0.8,
+    descent: hhea ? -hhea.getInt16(6) / upem : 0.2,
+    underlinePosition: post ? post.getInt16(8) / upem : -0.1,
+    underlineThickness: post ? post.getInt16(10) / upem : 0.05,
+    strikePosition: os2 ? os2.getInt16(28) / upem : 0.3,
+    strikeThickness: os2 ? os2.getInt16(26) / upem : 0.05,
+  };
+  if (!(m.underlineThickness > 0)) m.underlineThickness = 0.05;
+  if (!(m.strikeThickness > 0)) m.strikeThickness = m.underlineThickness;
+  return m;
 }
 
 /** Microsoft 'kern' 표 (버전 0)의 가로·형식 0 하위 표를 읽는다. 없거나 다른 형식이면 null */
@@ -129,6 +167,7 @@ interface Grapheme {
   u: number;
   cp: number;
   text: string;
+  /** 글꼴 자리 번호 (FALLBACK_FONT면 대체 측정기) */
   font: number;
   script: Script;
 }
@@ -147,9 +186,9 @@ export interface ShaperOptions {
   cacheLimit?: number;
   /**
    * 아직 불러오지 않은 글꼴 자리의 글자를 만났다 (자리마다 한 번). 그 글자는 불러올 때까지 대체 측정기로 재고 캐시하지 않는다.
-   * 불러오면 loaded(i, font)를 부르고 다시 조판한다.
+   * 불러오면 loaded(i, font, face)를 부르고 다시 조판한다. face 1이면 그 자리의 굵은 얼굴이다.
    */
-  onMissing?: (slot: number) => void;
+  onMissing?: (slot: number, face: number) => void;
 }
 
 export class HbShaper implements Measurer {
@@ -158,9 +197,9 @@ export class HbShaper implements Measurer {
   private readonly size: number;
   private readonly fallback: Measurer | undefined;
   private readonly cacheLimit: number;
-  private spaceW = -1;
+  private spaceW = [-1, -1];
   readonly slots: FontSlot[];
-  private readonly onMissing: ((slot: number) => void) | undefined;
+  private readonly onMissing: ((slot: number, face: number) => void) | undefined;
   private readonly requested = new Set<number>();
   /** 지금 셰이핑하는 조각에 아직 없는 글꼴이 쓰였다 (캐시하지 않음) */
   private pending = false;
@@ -179,77 +218,88 @@ export class HbShaper implements Measurer {
     if (this.slots.some((s) => !s.font) && !this.fallback) throw new Error('HbShaper: lazy font slots need a fallback measurer');
   }
 
-  /** 자리 i의 글꼴을 불러왔다. 그 자리를 쓰는 글자는 다음 셰이핑부터 이 글꼴로 잰다 (편집기가 다시 조판한다) */
-  loaded(i: number, font: ShapingFont): void {
-    this.slots[i]!.font = font;
-    this.requested.delete(i);
-    this.spaceW = -1;
+  /** 자리 i의 글꼴(face 1이면 굵은 얼굴)을 불러왔다. 그 자리를 쓰는 글자는 다음 셰이핑부터 이 글꼴로 잰다 (편집기가 다시 조판한다) */
+  loaded(i: number, font: ShapingFont, face = 0): void {
+    const slot = this.slots[i]!;
+    if (face === 1) {
+      if (!slot.bold) throw new Error(`HbShaper.loaded: slot ${i} has no bold face`);
+      slot.bold.font = font;
+    } else slot.font = font;
+    this.requested.delete(face * 256 + i);
+    this.spaceW[face] = -1;
   }
 
-  /** 불러오기를 요청했지만 아직 안 온 자리 */
+  /** 불러오기를 요청했지만 아직 안 온 자리 (얼굴 × 256 + 자리) */
   get waiting(): number[] {
     return [...this.requested];
   }
 
-  width(g: string): number {
-    if (g === ' ') return this.space();
-    if (g === '\t') return this.space() * 4;
-    const a = this.advances(g);
+  width(g: string, face = 0): number {
+    if (g === ' ') return this.space(face);
+    if (g === '\t') return this.space(face) * 4;
+    const a = this.advances(g, face);
     let w = 0;
     for (let i = 0; i < a.length; i++) w += a[i]!;
     return w;
   }
 
-  advances(chunk: string): Float32Array {
-    return this.get(chunk).adv;
+  advances(chunk: string, face = 0): Float32Array {
+    return this.get(chunk, face).adv;
   }
 
-  fontsOf(chunk: string): Uint8Array | null {
-    return this.get(chunk).fonts;
+  fontsOf(chunk: string, face = 0): Uint8Array | null {
+    return this.get(chunk, face).fonts;
   }
 
-  private space(): number {
-    if (this.spaceW < 0) {
+  /** 자리 i의 얼굴 face를 셰이핑할 글꼴. 굵은 얼굴이 없으면 보통 굵기. 아직 안 불러왔으면 null (요청함) */
+  private faceFont(i: number, face: number): ShapingFont | null {
+    const slot = this.slots[i]!;
+    const target = face === 1 && slot.bold ? slot.bold : slot;
+    if (!target.font) this.request(i, target === slot ? 0 : 1);
+    return target.font;
+  }
+
+  private space(face: number): number {
+    if (this.spaceW[face]! < 0) {
       const slot = this.slots.findIndex((s) => s.covers(0x20));
-      const f = slot >= 0 ? this.slots[slot]!.font : null;
-      if (!f) {
-        if (slot >= 0) this.request(slot);
-        return this.fallback ? this.fallback.width(' ') : 0;
-      }
-      this.spaceW = this.px(f, this.runUnits(f, ' ').reduce((s, g) => s + g.ax, 0));
+      const f = slot >= 0 ? this.faceFont(slot, face) : null;
+      if (!f) return this.fallback ? this.fallback.width(' ', face) : 0;
+      this.spaceW[face] = this.px(f, this.runUnits(f, ' ').reduce((s, g) => s + g.ax, 0));
     }
-    return this.spaceW;
+    return this.spaceW[face]!;
   }
 
-  private request(i: number): void {
-    if (this.requested.has(i)) return;
-    this.requested.add(i);
-    this.onMissing?.(i);
+  private request(i: number, face: number): void {
+    const key = face * 256 + i;
+    if (this.requested.has(key)) return;
+    this.requested.add(key);
+    this.onMissing?.(i, face);
   }
 
   private px(f: ShapingFont, units: number): number {
     return (units * this.size) / f.upem;
   }
 
-  private get(chunk: string): Shaped {
-    const hit = this.cache.get(chunk);
+  private get(chunk: string, face: number): Shaped {
+    const key = face === 0 ? chunk : `\u0001${chunk}`;
+    const hit = this.cache.get(key);
     if (hit) {
       this.cacheHits++;
       return hit;
     }
     this.pending = false;
-    const r = this.shapeChunk(chunk);
+    const r = this.shapeChunk(chunk, face);
     if (this.pending) return r; // 아직 없는 글꼴을 대신 잰 결과: 불러오면 달라진다
     if (this.cache.size >= this.cacheLimit) this.cache.clear();
-    this.cache.set(chunk, r);
+    this.cache.set(key, r);
     return r;
   }
 
-  private graphemes(chunk: string): Grapheme[] {
+  private graphemes(chunk: string, face: number): Grapheme[] {
     const out: Grapheme[] = [];
     let cp = 0;
     const push = (text: string, u: number) => {
-      out.push({ u, cp, text, font: this.pickFont(text), script: Script.Common });
+      out.push({ u, cp, text, font: this.pickFont(text, face), script: Script.Common });
       for (let i = 0; i < text.length; i++) {
         const c = text.charCodeAt(i);
         if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) i++;
@@ -273,7 +323,7 @@ export class HbShaper implements Measurer {
     return out;
   }
 
-  private pickFont(text: string): number {
+  private pickFont(text: string, face: number): number {
     const cps: number[] = [];
     for (const ch of text) {
       const c = ch.codePointAt(0)!;
@@ -284,16 +334,15 @@ export class HbShaper implements Measurer {
     for (let i = 0; i < this.slots.length && pick < 0; i++) if (cps.every((c) => this.slots[i]!.covers(c))) pick = i;
     for (let i = 0; i < this.slots.length && pick < 0; i++) if (this.slots[i]!.covers(cps[0]!)) pick = i;
     if (pick < 0) return this.fallback ? FALLBACK_FONT : 0;
-    if (!this.slots[pick]!.font) {
-      this.request(pick);
+    if (!this.faceFont(pick, face)) {
       this.pending = true;
       return FALLBACK_FONT;
     }
     return pick;
   }
 
-  private shapeChunk(chunk: string): Shaped {
-    const gs = this.graphemes(chunk);
+  private shapeChunk(chunk: string, face: number): Shaped {
+    const gs = this.graphemes(chunk, face);
     const n = gs.length === 0 ? 0 : gs[gs.length - 1]!.cp + cpLen(gs[gs.length - 1]!.text);
     const adv = new Float32Array(n);
     let fonts: Uint8Array | null = null;
@@ -308,9 +357,9 @@ export class HbShaper implements Measurer {
         fonts.fill(font, gs[a]!.cp, endCp);
       }
       if (font === FALLBACK_FONT) {
-        for (let k = a; k < b; k++) adv[gs[k]!.cp] = this.fallback!.width(gs[k]!.text);
+        for (let k = a; k < b; k++) adv[gs[k]!.cp] = this.fallback!.width(gs[k]!.text, face);
       } else {
-        this.shapeRun(this.slots[font]!.font!, chunk, gs, a, b, adv);
+        this.shapeRun(this.faceFont(font, face)!, chunk, gs, a, b, adv);
       }
       a = b;
     }

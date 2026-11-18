@@ -1,6 +1,6 @@
-export { layoutParagraph, cpSlice } from './paragraph';
-export type { Measurer, Preedit, LineBox, ParaLayout } from './paragraph';
-export { LayoutCache, PagedLayout, pageTop, displayToDoc, docToDisplay } from './document';
+export { layoutParagraph, cpSlice, PLAIN_STYLE } from './paragraph';
+export type { Measurer, Preedit, LineBox, ParaLayout, RunStyle, ParaFormat } from './paragraph';
+export { LayoutCache, PagedLayout, pageTop, lineHeight, baselineOffset, displayToDoc, docToDisplay } from './document';
 export type {
   PageSetup,
   ParaInput,

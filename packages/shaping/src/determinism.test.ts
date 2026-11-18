@@ -7,11 +7,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { layoutParagraph } from '@quire/layout';
-import { HbShaper, loadShapingFont } from './shaper';
+import { PLAIN_STYLE, layoutParagraph, type ParaFormat, type RunStyle } from '@quire/layout';
+import { HbShaper, loadShapingFont, slotOf } from './shaper';
 
 const root = join(__dirname, '../../..');
 const pretendard = loadShapingFont(readFileSync(join(root, 'fonts/pretendard/Pretendard-Regular.otf')), 'Pretendard');
+const pretendardBold = loadShapingFont(readFileSync(join(root, 'fonts/pretendard/Pretendard-Bold.otf')), 'Pretendard Bold');
 const noto = loadShapingFont(readFileSync(join(root, 'fonts/noto-sans-kr/NotoSansKR-Regular.otf')), 'Noto Sans KR');
 
 const CORPUS = [
@@ -23,9 +24,33 @@ const CORPUS = [
 ];
 const WIDTHS = [602, 400, 250];
 
-/** 줄 시작 위치와 각 줄 끝 x(float32 비트)의 FNV-1a 지문 */
-function fingerprint(): string {
-  const shaper = new HbShaper([pretendard, noto], { size: 16 });
+/**
+ * 서식 (10 §4, 2-3): 편집기와 같은 규칙의 서식 번호 → 영향. 1 굵게, 2 18pt(16px 기준 1.5배), 3 위 첨자, 4 굵은 9pt.
+ * 글자마다 (코드포인트 번호 × 7 + 어절 번호) mod 5로 서식을 정해 서식 경계가 어절 안팎에 고루 생기게 한다.
+ */
+const STYLES: RunStyle[] = [
+  PLAIN_STYLE,
+  { face: 1, scale: 1, line: 1 },
+  { face: 0, scale: 24 / 16, line: 24 / 16 },
+  { face: 0, scale: 0.65, line: 1 },
+  { face: 1, scale: 12 / 16, line: 12 / 16 },
+];
+function formatOf(text: string): ParaFormat {
+  const cps = Array.from(text);
+  const fmt = new Uint16Array(cps.length);
+  let word = 0;
+  cps.forEach((c, k) => {
+    if (c === ' ') word++;
+    fmt[k] = (k * 7 + word) % 5 === 0 ? (k + word) % 4 + 1 : 0;
+  });
+  return { fmt, mark: 2, style: (id) => STYLES[id]! };
+}
+
+/** 줄 시작 위치와 각 줄 끝 x(float32 비트)의 FNV-1a 지문. formatted면 서식을 걸고 줄 높이 배율도 섞는다 */
+function fingerprint(formatted = false): string {
+  const shaper = formatted
+    ? new HbShaper([{ ...slotOf(pretendard), bold: slotOf(pretendardBold) }, noto], { size: 16 })
+    : new HbShaper([pretendard, noto], { size: 16 });
   let h = 2166136261;
   const mix = (v: number) => {
     h ^= v;
@@ -35,12 +60,16 @@ function fingerprint(): string {
   const f32 = new Float32Array(bits.buffer);
   for (const w of WIDTHS)
     for (const text of CORPUS) {
-      const pl = layoutParagraph(text, w, shaper);
+      const pl = layoutParagraph(text, w, shaper, null, formatted ? formatOf(text) : null);
       for (const ln of pl.lines) {
         mix(ln.start);
         mix(ln.end);
         f32[0] = pl.xs[ln.end]! - pl.xs[ln.start]!;
         mix(bits[0]!);
+        if (formatted) {
+          f32[0] = ln.scale;
+          mix(bits[0]!);
+        }
       }
     }
   return (h >>> 0).toString(16).padStart(8, '0');
@@ -52,7 +81,16 @@ describe('layout determinism', () => {
     expect(fingerprint()).toBe(a); // 캐시를 거쳐도 같다
     expect(a).toBe(EXPECTED);
   });
+
+  it('does the same for a formatted corpus (bold face, sizes, superscript, per-line height)', () => {
+    const a = fingerprint(true);
+    expect(fingerprint(true)).toBe(a);
+    expect(a).toBe(EXPECTED_FORMATTED);
+  });
 });
 
 /** 2026-11-17: Pretendard v1.3.9 + Noto Sans KR Sans2.004, harfbuzzjs 1.6.4 */
 const EXPECTED = '5a769681';
+
+/** 2026-11-18: 위 + Pretendard Bold v1.3.9, 서식 규칙(10 §4) */
+const EXPECTED_FORMATTED = 'c23e13e0';

@@ -115,10 +115,14 @@ function encodeCover(rs) {
     .join(',');
 }
 
-function build({ id, name, file, plan }) {
+function build({ id, name, file, plan, groupsFrom }) {
   const bytes = new Uint8Array(readFileSync(join(root, file)));
   const cover = [...coverage(bytes)].sort((a, b) => a - b);
-  const groups = plan(cover);
+  const set = new Set(cover);
+  // groupsFrom: 다른 글꼴(같은 가족의 보통 굵기)과 같은 조각으로 자른다 → 조각 번호가 같은 자리를 가리킨다 (굵게 얼굴)
+  const groups = groupsFrom ? groupsFrom.map(([chunk, cps]) => [chunk, cps.filter((cp) => set.has(cp))]) : plan(cover);
+  const missing = groupsFrom ? cover.filter((cp) => !groupsFrom.some(([, cps]) => cps.includes(cp))).length : 0;
+  if (missing) console.warn(`${name}: 보통 굵기 조각에 없는 글자 ${missing}개는 넣지 않음`);
   const dir = join(outDir, id);
   mkdirSync(dir, { recursive: true });
   const chunks = [];
@@ -135,10 +139,10 @@ function build({ id, name, file, plan }) {
   writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
   console.log(`${name}: 원본 ${(bytes.length / 1e6).toFixed(2)} MB, 글자 ${cover.length.toLocaleString()}개 → 조각 ${chunks.length}개, 합 ${(total / 1e6).toFixed(2)} MB`);
   for (const c of chunks) console.log(`  ${c.name.padEnd(14)} ${String(c.count).padStart(6)}자 ${(c.bytes / 1e3).toFixed(0).padStart(5)} KB`);
-  return new Set(cover);
+  return { cover: set, groups };
 }
 
-const pretendard = build({
+const pretendardBuild = build({
   id: 'pretendard',
   name: 'Pretendard',
   file: 'fonts/pretendard/Pretendard-Regular.otf',
@@ -151,6 +155,11 @@ const pretendard = build({
     return [['base', base], ...slices(rest, per).map((s, i) => [`hangul-${i + 1}`, s]), ['jamo', jamo], ['other', other]];
   },
 });
+
+const pretendard = pretendardBuild.cover;
+
+// 굵게 얼굴 (10 §4): 보통 굵기와 같은 조각으로
+build({ id: 'pretendard-bold', name: 'Pretendard Bold', file: 'fonts/pretendard/Pretendard-Bold.otf', groupsFrom: pretendardBuild.groups });
 
 build({
   id: 'noto-sans-kr',

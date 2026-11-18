@@ -15,7 +15,7 @@ describe('Doc', () => {
 
   it('empty document has one empty paragraph', () => {
     const doc = Doc.fromText('');
-    expect(doc.paragraphs()).toEqual([{ id: expect.any(String), start: 0, end: 0, text: '', attrs: {}, fmt: null }]);
+    expect(doc.paragraphs()).toEqual([{ id: expect.any(String), start: 0, end: 0, text: '', attrs: {}, fmt: null, mark: 0 }]);
   });
 
   it('counts code points, not UTF-16 units', () => {

@@ -9,9 +9,9 @@
  */
 import { it } from 'vitest';
 import { Doc } from '@quire/model';
-import { PagedLayout, type Measurer, type PageSetup } from '@quire/layout';
+import { PLAIN_STYLE, PagedLayout, type Measurer, type PageSetup, type RunStyle } from '@quire/layout';
 
-const measurer: Measurer = { width: (g) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) };
+const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };
 const setup: PageSetup = { width: 794, height: 1123, margin: 96, gap: 24, lineHeight: 27, paraSpacing: 8 };
 const VIEW = 900; // 화면 높이 가정
 const NL = String.fromCharCode(10);
@@ -31,11 +31,36 @@ function stats(t: number[]) {
   return `p50 ${q(0.5).padStart(7)}  p95 ${q(0.95).padStart(7)}  max ${q(1).padStart(7)} ms`;
 }
 
-/** moves > 0이면 측정 전에 문단 이동 moves번 + 문단 삭제(숨김) moves/5번을 해서 구획을 만든다 */
-function scenario(paragraphs: number, where: number, moves = 0) {
+/**
+ * 서식 많은 문서 (10 §6): 문단마다 굵게·크기·기울임·색 구간 4개 (어절 경계와 어긋나게). 편집기와 같은 규칙으로 서식 → 영향
+ */
+function formatDoc(doc: Doc): (id: number) => RunStyle {
+  for (const p of [...doc.paragraphs()].reverse()) {
+    const a = p.start;
+    doc.format(a + 3, a + 9, 'bold', true);
+    doc.format(a + 20, a + 31, 'size', 18000);
+    doc.format(a + 40, a + 52, 'italic', true);
+    doc.format(a + 60, a + 66, 'color', '#c01c28');
+  }
+  doc.takeParagraphChanges(); // 준비 단계의 변경 기록은 레이아웃이 생기기 전 것
+  const cache: RunStyle[] = [];
+  return (id) => {
+    if (cache[id]) return cache[id]!;
+    const m = doc.markSet(id);
+    const base = m.size ? (m.size / 1000) * (96 / 72) / 16 : 1;
+    return (cache[id] = id === 0 ? PLAIN_STYLE : { face: m.bold ? 1 : 0, scale: base, line: base });
+  };
+}
+
+/**
+ * moves > 0이면 측정 전에 문단 이동 moves번 + 문단 삭제(숨김) moves/5번을 해서 구획을 만든다.
+ * formatted면 서식 많은 문서에서, 서식 구간 안(굵게)에 입력한다.
+ */
+function scenario(paragraphs: number, where: number, moves = 0, formatted = false) {
   const doc = makeDoc(paragraphs);
+  const style = formatted ? formatDoc(doc) : null;
   let t = performance.now();
-  const layout = new PagedLayout(setup, measurer);
+  const layout = new PagedLayout(setup, measurer, undefined, style);
   layout.update(doc.paragraphs(), null, VIEW * 2);
   const firstScreen = performance.now() - t;
   t = performance.now();
@@ -62,6 +87,7 @@ function scenario(paragraphs: number, where: number, moves = 0) {
   }
 
   let caret = Math.floor(doc.length * where);
+  if (formatted) caret = doc.paragraphs()[doc.paragraphIndexAt(caret)]!.start + 5; // 굵게 구간 안
   let caretY = layout.caretRect(caret).y;
   const step = (edit: () => void) => {
     const s = performance.now();
@@ -95,7 +121,8 @@ function scenario(paragraphs: number, where: number, moves = 0) {
     [
       '',
       `■ ${paragraphs.toLocaleString()} 문단 / ${layout.pageCount} 쪽 / 캐럿 위치 ${Math.round(where * 100)}%  (heap ${mem.toFixed(0)} MB)` +
-        (moves ? ` / 이동 ${moves}회 후 구획 ${doc.segmentCount}개` : ''),
+        (moves ? ` / 이동 ${moves}회 후 구획 ${doc.segmentCount}개` : '') +
+        (formatted ? ' / 서식 많음' : ''),
       ...(moves ? [`  문단 이동          ${stats(moveMs)}`] : []),
       `  첫 화면 배치       ${firstScreen.toFixed(1)} ms   (나머지 백그라운드 ${background.toFixed(0)} ms, 8ms 조각 ${slices}개)`,
       `  글자 입력          ${stats(typing)}`,
@@ -114,4 +141,7 @@ it('engine benchmark', () => {
   // 구획이 여러 개인 문서 (문단 이동·삭제 후)
   scenario(10_000, 0.5, 50);
   scenario(100_000, 0.5, 50);
+  // 서식 많은 문서 (10 §6: 입력 p95 16 ms 이하)
+  scenario(10_000, 0.5, 0, true);
+  scenario(100_000, 0.5, 0, true);
 }, 600_000);

@@ -1,4 +1,5 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
+import { Doc, type MarkSet } from '@quire/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
 
@@ -9,6 +10,40 @@ const SAMPLE = `Quire 0단계 프로토타입
 줄바꿈은 어절 단위입니다. 아주긴단어가한줄보다길어지면글자단위로끊기는데이때마침표나쉼표같은닫는문장부호는줄의맨앞에오지않도록한글자를당겨서함께넘깁니다.이렇게요.그리고이모지👩‍💻도한글자로취급되어커서가중간에멈추지않습니다.
 
 단축키: Ctrl+Z 실행 취소, Ctrl+Shift+Z 또는 Ctrl+Y 다시 실행, Ctrl+A 전체 선택, Ctrl+←/→ 단어 이동, Shift+방향키 선택 확장, 두 번 클릭 단어 선택, 세 번 클릭 문단 선택.`;
+
+/** 서식 예제 (10 §4, 2-3): 굵게·기울임·크기·색·밑줄·취소선·형광펜·첨자, 줄마다 높이 */
+function formatSample(): Doc {
+  const r = (text: string, marks: MarkSet = {}) => ({ text, marks });
+  const p = (...runs: Array<{ text: string; marks: MarkSet }>) => ({ attrs: {}, runs });
+  return Doc.fromParagraphRuns([
+    p(r('글자 서식 예제', { bold: true, size: 24000 })),
+    p(
+      r('본문 사이에 '),
+      r('굵게', { bold: true }),
+      r(', '),
+      r('기울임', { italic: true }),
+      r(', '),
+      r('굵은 기울임', { bold: true, italic: true }),
+      r(', '),
+      r('밑줄', { underline: true }),
+      r(', '),
+      r('취소선', { strike: true }),
+      r('을 섞었습니다. '),
+      r('빨간 글자', { color: '#c01c28' }),
+      r('와 '),
+      r('형광펜', { highlight: '#fff3a3' }),
+      r(', '),
+      r('링크', { link: 'https://example.com' }),
+      r('도 있습니다.'),
+    ),
+    p(r('물의 화학식은 H'), r('2', { script: 'sub' }), r('O이고, 아인슈타인의 식은 E = mc'), r('2', { script: 'sup' }), r('입니다. 각주 표시처럼 위 첨자를 씁니다'), r('1)', { script: 'sup' }), r('.')),
+    p(r('크기가 섞인 줄: '), r('작게 9pt', { size: 9000 }), r(' 보통 '), r('크게 18pt', { size: 18000 }), r(' 다시 보통. 크기가 다른 글자가 한 줄에 있으면 줄 높이는 가장 큰 글자를 따르고 모든 글자가 한 기준선에 섭니다.')),
+    p(r('Bold Latin and 한글 굵게 kerning: AVATAR Wave, ', { bold: true }), r('Italic Latin AVATAR Wave', { italic: true })),
+    p(r('큰 제목 크기의 빈 줄 아래', { size: 18000 })),
+    p(),
+    p(r('위 빈 줄은 ¶에 서식이 없어 보통 높이입니다. 글자를 선택하고 위의 단추나 단축키(Ctrl+B·I·U, Ctrl+Shift+X, Ctrl+. ·, , Ctrl+\\)로 서식을 바꿔 보세요. 선택 없이 Ctrl+B를 누르면 다음에 입력하는 글자가 굵게 들어갑니다.')),
+  ]);
+}
 
 const LOREM =
   '대한민국은 민주공화국이다. 대한민국의 주권은 국민에게 있고, 모든 권력은 국민으로부터 나온다. 이 문단은 대형 문서 성능 측정을 위해 반복해서 생성된 문단입니다. 레이아웃 캐시가 동작하면 편집할 때 바뀐 문단만 다시 줄을 나눕니다.';
@@ -109,14 +144,17 @@ const fonts =
           { name: 'Calibri', url: '/spike-fonts/calibri.ttf' },
         ]
       : [
-          { name: 'Pretendard', manifest: '/fonts/pretendard/manifest.json' },
+          { name: 'Pretendard', manifest: '/fonts/pretendard/manifest.json', bold: { manifest: '/fonts/pretendard-bold/manifest.json' } },
           { name: 'Noto Sans KR', manifest: '/fonts/noto-sans-kr/manifest.json' },
         ];
 const editor = new Editor({
   host,
   text: SAMPLE,
   onInputLog,
-  onChange: showStats,
+  onChange: () => {
+    showStats();
+    showMarks();
+  },
   input: inputMode,
   fonts,
   onFontsReady: (_e, err) => {
@@ -130,12 +168,73 @@ showStats();
 document.querySelectorAll<HTMLButtonElement>('[data-doc]').forEach((btn) => {
   btn.addEventListener('click', () => {
     const kind = btn.dataset.doc!;
+    if (kind === 'format') {
+      editor.setDoc(formatSample());
+      editor.select(0);
+      editor.focus();
+      showStats();
+      return;
+    }
     const text = kind === 'sample' ? SAMPLE : kind === 'empty' ? '' : generate(Number(kind));
     editor.setText(text);
     editor.focus();
     showStats();
   });
 });
+
+// ── 서식 도구 막대 ──
+// 단추가 포커스를 가져가지 않게 (편집기 선택 유지)
+document.querySelectorAll<HTMLButtonElement>('.format-bar button').forEach((b) => b.addEventListener('mousedown', (e) => e.preventDefault()));
+document.querySelectorAll<HTMLButtonElement>('[data-mark]').forEach((b) =>
+  b.addEventListener('click', () => {
+    editor.toggleMark(b.dataset.mark as 'bold' | 'italic' | 'underline' | 'strike');
+    editor.focus();
+  }),
+);
+document.querySelectorAll<HTMLButtonElement>('[data-script]').forEach((b) =>
+  b.addEventListener('click', () => {
+    editor.toggleScript(b.dataset.script as 'sup' | 'sub');
+    editor.focus();
+  }),
+);
+const sizeSel = document.getElementById('fmt-size') as HTMLSelectElement;
+const colorSel = document.getElementById('fmt-color') as HTMLSelectElement;
+const hlSel = document.getElementById('fmt-highlight') as HTMLSelectElement;
+sizeSel.addEventListener('change', () => {
+  editor.setMark('size', sizeSel.value ? Number(sizeSel.value) : undefined);
+  editor.focus();
+});
+colorSel.addEventListener('change', () => {
+  editor.setMark('color', colorSel.value || undefined);
+  editor.focus();
+});
+hlSel.addEventListener('change', () => {
+  editor.setMark('highlight', hlSel.value || undefined);
+  editor.focus();
+});
+document.getElementById('fmt-clear')!.addEventListener('click', () => {
+  editor.clearMarks();
+  editor.focus();
+});
+/** 도구 막대에 선택 영역의 서식을 보인다 */
+function showMarks(): void {
+  const { marks, mixed } = editor.selectionMarks();
+  const state = (on: boolean, mix: boolean) => (mix ? 'mixed' : on ? 'true' : 'false');
+  document.querySelectorAll<HTMLButtonElement>('[data-mark]').forEach((b) => {
+    const k = b.dataset.mark as 'bold' | 'italic' | 'underline' | 'strike';
+    b.setAttribute('aria-pressed', state(!!marks[k], mixed.has(k)));
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-script]').forEach((b) => {
+    b.setAttribute('aria-pressed', state(marks.script === b.dataset.script, mixed.has('script')));
+  });
+  const pick = (sel: HTMLSelectElement, v: unknown, mix: boolean) => {
+    sel.value = mix ? '' : v === undefined ? '' : String(v);
+    if (sel.value !== (v === undefined ? '' : String(v)) && !mix) sel.value = '';
+  };
+  pick(sizeSel, marks.size, mixed.has('size'));
+  pick(colorSel, marks.color, mixed.has('color'));
+  pick(hlSel, marks.highlight, mixed.has('highlight'));
+}
 
 document.getElementById('clear-log')!.addEventListener('click', () => logEl.replaceChildren());
 

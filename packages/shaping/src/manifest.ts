@@ -13,6 +13,8 @@ export interface FontManifest {
 export interface ChunkSlot extends FontSlot {
   url: string;
   bytes: number;
+  /** 조각 이름 (같은 가족의 굵은 얼굴과 짝 지을 때) */
+  chunk: string;
 }
 
 /** cover 문자열 → 범위 [첫, 끝] (양끝 포함, 정렬됨). 형식은 build-fonts.mjs의 encodeCover */
@@ -40,6 +42,7 @@ export function slotsFromManifest(m: FontManifest, baseUrl: string | URL): Chunk
       name: `${m.name} ${c.name}`,
       url: new URL(c.file, baseUrl).href,
       bytes: c.bytes,
+      chunk: c.name,
       font: null,
       covers(cp: number) {
         // 범위는 정렬되어 있다: 이분 탐색
@@ -55,4 +58,21 @@ export function slotsFromManifest(m: FontManifest, baseUrl: string | URL): Chunk
       },
     };
   });
+}
+
+/**
+ * 굵은 얼굴 조각을 보통 굵기 조각에 짝 짓는다 (같은 조각 이름, build-fonts.mjs의 groupsFrom). 짝이 없는 조각은 합성 굵게.
+ * @returns 짝 지은 수
+ */
+export function attachBold(regular: readonly ChunkSlot[], bold: readonly ChunkSlot[]): number {
+  const byName = new Map(bold.map((b) => [b.chunk, b]));
+  let n = 0;
+  for (const r of regular) {
+    const b = byName.get(r.chunk);
+    if (b) {
+      r.bold = b;
+      n++;
+    }
+  }
+  return n;
 }
