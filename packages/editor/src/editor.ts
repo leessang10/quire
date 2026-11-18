@@ -7,56 +7,41 @@ import {
   Doc,
   Document,
   History,
-  normalizeTable,
   type TableGrid,
   MARK_KEYS,
   MAX_LIST_LEVEL,
   OBJ,
-  mergeParaAttrs,
   type MarkKey,
   type MarkSet,
   type Op,
   type ParaAttrs,
   type ParaKey,
   type FloatAttrs,
-  type ListLabel,
   type ObjAttrs,
   type ObjKey,
   type ParagraphInfo,
   type Position,
-  type ResolvedStyle,
   type Selection,
   cellKey,
   cellStoryId,
   type Style,
 } from '@quire/model';
 import {
-  CELL_PAD,
   LayoutCache,
   PagedLayout,
-  PLAIN_STYLE,
-  TableLayouter,
-  type PreeditAt,
-  type TableGridInput,
-  type TableMeasure,
-  type TableSpec,
   cpSlice,
   docToDisplay,
   lineX,
-  pageTop,
-  type FloatSpec,
-  type FormatSource,
   type Measurer,
   type PageSetup,
-  type ParaBox,
   type ParaLayout,
   type PlacedFloat,
   type PlacedLine,
   type PlacedPara,
-  type RunStyle,
 } from '@quire/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
 import { MemoryAssets, type AssetStore } from './assets';
+import { Formatter, PLAIN_DRAW, defaultPageSetup, hasKeys, type DrawStyle, type TableView } from './formatter';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 
@@ -128,30 +113,8 @@ interface Metrics {
   strikeThickness: number;
 }
 
-/** 서식 번호 하나의 그리기 정보 (10 §4) */
-interface DrawStyle {
-  run: RunStyle;
-  bold: boolean;
-  italic: boolean;
-  underline: boolean;
-  strike: boolean;
-  color: string | null;
-  highlight: string | null;
-  /** 기준선 이동 (px, 위가 음수): 위·아래 첨자 */
-  shift: number;
-}
-
-const PLAIN_DRAW: DrawStyle = {
-  run: PLAIN_STYLE, bold: false, italic: false, underline: false, strike: false, color: null, highlight: null, shift: 0,
-};
 /** 기울인 그리기의 기울기 (tan 약 12°) */
 const ITALIC_SKEW = 0.21;
-/** 위·아래 첨자: 크기 배율, 기준선 이동 (em) */
-const SCRIPT_SCALE = 0.65;
-const SUP_SHIFT = -0.33;
-const SUB_SHIFT = 0.2;
-const LINK_COLOR = '#1a5fb4';
-
 /** 다른 사용자의 선택 영역 (화면 오프셋). 협업 프레즌스에서 받아 그린다 */
 export interface RemoteCaret {
   key: string;
@@ -251,15 +214,6 @@ interface ActiveCell {
   story: string;
 }
 
-/** 조판한 표: 격자, 레이아웃 입력, 행 높이, 표 원소 위치 (본문) */
-interface TableView {
-  id: string;
-  grid: TableGrid;
-  input: TableGridInput;
-  measure: TableMeasure;
-  at: Position;
-}
-
 /** 셀 범위 선택 (격자 인덱스 대신 행·열 ID: 원격 변경에도 따라간다) */
 interface CellRange {
   table: string;
@@ -290,17 +244,13 @@ export class Editor {
   private plainPaste = false;
   /** 다중 커서 (11 §5.2): 첫 캐럿(sel) 말고 다른 캐럿들. 같은 스토리, 겹치지 않음 */
   private extras: Array<{ anchor: Position; head: Position }> = [];
-  private tables!: TableLayouter;
-  private readonly tableViews = new Map<string, TableView>();
+  /** 문서 → 레이아웃 서식 (DOM 없음, formatter.ts) */
+  private readonly fmt: Formatter;
   /** 셀 범위 선택 (병합·여러 셀 지우기) */
   private cellSel: CellRange | null = null;
-  /** 편집 중인 셀의 조합 문자열 (표 문단을 조판할 때 셀 레이아웃에 넣는다) */
-  private cellPreedit: PreeditAt | null = null;
   /** 다음 relayout에서 모든 표를 다시 잰다 (원격 변경) */
   private tablesAllDirty = false;
   private readonly cellCache = new LayoutCache(20000);
-  private readonly docIds = new WeakMap<Doc, number>();
-  private docSeq = 0;
   /** 지금 그리는 스토리 (서식 번호의 뜻이 스토리마다 다르다) */
   private drawDoc!: Doc;
   /** 지금 그리는 것이 편집 중인 스토리인가 (선택 영역을 그린다) */
@@ -326,57 +276,6 @@ export class Editor {
   private metrics: Metrics = {
     ascent: 0.8, descent: 0.2, underlinePosition: -0.1, underlineThickness: 0.06, strikePosition: 0.3, strikeThickness: 0.06,
   };
-  /** 스토리마다 (문단 스타일, 서식 번호)별 그리기 정보. 스타일 판이 바뀌면 비운다 */
-  private readonly styleCaches = new WeakMap<
-    Doc,
-    { version: number; draw: Map<string, Array<DrawStyle | undefined>>; fns: Map<string, (id: number) => RunStyle> }
-  >();
-  /** 본문 문단 → 레이아웃 서식 */
-  private readonly formatOf: FormatSource = (info, force) => this.formatWith(this.document.body, info, force);
-  /** 셀 스토리의 FormatSource (스토리마다 하나) */
-  private readonly cellFormats = new WeakMap<Doc, FormatSource>();
-
-  /** 문단 → 레이아웃 서식 (10 §4): 글자 서식, 스타일의 기본 글자 서식, 문단 상자. 본문의 표 문단은 행 (11 §4.3) */
-  private formatWith(doc: Doc, info: Parameters<FormatSource>[0], force: boolean): ReturnType<FormatSource> {
-    const p = info as ParagraphInfo;
-    const body = this.document.body;
-    if (doc === body) {
-      const t = p.objs?.get(0);
-      if (t?.kind === 'table' && t.table) {
-        const table = this.tableSpec(t.table, p.start);
-        if (table) return { fmt: null, mark: 0, style: () => PLAIN_STYLE, table };
-      }
-    }
-    const attrs = p.attrs ?? {};
-    // 스타일 정의는 문서에 하나 (본문에 있다)
-    const rs = body.resolvedStyle(attrs.style ?? BODY_STYLE);
-    const styled = hasKeys(rs.marks);
-    const label = attrs.list ? doc.listLabel(p) : null;
-    const box = this.paraBox(attrs, rs, label);
-    if (!p.fmt && !p.mark && !force && !box && !styled && !p.objs) return null;
-    const marker = label ? { text: label.text, id: p.mark ?? 0, hanging: pt(label.def.levels[label.level]!.hanging) } : null;
-    const objs = p.objs ? objSizes(p.objs) : null;
-    // 셀 안의 떠 있는 개체는 인라인으로 (셀 원점이 바뀌어도 놓인 자리를 다시 구하지 않으므로)
-    const floats = p.objs && doc === body ? floatSpecs(p.objs) : null;
-    const sty = styled ? (attrs.style ?? BODY_STYLE) : '';
-    // 스타일 글자 서식은 서식 번호 0에도 걸리므로 fmt가 없으면 0으로 채운 열을 준다
-    const fmt = p.fmt ?? (styled ? new Uint16Array(cpCount(p.text)) : null);
-    // 서식 번호의 뜻은 스토리마다 다르므로 셀은 캐시 키에 스토리 번호를 넣는다
-    const key = (doc === body ? '' : `d${this.docId(doc)}`) + (styled ? `${sty}@${body.stylesVersion}` : '');
-    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty, doc), box, marker, objs, floats, key: key || undefined };
-  }
-
-  private docId(doc: Doc): number {
-    let id = this.docIds.get(doc);
-    if (id === undefined) this.docIds.set(doc, (id = ++this.docSeq));
-    return id;
-  }
-
-  private cellFormat(doc: Doc): FormatSource {
-    let f = this.cellFormats.get(doc);
-    if (!f) this.cellFormats.set(doc, (f = (info, force) => this.formatWith(doc, info, force)));
-    return f;
-  }
   private readonly assets: AssetStore;
   /** 자산 ID → 그릴 이미지 (불러오는 중 null) */
   private readonly images = new Map<string, ImageBitmap | null | 'error'>();
@@ -423,20 +322,10 @@ export class Editor {
     this.measurer = canvasMeasurer;
     const box = canvasMeasurer.metrics(this.fontSize);
     this.metrics = { ...this.metrics, ...box };
-    // A4 @96dpi
-    this.setup = {
-      width: 794,
-      height: 1123,
-      margin: 96,
-      gap: 24,
-      lineHeight: Math.round(this.fontSize * 1.7),
-      paraSpacing: Math.round(this.fontSize * 0.5),
-      fontSize: this.fontSize,
-      ascent: box.ascent,
-      descent: box.descent,
-    };
+    this.setup = { ...defaultPageSetup(this.fontSize), ascent: box.ascent, descent: box.descent };
 
     this.document = opts.document ?? new Document(opts.doc ?? Doc.fromText(opts.text ?? ''));
+    this.fmt = new Formatter(() => this.document, this.setup, this.fontSize);
     this.doc = this.document.body;
     this.drawDoc = this.doc;
     const start = this.doc.positionAt(0);
@@ -693,15 +582,8 @@ export class Editor {
   private resetLayouts(): void {
     this.cache.clear();
     this.cellCache.clear();
-    this.bodyLayout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
-    this.tables = new TableLayouter(
-      this.setup,
-      this.measurer,
-      this.cellCache,
-      (id) => this.document.story(id),
-      (id) => this.cellFormat(this.document.story(id)),
-    );
-    this.tableViews.clear();
+    this.bodyLayout = new PagedLayout(this.setup, this.measurer, this.cache, this.fmt.formatOf);
+    this.fmt.reset(this.measurer, this.cellCache);
     this.layout = this.bodyLayout;
   }
 
@@ -801,7 +683,7 @@ export class Editor {
     const t0 = performance.now();
     const body = this.body;
     const pre = this.preedit ? { offset: this.headOffset(), text: this.preedit, fmt: this.pendingFmt() } : null;
-    this.cellPreedit = this.active && pre ? { story: this.active.story, preedit: pre } : null;
+    this.fmt.cellPreedit = this.active && pre ? { story: this.active.story, preedit: pre } : null;
     // 바뀐 표 (레코드, 편집 중인 셀, 원격 변경)의 표 문단을 다시 조판하게 한다
     this.touchTables();
     // 화면 아래 한 화면 분량까지만 즉시 배치하고 나머지는 백그라운드로
@@ -867,7 +749,7 @@ export class Editor {
 
   private render(): void {
     const t0 = performance.now();
-    const { scroller, canvas, ctx, setup } = this;
+    const { scroller, canvas, ctx } = this;
     const layout = this.bodyLayout;
     const dpr = window.devicePixelRatio || 1;
     const w = scroller.clientWidth;
@@ -887,15 +769,16 @@ export class Editor {
     ctx.fillRect(0, 0, w, h);
 
     // 쪽
-    const firstPage = Math.max(0, Math.floor((top - setup.gap) / (setup.height + setup.gap)));
-    for (let p = firstPage; p < layout.pageCount; p++) {
-      const y = pageTop(setup, p) - top;
+    // 쪽 상자는 레이아웃이 낸다 (12 §2: 구역마다 쪽 크기가 다를 수 있다)
+    for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
+      const pb = layout.pageBox(p);
+      const y = pb.top - top;
       if (y > h) break;
       ctx.shadowColor = COLORS.pageShadow;
       ctx.shadowBlur = 8;
       ctx.shadowOffsetY = 1;
       ctx.fillStyle = COLORS.page;
-      ctx.fillRect(px, y, setup.width, setup.height);
+      ctx.fillRect(px + pb.x, y, pb.width, pb.height);
     }
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
@@ -980,7 +863,7 @@ export class Editor {
       const x0 = px + ln.x - xs[ln.start]!;
       /** 표시 인덱스 d의 화면 x (들여쓰기·정렬·양쪽 맞춤 포함) */
       const X = (d: number) => px + lineX(para.layout, ln, d);
-      const sty = this.styleKey(para.info as ParagraphInfo);
+      const sty = this.fmt.styleKey(para.info as ParagraphInfo);
 
       // 끌고 있는 문단
       if (isBody && this.drag && ref.para >= this.drag.i && ref.para <= this.drag.j) {
@@ -1090,11 +973,11 @@ export class Editor {
   private drawTable(para: PlacedPara, px: number, top: number, h: number): void {
     const info = para.info as ParagraphInfo;
     const id = info.objs?.get(0)?.table;
-    const v = id ? this.tableViews.get(id) : undefined;
+    const v = id ? this.fmt.tableViews.get(id) : undefined;
     if (!v) return;
     const { ctx } = this;
     const lines = para.lines;
-    this.tables.place(v.input, v.measure, lines);
+    this.fmt.tables.place(v.input, v.measure, lines);
     const rec = this.document.table(v.id);
     const colX = v.measure.colX;
     // 본문 선택이 표 원소를 덮으면 표 전체를 선택 색으로
@@ -1127,7 +1010,7 @@ export class Editor {
         ctx.rect(cx, cy, cw, ch);
         ctx.clip();
         for (const sid of [cell.story, ...cell.covered]) {
-          const c = this.tables.cells.get(sid);
+          const c = this.fmt.tables.cells.get(sid);
           const d = this.document.story(sid);
           if (!c || (sid !== cell.story && isEmptyDoc(d))) continue;
           this.drawLines(c.layout, d, px, top, h, null);
@@ -1155,83 +1038,6 @@ export class Editor {
   }
 
   // ── 서식 (10 §4) ──────────────────────────────────────
-
-  /** 문단의 스타일 캐시 키: 스타일에 기본 글자 서식이 있으면 그 이름, 없으면 '' */
-  private styleKey(info: ParagraphInfo): string {
-    const name = info.attrs?.style ?? BODY_STYLE;
-    return hasKeys(this.body.resolvedStyle(name).marks) ? name : '';
-  }
-
-  /** 스타일 sty 문단의 서식 번호 → 레이아웃 영향 (함수는 스타일마다 하나) */
-  private styleFn(sty: string, doc: Doc = this.drawDoc): (id: number) => RunStyle {
-    const c = this.styleCache(doc);
-    let f = c.fns.get(sty);
-    if (!f) {
-      f = (id: number) => this.drawStyle(id, sty, doc).run;
-      c.fns.set(sty, f);
-    }
-    return f;
-  }
-
-  /** 스토리의 서식 캐시 (스타일 정의 판이 바뀌면 새로) */
-  private styleCache(doc: Doc) {
-    const v = this.body.stylesVersion;
-    let c = this.styleCaches.get(doc);
-    if (!c || c.version !== v) this.styleCaches.set(doc, (c = { version: v, draw: new Map(), fns: new Map() }));
-    return c;
-  }
-
-  /** (문단 스타일 sty, 서식 번호) → 그리기 정보. 스타일의 기본 글자 서식 위에 글자 서식을 덮는다 */
-  private drawStyle(id: number, sty = '', doc: Doc = this.drawDoc): DrawStyle {
-    const c = this.styleCache(doc);
-    let table = c.draw.get(sty);
-    if (!table) {
-      table = [];
-      c.draw.set(sty, table);
-    }
-    let d = table[id];
-    if (d) return d;
-    const own = doc.markSet(id);
-    const m: MarkSet = sty ? { ...this.body.resolvedStyle(sty).marks, ...own } : own;
-    if (!hasKeys(m)) d = PLAIN_DRAW;
-    else {
-      // 크기는 1/1000pt → px (96dpi)
-      const sizePx = typeof m.size === 'number' && m.size > 0 ? (m.size / 1000) * (96 / 72) : this.fontSize;
-      const base = sizePx / this.fontSize;
-      const script = m.script === 'sup' || m.script === 'sub' ? m.script : null;
-      const scale = script ? base * SCRIPT_SCALE : base;
-      const face = m.bold ? 1 : 0;
-      d = {
-        run: face === 0 && scale === 1 && base === 1 ? PLAIN_STYLE : { face, scale, line: base },
-        bold: !!m.bold,
-        italic: !!m.italic,
-        underline: !!m.underline || !!m.link,
-        strike: !!m.strike,
-        color: m.color ?? (m.link ? LINK_COLOR : null),
-        highlight: m.highlight ?? null,
-        shift: script === 'sup' ? SUP_SHIFT * sizePx : script === 'sub' ? SUB_SHIFT * sizePx : 0,
-      };
-    }
-    table[id] = d;
-    return d;
-  }
-
-  /** 문단 속성(스타일 사슬 → 직접 속성)을 px 상자로. 레이아웃에 영향이 없으면 null (기본 문단과 같은 빠른 경로) */
-  private paraBox(attrs: ParaAttrs, rs: ResolvedStyle, label: ListLabel | null = null): ParaBox | null {
-    const a = hasKeys(rs.para) ? mergeParaAttrs(rs.para, attrs) : attrs;
-    if (!a.align && !a.indent && !a.space && !a.line && !label) return null;
-    // 목록 문단: 왼쪽 들여쓰기는 목록 수준의 값, 첫 줄은 본문과 나란히 (번호는 내어쓴 자리에, 10 §4)
-    const lv = label ? label.def.levels[label.level]! : null;
-    return {
-      align: a.align ?? 'left',
-      left: lv ? pt(lv.indent) : pt(a.indent?.left),
-      right: pt(a.indent?.right),
-      first: lv ? 0 : pt(a.indent?.first),
-      before: a.space?.before !== undefined ? pt(a.space.before) : this.setup.paraSpacing,
-      after: pt(a.space?.after),
-      line: a.line ? (a.line.rule === 'multiple' ? { rule: 'multiple', value: a.line.value } : { rule: a.line.rule, value: pt(a.line.value) }) : null,
-    };
-  }
 
   /** 그리기용 CSS font: 글꼴 번호 f(셰이핑 중)와 서식 */
   private cssFont(f: number, d: DrawStyle): string {
@@ -1272,7 +1078,7 @@ export class Editor {
       const id = idAt(k);
       let j = k + 1;
       while (j < end && !(perChar && pl.stops[j]) && fontAt(j) === f && idAt(j) === id && !blank(cpSlice(pl, j, j + 1))) j++;
-      const d = this.drawStyle(id, sty);
+      const d = this.fmt.drawStyle(id, sty, this.drawDoc);
       const font = this.cssFont(f, d);
       if (font !== lastFont) {
         ctx.font = font;
@@ -1303,7 +1109,7 @@ export class Editor {
     while (k < end) {
       let j = k + 1;
       while (j < end && fmt[j] === fmt[k]) j++;
-      const d = this.drawStyle(fmt[k]!, sty);
+      const d = this.fmt.drawStyle(fmt[k]!, sty, this.drawDoc);
       if (d !== PLAIN_DRAW) fn(k, j, d);
       k = j;
     }
@@ -1641,7 +1447,7 @@ export class Editor {
   private drawMarker(pl: ParaLayout, px: number, baseY: number, sty: string): void {
     const mk = pl.marker!;
     const { ctx } = this;
-    const d = this.drawStyle(mk.id, sty);
+    const d = this.fmt.drawStyle(mk.id, sty, this.drawDoc);
     const x0 = px + this.setup.margin + (pl.box?.left ?? 0) + mk.x;
     ctx.fillStyle = d.color ?? COLORS.text;
     // 글꼴이 바뀌는 곳마다 (글머리 기호가 대체 글꼴에 있을 수 있다)
@@ -2100,14 +1906,14 @@ export class Editor {
 
   /** 표의 미러 키 (셀 글이 바뀌면 다시 만든다) */
   private mirrorTableKey(id: string): string {
-    const v = this.tableViews.get(id);
+    const v = this.fmt.tableViews.get(id);
     if (!v) return id;
     return v.grid.cells.map((row) => row.map((c) => (c ? `${c.span}:${this.document.story(c.story).version}` : '-')).join(',')).join(';');
   }
 
   /** 표의 미러 (04 §3, 11 §7): table/tr/td, 병합은 rowspan·colspan */
   private mirrorTable(id: string): HTMLElement {
-    const v = this.tableViews.get(id);
+    const v = this.fmt.tableViews.get(id);
     const table = document.createElement('table');
     if (!v) return table;
     for (const row of v.grid.cells) {
@@ -2598,27 +2404,10 @@ export class Editor {
 
   // ── 표 (11 §2.4, §4.3, §5.4) ──────────────────────────
 
-  /** 표 문단의 레이아웃 입력: 표 레코드 → 격자 → 셀 레이아웃 → 행 높이. 표 문단을 조판할 때 부른다 */
-  private tableSpec(id: string, start: number): TableSpec | null {
-    const rec = this.document.table(id);
-    if (!rec) return null;
-    const grid = normalizeTable(rec);
-    if (!grid.rows.length || !grid.cols.length) return null;
-    const input: TableGridInput = {
-      widths: grid.widths.map((w) => pt(w)),
-      minHeights: grid.rows.map((r) => pt(rec.rowAttrs[r]?.minHeight)),
-      cells: grid.cells,
-    };
-    const pre = this.cellPreedit && this.cellPreedit.story.startsWith(`${id}|`) ? this.cellPreedit : null;
-    const measure = this.tables.measure(input, this.setup.lineHeight + CELL_PAD * 2, pre);
-    this.tableViews.set(id, { id, grid, input, measure, at: this.body.positionAt(start) });
-    return { width: measure.width, rows: measure.rows };
-  }
-
   /** 본문에서 표 문단 번호 (없으면 -1) */
   private tableIndex(id: string): number {
     const body = this.body;
-    const v = this.tableViews.get(id);
+    const v = this.fmt.tableViews.get(id);
     if (v) {
       const i = body.paragraphIndexAt(body.resolve(v.at));
       if (body.paragraphs()[i]?.objs?.get(0)?.table === id) return i;
@@ -2631,7 +2420,7 @@ export class Editor {
     const ids = new Set(this.document.takeDirtyTables());
     if (this.active) ids.add(this.active.table);
     if (this.tablesAllDirty) {
-      for (const id of this.tableViews.keys()) ids.add(id);
+      for (const id of this.fmt.tableViews.keys()) ids.add(id);
       this.tablesAllDirty = false;
     }
     for (const id of ids) {
@@ -2645,7 +2434,7 @@ export class Editor {
     const index = this.tableIndex(id);
     if (index < 0) return null;
     const para = this.bodyLayout.para(index);
-    const view = this.tableViews.get(id);
+    const view = this.fmt.tableViews.get(id);
     return para.layout.table && view ? { index, para, view } : null;
   }
 
@@ -2682,8 +2471,8 @@ export class Editor {
       this.leaveTable(loc ? loc.index : this.tableIndex(a.table), 1);
       return;
     }
-    this.tables.place(loc.view.input, loc.view.measure, loc.para.lines);
-    this.layout = this.tables.cells.get(a.story)!.layout;
+    this.fmt.tables.place(loc.view.input, loc.view.measure, loc.para.lines);
+    this.layout = this.fmt.tables.cells.get(a.story)!.layout;
   }
 
   /** 셀 편집을 끝내고 본문으로 (선택은 본문 처음: 부르는 쪽이 정한다) */
@@ -2770,7 +2559,7 @@ export class Editor {
     const ln = para.lines[ref.line]!;
     if (y < ln.y || y >= ln.y + ln.height) return null;
     const id = (para.info as ParagraphInfo).objs?.get(0)?.table;
-    const v = id ? this.tableViews.get(id) : undefined;
+    const v = id ? this.fmt.tableViews.get(id) : undefined;
     if (!v) return null;
     const rx = x - ln.x;
     if (rx < 0 || rx >= v.measure.width) return null;
@@ -2909,7 +2698,7 @@ export class Editor {
   /** 편집 중인 표·셀 (도구 막대 상태) */
   tableState(): { inTable: boolean; merged: boolean; range: boolean } {
     const a = this.active;
-    const v = a && this.tableViews.get(a.table);
+    const v = a && this.fmt.tableViews.get(a.table);
     const pos = v && this.cellPos(v, a.story);
     return { inTable: !!a, merged: !!pos && (pos.cell.span[0] > 1 || pos.cell.span[1] > 1), range: !!this.cellSel && !!v && !!this.cellSelBox(v) };
   }
@@ -2994,7 +2783,7 @@ export class Editor {
   /** 셀 범위를 병합 (왼쪽 위 셀이 주인, 덮인 셀의 글은 그대로 주인 셀 아래에 이어 보인다) */
   tableMerge(): void {
     const a = this.active;
-    const v = a && this.tableViews.get(a.table);
+    const v = a && this.fmt.tableViews.get(a.table);
     const box = v && this.cellSelBox(v);
     if (!a || !v || !box) return;
     const owner = v.grid.cells[box.y0]?.[box.x0];
@@ -3019,7 +2808,7 @@ export class Editor {
   /** 편집 중인 셀(범위)의 배경색 */
   tableCellFill(fill: string | undefined): void {
     const a = this.active;
-    const v = a && this.tableViews.get(a.table);
+    const v = a && this.fmt.tableViews.get(a.table);
     if (!a || !v) return;
     const box = this.cellSelBox(v);
     const cells = box
@@ -3057,7 +2846,7 @@ export class Editor {
   /** 셀 범위의 내용을 지운다 (Delete·Backspace) */
   private clearCellRange(): void {
     const a = this.active;
-    const v = a && this.tableViews.get(a.table);
+    const v = a && this.fmt.tableViews.get(a.table);
     const box = v && this.cellSelBox(v);
     if (!a || !v || !box) return;
     const before: Selection = { ...this.sel };
@@ -3140,7 +2929,7 @@ export class Editor {
         }
         // 셀 범위: 그 셀들로 된 표
         if (this.cellSel && this.active) {
-          const v = this.tableViews.get(this.active.table);
+          const v = this.fmt.tableViews.get(this.active.table);
           const box = v && this.cellSelBox(v);
           if (v && box) {
             const frag: Fragment = { quire: 1, blocks: [], closed: true, stories: {}, lists: {} };
@@ -3836,56 +3625,6 @@ export type { Position };
 /** 빈 스토리 (빈 문단 하나) */
 function isEmptyDoc(d: Doc): boolean {
   return d.length === 1;
-}
-
-function hasKeys(o: object): boolean {
-  for (const _ in o) return true;
-  return false;
-}
-
-/** 코드포인트 수 */
-function cpCount(t: string): number {
-  let n = 0;
-  for (let i = 0; i < t.length; i++) {
-    const c = t.charCodeAt(i);
-    if (c >= 0xd800 && c <= 0xdbff && i + 1 < t.length) i++;
-    n++;
-  }
-  return n;
-}
-
-/** 1/1000pt → px (96dpi) */
-function pt(v: number | undefined): number {
-  return ((v ?? 0) / 1000) * (96 / 72);
-}
-
-/** 인라인 개체 속성 → 레이아웃 크기 (px). 크기가 없으면 100px 정사각형. 떠 있는 개체는 뺀다 */
-function objSizes(objs: ReadonlyMap<number, ObjAttrs>): Map<number, { w: number; h: number }> | null {
-  const out = new Map<number, { w: number; h: number }>();
-  for (const [k, o] of objs) if (!o.float) out.set(k, { w: o.w ? pt(o.w) : 100, h: o.h ? pt(o.h) : 100 });
-  return out.size ? out : null;
-}
-
-/** 떠 있는 개체 → 레이아웃 입력 (px) */
-function floatSpecs(objs: ReadonlyMap<number, ObjAttrs>): Map<number, FloatSpec> | null {
-  let out: Map<number, FloatSpec> | null = null;
-  for (const [k, o] of objs) {
-    const f = o.float;
-    if (!f) continue;
-    (out ??= new Map()).set(k, {
-      w: o.w ? pt(o.w) : 100,
-      h: o.h ? pt(o.h) : 100,
-      relX: f.relX,
-      relY: f.relY,
-      x: typeof f.x === 'number' ? pt(f.x) : f.x,
-      y: pt(f.y),
-      wrap: f.wrap,
-      side: f.side ?? 'largest',
-      gap: pt(f.gap ?? 9000),
-      behind: !!f.behind,
-    });
-  }
-  return out;
 }
 
 /** 크기 조절 손잡이 8곳 (왼쪽 위부터 시계 방향) */
