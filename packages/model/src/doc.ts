@@ -138,9 +138,23 @@ export interface ObjAttrs {
   h?: number;
   /** 대체 텍스트 */
   alt?: string;
+  /** 떠 있는 개체면 위치·배치 (11 §2.3). 없으면 글자처럼 줄 안에 */
+  float?: FloatAttrs;
+}
+
+/** 떠 있는 개체의 위치·배치 (11 §2.3). 길이는 1/1000pt */
+export interface FloatAttrs {
+  relX: 'column' | 'margin' | 'page';
+  relY: 'paragraph' | 'margin' | 'page';
+  x: number | 'left' | 'center' | 'right';
+  y: number;
+  wrap: 'square' | 'topBottom' | 'none';
+  side?: 'both' | 'left' | 'right' | 'largest';
+  gap?: number;
+  behind?: boolean;
 }
 export type ObjKey = keyof ObjAttrs;
-export const OBJ_KEYS: readonly ObjKey[] = ['id', 'kind', 'asset', 'w', 'h', 'alt'];
+export const OBJ_KEYS: readonly ObjKey[] = ['id', 'kind', 'asset', 'w', 'h', 'alt', 'float'];
 /** Loro에서 개체 속성 마크 키의 접두사 */
 export const OBJ_MARK_PREFIX = 'o_';
 /** Loro에서 문단 속성 마크 키의 접두사 (마크 키에는 ':'를 쓸 수 없다, 10 §3) */

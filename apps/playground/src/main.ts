@@ -96,6 +96,14 @@ async function openFormatSample(): Promise<void> {
   const at = paras.findIndex((p) => p.text.startsWith('물의 화학식'));
   if (at >= 0) await editor.insertImage(img, '그러데이션 위에 Quire 이미지라고 쓴 그림', paras[at]!.start);
   const small = editor.doc.paragraphs().findIndex((p) => p.text.startsWith('크기가 섞인 줄'));
+  // 떠 있는 이미지 (2-9): 양쪽 맞춤 문단 오른쪽에 어울림
+  const just = editor.doc.paragraphs().findIndex((p) => p.text.startsWith('양쪽 맞춤은'));
+  if (just >= 0) {
+    await editor.insertImage(img, '어울림 예제 그림', editor.doc.paragraphs()[just]!.start);
+    editor.setObjectAttr('w', 120000);
+    editor.setObjectAttr('h', 67500);
+    editor.setObjectAttr('float', { relX: 'column', relY: 'paragraph', x: 'right', y: 0, wrap: 'square', side: 'largest', gap: 9000 });
+  }
   if (small >= 0) {
     await editor.insertImage(img, '작은 그림', editor.doc.paragraphs()[small]!.start + 7);
     editor.setObjectAttr('w', 36000);
@@ -287,6 +295,12 @@ document.getElementById('img-alt')!.addEventListener('click', () => {
   editor.focus();
 });
 
+const placeSel = document.getElementById('img-place') as HTMLSelectElement;
+placeSel.addEventListener('change', () => {
+  editor.setPlacement(placeSel.value as 'inline' | 'square' | 'topBottom' | 'front' | 'behind');
+  editor.focus();
+});
+
 document.getElementById('fmt-clear')!.addEventListener('click', () => {
   editor.clearMarks();
   editor.focus();
@@ -336,6 +350,10 @@ document.getElementById('restyle-h1')!.addEventListener('click', () => {
 
 /** 도구 막대에 선택 영역의 서식을 보인다 */
 function showMarks(): void {
+  const so = editor.selectedObject();
+  const fl = so?.attrs.float;
+  placeSel.disabled = !so;
+  placeSel.value = !fl ? 'inline' : fl.wrap === 'none' ? (fl.behind ? 'behind' : 'front') : fl.wrap;
   const ps = editor.paragraphState();
   styleSel.value = ps.mixed.has('style') ? '' : ps.style;
   const align = ps.attrs.align ?? 'left';

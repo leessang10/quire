@@ -80,21 +80,33 @@ function formatDoc(doc: Doc): FormatSource {
  * formatted면 서식 많은 문서에서, 서식 구간 안(굵게)에 입력한다.
  */
 /** 이미지 (11 G1): 열 문단에 하나씩 개체 (폭 200px, 높이 120px) */
-function imageDoc(doc: Doc): FormatSource {
+function imageDoc(doc: Doc, floating = false): FormatSource {
   const n = doc.paragraphs().length;
-  for (let i = n - 1; i >= 0; i -= 10) doc.insertObject(doc.paragraphs()[i]!.start + 3, { id: `i${i}`, kind: 'image', asset: 'a'.repeat(32), w: 150000, h: 90000 });
+  // floating: 떠 있는 이미지 (어울림, 오른쪽, 11 §4.2)
+  const float = floating ? { relX: 'column' as const, relY: 'paragraph' as const, x: 'right' as const, y: 0, wrap: 'square' as const, side: 'largest' as const, gap: 9000 } : undefined;
+  for (let i = n - 1; i >= 0; i -= 10)
+    doc.insertObject(doc.paragraphs()[i]!.start + (floating ? 0 : 3), { id: `i${i}`, kind: 'image', asset: 'a'.repeat(32), w: 150000, h: 90000, ...(float ? { float } : {}) });
   doc.takeParagraphChanges();
   const pt = (v = 0) => (v / 1000) * (96 / 72);
   return (info, force) => {
-    const objs = (info as unknown as { objs: Map<number, { w?: number; h?: number }> | null }).objs;
-    const sizes = objs ? new Map([...objs].map(([k, o]) => [k, { w: pt(o.w), h: pt(o.h) }])) : null;
-    return info.fmt || info.mark || force || sizes ? { fmt: info.fmt ?? null, mark: info.mark ?? 0, style: () => PLAIN_STYLE, objs: sizes } : null;
+    const objs = (info as unknown as { objs: Map<number, { w?: number; h?: number; float?: { y: number } }> | null }).objs;
+    const inline = objs ? new Map([...objs].filter(([, o]) => !o.float).map(([k, o]) => [k, { w: pt(o.w), h: pt(o.h) }])) : null;
+    const floats = objs
+      ? new Map(
+          [...objs].filter(([, o]) => o.float).map(([k, o]) => [
+            k,
+            { w: pt(o.w), h: pt(o.h), relX: 'column' as const, relY: 'paragraph' as const, x: 'right' as const, y: pt(o.float!.y), wrap: 'square' as const, side: 'largest' as const, gap: 12, behind: false },
+          ]),
+        )
+      : null;
+    const any = (inline && inline.size) || (floats && floats.size);
+    return info.fmt || info.mark || force || any ? { fmt: info.fmt ?? null, mark: info.mark ?? 0, style: () => PLAIN_STYLE, objs: inline?.size ? inline : null, floats: floats?.size ? floats : null } : null;
   };
 }
 
-function scenario(paragraphs: number, where: number, moves = 0, formatted: boolean | 'list' | 'images' = false) {
+function scenario(paragraphs: number, where: number, moves = 0, formatted: boolean | 'list' | 'images' | 'floats' = false) {
   const doc = makeDoc(paragraphs);
-  const resolve = formatted === 'images' ? imageDoc(doc) : formatted ? formatDoc(doc) : null;
+  const resolve = formatted === 'images' || formatted === 'floats' ? imageDoc(doc, formatted === 'floats') : formatted ? formatDoc(doc) : null;
   let t = performance.now();
   const layout = new PagedLayout(setup, measurer, undefined, resolve);
   layout.update(doc.paragraphs(), null, VIEW * 2);
@@ -127,7 +139,7 @@ function scenario(paragraphs: number, where: number, moves = 0, formatted: boole
     // 굵게 구간 안. 'list'면 목록 항목 안 (Enter가 새 항목을 만들어 번호를 다시 센다)
     let pi = doc.paragraphIndexAt(caret);
     if (formatted === 'list') while (!doc.paragraphs()[pi]!.attrs.list) pi++;
-    if (formatted === 'images') while (!doc.paragraphs()[pi]!.objs) pi++;
+    if (formatted === 'images' || formatted === 'floats') while (!doc.paragraphs()[pi]!.objs) pi++;
     caret = doc.paragraphs()[pi]!.start + 5;
   }
   let caretY = layout.caretRect(caret).y;
@@ -157,6 +169,21 @@ function scenario(paragraphs: number, where: number, moves = 0, formatted: boole
     back.push(step(() => doc.deleteRange(--caret, caret + 1)));
   }
 
+  // 떠 있는 이미지 옮기기 (11 G2): 캐럿 근처 이미지의 y를 바꾼다. 다시 나눈 문단 수를 센다
+  const floatMove: number[] = [];
+  let floatReflow = 0;
+  if (formatted === 'floats') {
+    const pi = doc.paragraphIndexAt(caret);
+    let fi = pi;
+    while (fi > 0 && !doc.paragraphs()[fi]!.objs) fi--;
+    for (let k = 0; k < 20; k++) {
+      const off = doc.paragraphs()[fi]!.start;
+      const cur = doc.objAt(off)!.float!;
+      floatMove.push(step(() => doc.setObjAttr(off, 'float', { ...cur, y: (k % 5) * 6000 })));
+      floatReflow = Math.max(floatReflow, layout.counts.reflowed);
+    }
+  }
+
   layout.finish();
   const mem = process.memoryUsage().heapUsed / 1e6;
   console.log(
@@ -164,12 +191,13 @@ function scenario(paragraphs: number, where: number, moves = 0, formatted: boole
       '',
       `■ ${paragraphs.toLocaleString()} 문단 / ${layout.pageCount} 쪽 / 캐럿 위치 ${Math.round(where * 100)}%  (heap ${mem.toFixed(0)} MB)` +
         (moves ? ` / 이동 ${moves}회 후 구획 ${doc.segmentCount}개` : '') +
-        (formatted === 'images' ? ` / 이미지 ${Math.ceil(paragraphs / 10).toLocaleString()}개, 이미지 문단에서` : formatted ? ` / 서식 많음 (글자 + 문단 + 목록)${formatted === 'list' ? ', 목록 항목에서' : ''}` : ''),
+        (formatted === 'images' || formatted === 'floats' ? ` / ${formatted === 'floats' ? '떠 있는(어울림) ' : ''}이미지 ${Math.ceil(paragraphs / 10).toLocaleString()}개, 이미지 문단에서` : formatted ? ` / 서식 많음 (글자 + 문단 + 목록)${formatted === 'list' ? ', 목록 항목에서' : ''}` : ''),
       ...(moves ? [`  문단 이동          ${stats(moveMs)}`] : []),
       `  첫 화면 배치       ${firstScreen.toFixed(1)} ms   (나머지 백그라운드 ${background.toFixed(0)} ms, 8ms 조각 ${slices}개)`,
       `  글자 입력          ${stats(typing)}`,
       `  Enter              ${stats(enter)}`,
       `  Backspace          ${stats(back)}`,
+      ...(floatMove.length ? [`  이미지 옮기기      ${stats(floatMove)}  (다시 나눈 문단 최대 ${floatReflow}개)`] : []),
     ].join(NL),
   );
 }
@@ -189,5 +217,6 @@ it('engine benchmark', () => {
   scenario(10_000, 0.5, 0, 'list');
   // 이미지 (11 G1: 1,000쪽 문서에 이미지 1,000개)
   scenario(10_000, 0.5, 0, 'images');
+  scenario(10_000, 0.5, 0, 'floats');
   scenario(100_000, 0.5, 0, 'list');
 }, 600_000);
