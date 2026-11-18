@@ -292,6 +292,11 @@ export class Doc {
   private visible = 0;
   private _version = 0;
   private paras: ParagraphInfo[] = [];
+  /**
+   * batch() 중 미룬 문단 시작 옮기기: 문단 번호 index부터 delta만큼. 편집이 뒤에서 앞으로 가므로 (다중 커서) 미룬 구간은
+   * 늘 지금 편집보다 뒤이고, 문단 찾기(이분 탐색)는 그 앞에서 끝난다. 끝에 한 번에 옮긴다 (문단 수 n번을 캐럿마다가 아니라 한 번)
+   */
+  private deferredShift: Array<{ index: number; delta: number }> | null = null;
   /** 마지막 takeParagraphChanges() 이후 바뀐 문단 구간: 앞에서 changeFrom개, 뒤에서 changeSuffix개는 그대로 */
   private changeFrom = Infinity;
   private changeSuffix = Infinity;
@@ -2588,10 +2593,41 @@ export class Doc {
     // Enter·합치기). 번호는 ¶ ID로 찾으므로 보통 문단이 늘거나 줄어도 다시 셀 필요가 없다
     if (this.listMap.size > 0 && !sameListSeq(old, i, j + 1, rebuilt)) this._listEpoch++;
     old.splice(i, j - i + 1, ...rebuilt);
+    if (this.deferredShift) {
+      const grow = rebuilt.length - (j - i + 1);
+      for (const ev of this.deferredShift) if (ev.index > j) ev.index += grow;
+      if (delta !== 0) this.deferredShift.push({ index: i + rebuilt.length, delta });
+      return;
+    }
     for (let k = i + rebuilt.length; k < old.length; k++) {
       const p = old[k]!;
       p.start += delta;
       p.end += delta;
+    }
+  }
+
+  /**
+   * 여러 곳 편집 (다중 커서, 11 §5.2): fn 안의 편집은 뒤(큰 오프셋)에서 앞으로 해야 한다. 문단 시작 옮기기를 끝에 한 번만 한다.
+   * fn 안에서는 편집한 곳보다 뒤 문단의 start·end를 읽으면 안 된다 (낡았다)
+   */
+  batch<T>(fn: () => T): T {
+    if (this.deferredShift) return fn();
+    this.deferredShift = [];
+    try {
+      return fn();
+    } finally {
+      const evs = this.deferredShift.sort((a, b) => a.index - b.index);
+      this.deferredShift = null;
+      const old = this.paras;
+      let acc = 0;
+      let e = 0;
+      for (let k = evs.length ? evs[0]!.index : old.length; k < old.length; k++) {
+        while (e < evs.length && evs[e]!.index <= k) acc += evs[e++]!.delta;
+        if (acc === 0) continue;
+        const q = old[k]!;
+        q.start += acc;
+        q.end += acc;
+      }
     }
   }
 

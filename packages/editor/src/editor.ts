@@ -285,6 +285,8 @@ export class Editor {
   private goalX: number | null = null;
   /** 편집 중인 셀 (null이면 본문) */
   private active: ActiveCell | null = null;
+  /** 다중 커서 (11 §5.2): 첫 캐럿(sel) 말고 다른 캐럿들. 같은 스토리, 겹치지 않음 */
+  private extras: Array<{ anchor: Position; head: Position }> = [];
   private tables!: TableLayouter;
   private readonly tableViews = new Map<string, TableView>();
   /** 셀 범위 선택 (병합·여러 셀 지우기) */
@@ -908,6 +910,7 @@ export class Editor {
     for (const f of floats) if (!f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
     ctx.textBaseline = 'middle';
     this.drawParagraphDrag(px, top);
+    this.drawExtraCarets(px, top, h);
     this.drawRemoteCarets(px, top, w, visibleParas);
 
     if (!ready) {
@@ -932,9 +935,8 @@ export class Editor {
     const active = layout === this.layout;
     this.drawDoc = doc;
     this.drawActive = active;
-    const { anchor, head } = active ? this.selection() : { anchor: 0, head: 0 };
-    const selFrom = Math.min(anchor, head);
-    const selTo = Math.max(anchor, head);
+    // 선택 범위들 (다중 커서면 여럿)
+    const ranges = active ? this.caretList().filter((c) => c.anchor !== c.head).map((c) => [Math.min(c.anchor, c.head), Math.max(c.anchor, c.head)] as const) : [];
     ctx.font = this.font;
     ctx.textBaseline = 'alphabetic';
     // 셰이핑 중이면 커닝을 켠다: 같은 글꼴 파일이면 캔버스가 HarfBuzz와 같은 폭으로 그린다 (ADR-0002)
@@ -986,7 +988,7 @@ export class Editor {
       if (para.layout.fmt) this.drawHighlights(para.layout, ln, px, baseY, sty);
 
       // 선택 영역
-      if (selFrom !== selTo) {
+      for (const [selFrom, selTo] of ranges) {
         const lineDocStart = pStart + ln.start;
         const isLast = ln.index === para.lines.length - 1;
         const lineDocEnd = pStart + ln.end + (isLast ? 1 : 0); // 마지막 줄은 ¶ 포함
@@ -1757,10 +1759,9 @@ export class Editor {
   /** 선택한 문단들의 문단 속성 키 하나를 value로 (undefined = 해제). 실행 취소 한 단계 */
   setParagraphAttr(key: ParaKey, value: unknown): void {
     this.input.commitComposition();
-    const [i, j] = this.selectedParagraphs();
-    const before: Selection = { ...this.sel };
+    const before = this.fullSel();
     const ops: Op[] = [];
-    for (let k = i; k <= j; k++) ops.push(...this.doc.setParaAttr(k, key, value));
+    for (const k of this.caretParagraphs()) ops.push(...this.doc.setParaAttr(k, key, value));
     if (ops.length === 0) return;
     this.history.seal();
     this.commit(ops, before);
@@ -1813,6 +1814,7 @@ export class Editor {
 
   /** Enter (10 §2.2): 문단 끝에서 Enter면 다음 문단은 스타일의 next (제목 → 본문) */
   private insertParagraph(): void {
+    if (this.extras.length) return this.insertAll('\n');
     // 빈 목록 항목에서 Enter: 수준을 올리고, 수준 0이면 목록을 끝낸다 (10 §2.4)
     const at = this.caretAtListStart();
     if (at?.empty) {
@@ -1869,6 +1871,7 @@ export class Editor {
    */
   setMark(key: MarkKey, value: unknown): void {
     this.input.commitComposition();
+    if (this.extras.length) return this.formatAll((f, t) => this.doc.format(f, t, key, value));
     const [from, to] = this.range();
     if (from === to) {
       const base = this.selectionMarks().marks;
@@ -1882,6 +1885,17 @@ export class Editor {
     }
     const before: Selection = { ...this.sel };
     const ops = this.doc.format(from, to, key, value);
+    if (ops.length === 0) return;
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
+  /** 다중 커서: 비지 않은 선택마다 서식 (캐럿은 그대로), 실행 취소 한 단계 */
+  private formatAll(fn: (from: number, to: number) => Op[]): void {
+    const before = this.fullSel();
+    const ops: Op[] = [];
+    for (const c of this.caretList()) if (c.anchor !== c.head) ops.push(...fn(Math.min(c.anchor, c.head), Math.max(c.anchor, c.head)));
     if (ops.length === 0) return;
     this.history.seal();
     this.commit(ops, before);
@@ -1903,6 +1917,7 @@ export class Editor {
   /** 서식 지우기 (Ctrl+\): 선택의 글자 서식을 모두 해제 */
   clearMarks(): void {
     this.input.commitComposition();
+    if (this.extras.length) return this.formatAll((f, t) => MARK_KEYS.flatMap((k) => this.doc.format(f, t, k, undefined)));
     const [from, to] = this.range();
     if (from === to) {
       this.pending = { at: from, marks: {} };
@@ -2181,6 +2196,7 @@ export class Editor {
     this.sel = { anchor: this.doc.positionAt(anchor), head: this.doc.positionAt(head), ...(this.active ? { story: this.active.story } : {}) };
     if (!keepGoal) this.goalX = null;
     this.cellSel = null;
+    this.extras = [];
     if (this.pending && (anchor !== head || head !== this.pending.at)) this.pending = null;
   }
 
@@ -2188,6 +2204,7 @@ export class Editor {
 
   /** 선택 영역을 지우고 텍스트를 넣는다. 결과를 트랜잭션 하나로 기록 */
   private replaceSelection(text: string, mergeKey?: string, extra?: () => Op[]): void {
+    if (this.extras.length) return this.insertAll(text, mergeKey);
     const before: Selection = { ...this.sel };
     const [from, to] = this.range();
     const ops: Op[] = [];
@@ -2228,6 +2245,17 @@ export class Editor {
     return [this.doc.paragraphIndexAt(from), this.doc.paragraphIndexAt(to)];
   }
 
+  /** 모든 캐럿이 걸친 문단 번호 (다중 커서의 문단 속성) */
+  private caretParagraphs(): number[] {
+    const set = new Set<number>();
+    for (const c of this.caretList()) {
+      const a = this.doc.paragraphIndexAt(Math.min(c.anchor, c.head));
+      const b = this.doc.paragraphIndexAt(Math.max(c.anchor, c.head));
+      for (let k = a; k <= b; k++) set.add(k);
+    }
+    return [...set].sort((x, y) => x - y);
+  }
+
   /** 선택한 문단들을 한 칸 위(-1)/아래(+1)로 옮긴다. 글자는 그대로, 구획 순서만 바뀐다 */
   private moveParagraphs(dir: -1 | 1): void {
     const [i, j] = this.selectedParagraphs();
@@ -2254,6 +2282,204 @@ export class Editor {
     this.commit(ops, before);
   }
 
+  // ── 다중 커서 (11 §5.2) ───────────────────────────────
+
+  /** 모든 캐럿 (첫 캐럿 먼저), 오프셋 */
+  private caretList(): Array<{ anchor: number; head: number; primary: boolean }> {
+    const d = this.doc;
+    const out = [{ ...this.selection(), primary: true }];
+    for (const e of this.extras) out.push({ anchor: d.resolve(e.anchor), head: d.resolve(e.head), primary: false });
+    return out;
+  }
+
+  /** 캐럿 수 (상태 표시) */
+  get caretCount(): number {
+    return 1 + this.extras.length;
+  }
+
+  /** 기록용 선택: 첫 캐럿 + 다른 캐럿 */
+  private fullSel(): Selection {
+    return this.extras.length ? { ...this.sel, more: this.extras.map((e) => ({ ...e })) } : { ...this.sel };
+  }
+
+  /**
+   * 캐럿들을 정한다 (오프셋). 겹치거나 같은 자리의 캐럿은 합친다 (첫 캐럿이 남는다). 상한 MAX_CARETS개.
+   * primary: list 안 첫 캐럿의 번호
+   */
+  private setCarets(list: Array<{ anchor: number; head: number }>, primary = 0, keepGoal = false): void {
+    const max = this.doc.maxCaret;
+    const items = list.map((c, k) => ({
+      anchor: Math.max(0, Math.min(max, c.anchor)),
+      head: Math.max(0, Math.min(max, c.head)),
+      primary: k === primary,
+    }));
+    items.sort((a, b) => Math.min(a.anchor, a.head) - Math.min(b.anchor, b.head));
+    const merged: typeof items = [];
+    for (const it of items) {
+      const last = merged[merged.length - 1];
+      const from = Math.min(it.anchor, it.head);
+      if (last && from <= Math.max(last.anchor, last.head) && (from < Math.max(last.anchor, last.head) || it.anchor === it.head || last.anchor === last.head)) {
+        // 겹침: 하나로 (방향은 앞 것)
+        const lo = Math.min(last.anchor, last.head, from);
+        const hi = Math.max(last.anchor, last.head, it.anchor, it.head);
+        const fwd = last.head >= last.anchor;
+        last.anchor = fwd ? lo : hi;
+        last.head = fwd ? hi : lo;
+        last.primary = last.primary || it.primary;
+      } else merged.push(it);
+    }
+    const p = merged.find((m) => m.primary) ?? merged[0]!;
+    this.setSelection(p.anchor, p.head, keepGoal);
+    this.extras = merged
+      .filter((m) => m !== p)
+      .slice(0, MAX_CARETS - 1)
+      .map((m) => ({ anchor: this.doc.positionAt(m.anchor), head: this.doc.positionAt(m.head) }));
+  }
+
+  /** 캐럿 하나 더하기 (Alt+누르기, Ctrl+Alt+↑/↓) */
+  addCaret(offset: number): void {
+    const list = this.caretList();
+    if (list.length >= MAX_CARETS) return;
+    const k = list.findIndex((c) => c.primary);
+    this.setCarets([...list, { anchor: offset, head: offset }], k);
+    this.history.seal();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** Ctrl+Alt+↑/↓: 가장 위(아래) 캐럿의 위(아래) 줄 같은 x에 캐럿 */
+  private addCaretVertical(dir: -1 | 1): void {
+    const list = this.caretList();
+    const edge = list.reduce((a, b) => ((dir < 0 ? b.head < a.head : b.head > a.head) ? b : a));
+    const r = this.layout.caretRect(edge.head);
+    const t = this.layout.stepLine(r.ref, dir);
+    if (!t) return;
+    const x = this.goalX ?? this.layout.caretRect(this.headOffset()).x;
+    this.addCaret(this.layout.offsetInLine(t, x));
+    this.goalX = x;
+  }
+
+  /**
+   * 모든 캐럿에서 편집 (뒤 캐럿부터: 앞 캐럿 오프셋이 그대로 맞는다). fn이 null이면 그 캐럿은 그대로.
+   * 트랜잭션 하나로 기록한다
+   */
+  private editAll(fn: (from: number, to: number) => { ops: Op[]; caret: number } | null, mergeKey?: string): void {
+    const before = this.fullSel();
+    const list = this.caretList();
+    const order = list.map((c, k) => ({ ...c, k })).sort((a, b) => Math.min(b.anchor, b.head) - Math.min(a.anchor, a.head));
+    const ops: Op[] = [];
+    const out: Array<{ a: Position; h: Position }> = [];
+    // 문단 시작 옮기기는 끝에 한 번 (Doc.batch)
+    this.doc.batch(() => {
+      for (const c of order) {
+        const from = Math.min(c.anchor, c.head);
+        const to = Math.max(c.anchor, c.head);
+        const r = fn(from, to);
+        if (r) {
+          ops.push(...r.ops);
+          const pos = this.doc.positionAt(r.caret);
+          out[c.k] = { a: pos, h: pos };
+        } else out[c.k] = { a: this.doc.positionAt(c.anchor), h: this.doc.positionAt(c.head) };
+      }
+    });
+    this.pending = null;
+    if (ops.length === 0) return;
+    // 위치는 원소 기준이라 다른 캐럿 편집 뒤에도 맞다. 오프셋으로 풀어 합치기·정렬
+    const d = this.doc;
+    this.setCarets(out.map((o) => ({ anchor: d.resolve(o.a), head: d.resolve(o.h) })), 0);
+    this.commit(ops, before, mergeKey);
+  }
+
+  /** 모든 캐럿에 글 넣기 (선택은 바꾼다) */
+  private insertAll(text: string, mergeKey?: string): void {
+    const n = Array.from(text.replace(/\r\n?/g, '\n')).length;
+    this.editAll((from, to) => {
+      const ops: Op[] = from !== to ? this.doc.deleteRange(from, to) : [];
+      ops.push({ type: 'insert', ids: this.doc.insertText(from, text) });
+      return { ops, caret: from + n };
+    }, mergeKey);
+  }
+
+  /** 모든 캐럿에서 지우기: 선택이면 선택, 아니면 앞(dir < 0)·뒤 글자 (word면 단어) */
+  private deleteAll(dir: -1 | 1, word: boolean): void {
+    this.editAll((from, to) => {
+      const d = this.doc;
+      if (from === to) {
+        if (dir < 0 && from === 0) return null;
+        if (dir > 0 && from >= d.maxCaret) return null;
+        const o = word ? this.wordBoundary(from, dir) : this.graphemeStep(from, dir);
+        [from, to] = dir < 0 ? [o, from] : [from, o];
+        if (from === to) return null;
+      }
+      return { ops: d.deleteRange(from, to), caret: from };
+    }, from0Key(dir, word));
+  }
+
+  /** 모든 캐럿을 옮긴다 (extend면 선택을 늘린다) */
+  private moveAll(step: (head: number) => number, extend: boolean): void {
+    const list = this.caretList();
+    const k = list.findIndex((c) => c.primary);
+    this.setCarets(
+      list.map((c) => {
+        const h = step(c.head);
+        return { anchor: extend ? c.anchor : h, head: h };
+      }),
+      k,
+    );
+    this.history.seal();
+    this.scrollCaretIntoView();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 다음·이전 grapheme 경계 (레이아웃 없이: 여러 캐럿을 편집하는 동안 레이아웃은 낡았다) */
+  private graphemeStep(offset: number, dir: -1 | 1): number {
+    const d = this.doc;
+    const p = d.paragraphs()[d.paragraphIndexAt(offset)]!;
+    const k = offset - p.start;
+    const n = Array.from(p.text).length;
+    if (dir < 0 && k === 0) return offset - 1; // 앞 문단 ¶
+    if (dir > 0 && k >= n) return offset + 1; // 이 문단 ¶
+    let cp = 0;
+    for (const seg of graphemes.segment(p.text)) {
+      const end = cp + Array.from(seg.segment).length;
+      if (dir < 0 && end >= k) return p.start + cp;
+      if (dir > 0 && end > k) return p.start + end;
+      cp = end;
+    }
+    return p.start + (dir < 0 ? 0 : n);
+  }
+
+  /** 다른 캐럿을 그린다 (첫 캐럿은 DOM 캐럿). 조합 중이면 조합 문자열을 흐리게 미리 보인다 */
+  private drawExtraCarets(px: number, top: number, h: number): void {
+    if (!this.extras.length) return;
+    const { ctx } = this;
+    const d = this.doc;
+    ctx.save();
+    ctx.textBaseline = 'alphabetic';
+    for (const e of this.extras) {
+      const head = d.resolve(e.head);
+      const r = this.layout.caretRect(head);
+      const y = r.y - top;
+      if (y > h || y + r.height < 0) continue;
+      if (this.preedit) {
+        ctx.globalAlpha = 0.45;
+        ctx.font = this.font;
+        ctx.fillStyle = COLORS.text;
+        const ln = this.layout.line(r.ref);
+        ctx.fillText(this.preedit, px + r.x, ln.baseline - top);
+        const w = ctx.measureText(this.preedit).width;
+        ctx.fillRect(px + r.x, y + r.height - 5, w, 1.5);
+        ctx.globalAlpha = 1;
+      }
+      if (this.focused) {
+        ctx.fillStyle = COLORS.text;
+        ctx.fillRect(Math.round(px + r.x), y + 3, 2, r.height - 6);
+      }
+    }
+    ctx.restore();
+  }
+
   /** 편집 중인 스토리의 연산을 기록한다 (셀이면 스토리로 감싼다, 11 §2.5) */
   private commit(ops: Op[], before: Selection, mergeKey?: string): void {
     this.commitRaw(this.active ? Document.tag(this.active.story, ops) : ops, before, mergeKey);
@@ -2261,7 +2487,7 @@ export class Editor {
 
   /** 문서 연산 그대로 기록 (본문 연산, 표 레코드 연산, 이미 감싼 스토리 연산) */
   private commitRaw(ops: Op[], before: Selection, mergeKey?: string): void {
-    this.history.record({ ops, before, after: { ...this.sel }, mergeKey, time: Date.now() });
+    this.history.record({ ops, before, after: this.fullSel(), mergeKey, time: Date.now() });
     this.afterChange();
   }
 
@@ -2316,7 +2542,8 @@ export class Editor {
       this.doc = this.body;
       this.layout = this.bodyLayout;
     }
-    this.sel = sel;
+    this.sel = { anchor: sel.anchor, head: sel.head, ...(sel.story ? { story: sel.story } : {}) };
+    this.extras = sel.more ? sel.more.map((e) => ({ ...e })) : [];
     this.afterChange();
   }
 
@@ -2807,6 +3034,12 @@ export class Editor {
         break;
       case 'compositionStart': {
         // 조합이 가져가는 기존 글자: 선택 영역, 또는 입력 층이 알려 준 범위(한자 재변환 등)
+        if (this.extras.length && !i.replace) {
+          // 다중 커서: 모든 선택을 지우고 조합은 첫 캐럿에서 (확정하면 모두에 넣는다)
+          if (this.caretList().some((c) => c.anchor !== c.head)) this.editAll((f, t) => (f === t ? null : { ops: this.doc.deleteRange(f, t), caret: f }));
+          this.preedit = '';
+          break;
+        }
         const [from, to] = i.replace ?? this.range();
         if (i.replace) this.setSelection(from, to);
         if (from !== to) this.deleteRange(from, to);
@@ -2814,6 +3047,11 @@ export class Editor {
         break;
       }
       case 'replaceText': {
+        // 다중 커서에서 캐럿에 입력: 모든 캐럿에
+        if (this.extras.length && i.from === i.to && i.from === this.headOffset()) {
+          this.insertAll(i.text, 'type');
+          break;
+        }
         // IME가 주변 텍스트를 고침 (보통은 캐럿에 입력: from = to = 캐럿)
         this.setSelection(i.from, i.to);
         this.replaceSelection(i.text, i.from === i.to ? 'type' : undefined);
@@ -2838,6 +3076,17 @@ export class Editor {
       case 'cut': {
         const [from, to] = this.range();
         i.event.preventDefault();
+        if (this.extras.length) {
+          // 다중 커서: 선택들을 줄로 이어 복사
+          const parts = this.caretList()
+            .filter((c) => c.anchor !== c.head)
+            .sort((a, b) => Math.min(a.anchor, a.head) - Math.min(b.anchor, b.head))
+            .map((c) => this.doc.slice(Math.min(c.anchor, c.head), Math.max(c.anchor, c.head)));
+          if (!parts.length) return;
+          i.event.clipboardData?.setData('text/plain', parts.join('\n'));
+          if (i.kind === 'cut') this.editAll((f, t) => (f === t ? null : { ops: this.doc.deleteRange(f, t), caret: f }));
+          break;
+        }
         if (from === to) return;
         i.event.clipboardData?.setData('text/plain', this.doc.slice(from, to));
         if (i.kind === 'cut') this.deleteRange(from, to);
@@ -2870,6 +3119,16 @@ export class Editor {
     if (this.cellSel && e.key === 'Escape') {
       this.cellSel = null;
       this.render();
+      e.preventDefault();
+      return;
+    }
+    // 다중 커서 (11 §5.2): Ctrl+Alt+↑/↓ 캐럿 더하기
+    if (mod && e.altKey && !shift && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      this.addCaretVertical(e.key === 'ArrowUp' ? -1 : 1);
+      e.preventDefault();
+      return;
+    }
+    if (this.extras.length && this.multiKey(e, mod, shift)) {
       e.preventDefault();
       return;
     }
@@ -3019,6 +3278,53 @@ export class Editor {
     if (handled) e.preventDefault();
   }
 
+  /** 다중 커서일 때의 키: 지우기·이동·Esc. 처리했으면 true (나머지는 보통 경로: 입력·서식은 모든 캐럿에) */
+  private multiKey(e: KeyboardEvent, mod: boolean, shift: boolean): boolean {
+    const L = this.layout;
+    const max = this.doc.maxCaret;
+    const vert = (dir: number) => (h: number) => {
+      const r = L.caretRect(h);
+      const t = L.stepLine(r.ref, dir);
+      return t ? L.offsetInLine(t, r.x) : dir < 0 ? 0 : max;
+    };
+    switch (e.key) {
+      case 'Escape':
+        this.setSelection(this.selection().anchor, this.headOffset());
+        this.render();
+        this.opts.onChange?.(this);
+        return true;
+      case 'Backspace':
+      case 'Delete':
+        if (e.altKey) return false;
+        this.deleteAll(e.key === 'Backspace' ? -1 : 1, mod);
+        return true;
+      case 'ArrowLeft':
+      case 'ArrowRight': {
+        if (e.altKey) return false;
+        const dir = e.key === 'ArrowLeft' ? -1 : 1;
+        this.moveAll((h) => Math.max(0, Math.min(max, mod ? this.wordBoundary(h, dir) : dir < 0 ? L.prevStop(h) : L.nextStop(h))), shift);
+        return true;
+      }
+      case 'ArrowUp':
+      case 'ArrowDown':
+        if (e.altKey || mod) return false;
+        this.moveAll(vert(e.key === 'ArrowUp' ? -1 : 1), shift);
+        return true;
+      case 'Home':
+      case 'End': {
+        if (mod) return false;
+        const x = e.key === 'Home' ? -Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
+        this.moveAll((h) => L.offsetInLine(L.lineAt(h), x), shift);
+        return true;
+      }
+      case 'Tab':
+        if (this.active) return false;
+        this.insertAll('\t', 'type');
+        return true;
+    }
+    return false;
+  }
+
   private moveVertical(dir: number, extend: boolean): void {
     const head = this.headOffset();
     const r = this.layout.caretRect(head);
@@ -3046,7 +3352,7 @@ export class Editor {
 
   /** 단어(어절) 경계. dir=-1이면 이전, 1이면 다음 */
   private wordBoundary(offset: number, dir: -1 | 1): number {
-    const para = this.doc.paragraphs()[this.layout.paraIndexAt(offset)]!;
+    const para = this.doc.paragraphs()[this.doc.paragraphIndexAt(offset)]!;
     const d = offset - para.start;
     if (dir < 0 && d === 0) return Math.max(0, offset - 1);
     if (dir > 0 && d >= Array.from(para.text).length) return Math.min(this.doc.maxCaret, offset + 1);
@@ -3087,6 +3393,14 @@ export class Editor {
       if (ref) {
         this.leaveCellKeep();
         this.startParagraphDrag(ref.para, e);
+        return;
+      }
+    }
+    // Alt+누르기: 캐럿 더하기 (11 §5.2, 편집 중인 스토리 안에서)
+    if (e.altKey && !e.shiftKey && e.detail === 1) {
+      const hit0 = this.cellAt(p.x, p.y);
+      if ((hit0 ? hit0.cell.story : null) === (this.active ? this.active.story : null)) {
+        this.addCaret(this.layout.hitTest(p.x, p.y));
         return;
       }
     }
@@ -3315,6 +3629,15 @@ function readableOn(hex: string): string {
 }
 
 const wordSegmenter = new Intl.Segmenter('ko', { granularity: 'word' });
+const graphemes = new Intl.Segmenter('ko', { granularity: 'grapheme' });
+
+/** 다중 커서 상한 (11 §5.2) */
+const MAX_CARETS = 1000;
+
+/** 연속 지우기를 실행 취소 한 단계로 합치는 키 (단어 지우기는 합치지 않는다) */
+function from0Key(_dir: number, word: boolean): string | undefined {
+  return word ? undefined : 'delete';
+}
 
 /** 단어 구간 (코드포인트 인덱스) */
 function wordBounds(text: string): Array<{ start: number; end: number; isWord: boolean }> {
