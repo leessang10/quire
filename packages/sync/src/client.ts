@@ -11,7 +11,7 @@
  * - 새 판 (09 §9): Worker가 hold를 보내면 보낸 묶음이 끝난 뒤 held로 답하고 그 뒤로는 보내지 않는다. 그때의 화면 텍스트를
  *   기억해 두었다가 reset을 받으면 새 Doc을 만들고, held 뒤에 한 로컬 변경(텍스트 차이)을 새 Doc에 다시 적용한다.
  */
-import { Doc, Document, type Position, type RawChange, type SegState } from '@quire/model';
+import { Doc, Document, type Position, type RawChange, type SegState, type TableChange, type TableRecord } from '@quire/model';
 import { applyHunks, diffText, rebaseHunks } from './epoch';
 import { mapPosThrough, opToDelta, transform, type LocalChange } from './ot';
 import type { Defs, RemoteSel, StoryDelta, StoryInit, ToMain, ToWorker } from './protocol';
@@ -36,6 +36,8 @@ const isSeg = (c: LocalChange) => c.kind === 'order' || c.kind === 'list' || c.k
 const isDef = (c: LocalChange) => c.kind === 'style' || c.kind === 'listDef';
 /** 가벼운 스토리 끝 ¶ 속성 변경 (Worker의 끝 ¶ 맵 상태는 통째로 오므로 구획 상태처럼 다룬다) */
 const isTail = (c: LocalChange) => c.kind === 'tail';
+/** 표 레코드 변경 (Worker의 표 레코드는 통째로 오므로 미룬다) */
+const tableOf = (c: LocalChange) => (c.kind === 'tableList' || c.kind === 'tableMap' ? c.table : null);
 
 export class SyncClient {
   private current: Doc;
@@ -44,6 +46,7 @@ export class SyncClient {
   /** 로컬 구획 변경이 아직 가는 중이라 미룬 스토리 구획 상태 */
   private deferredStories = new Map<string, SegState>();
   private deferredTails = new Map<string, Record<string, unknown>>();
+  private deferredTables = new Map<string, TableRecord>();
   private readonly opts: ClientOptions;
   /** 받은 H 항목 수 */
   private rev = 0;
@@ -80,7 +83,15 @@ export class SyncClient {
     return this.currentDocument.story(id);
   }
 
-  private attach(init: { raw: string; keys: string[]; state: SegState; peer: string; formats: FormatState; stories?: Record<string, StoryInit> }): Doc {
+  private attach(init: {
+    raw: string;
+    keys: string[];
+    state: SegState;
+    peer: string;
+    formats: FormatState;
+    stories?: Record<string, StoryInit>;
+    tables?: Record<string, TableRecord>;
+  }): Doc {
     const doc = Doc.fromRaw(init.raw, init.keys, init.state, init.peer);
     applyFormats(doc, init.formats);
     const stories = init.stories ?? {};
@@ -97,7 +108,9 @@ export class SyncClient {
     };
     const document = new Document(doc, make);
     for (const id of Object.keys(stories)) document.story(id);
-    document.observe((story: string | null, c: RawChange) => {
+    for (const t of Object.values(init.tables ?? {})) document.putTable(t);
+    document.takeDirtyTables();
+    document.observe((story: string | null, c: RawChange | TableChange) => {
       this.buffer.push(story === null ? c : { ...c, story });
       this.send();
     });
@@ -128,6 +141,7 @@ export class SyncClient {
         this.takeState(msg.state ?? null);
         this.takeDefs(msg.defs ?? null);
         this.takeStories(msg.stories ?? {});
+        this.takeTables(msg.tables ?? {});
         this.send();
         break;
       case 'remote': {
@@ -139,6 +153,7 @@ export class SyncClient {
         if (msg.state) this.takeState(msg.state);
         if (msg.defs) this.takeDefs(msg.defs);
         if (msg.stories) this.takeStories(msg.stories);
+        if (msg.tables) this.takeTables(msg.tables);
         this.opts.onRemoteChange?.();
         break;
       }
@@ -187,7 +202,15 @@ export class SyncClient {
     this.buffer = [];
     this.outstanding = changes;
     const wantState =
-      this.deferredState !== null || this.deferredDefs !== null || this.deferredStories.size > 0 || this.deferredTails.size > 0 || changes.some(isSeg) || changes.some(isDef) || changes.some(isTail);
+      this.deferredState !== null ||
+      this.deferredDefs !== null ||
+      this.deferredStories.size > 0 ||
+      this.deferredTails.size > 0 ||
+      this.deferredTables.size > 0 ||
+      changes.some(isSeg) ||
+      changes.some(isDef) ||
+      changes.some(isTail) ||
+      changes.some((c) => tableOf(c) !== null);
     this.opts.post({ t: 'ops', rev: this.rev, changes, wantState });
   }
 
@@ -203,6 +226,7 @@ export class SyncClient {
     this.deferredDefs = null;
     this.deferredStories.clear();
     this.deferredTails.clear();
+    this.deferredTables.clear();
     this.remotePos.clear();
     this.cache = null;
     this.presenceVersion++;
@@ -255,6 +279,21 @@ export class SyncClient {
       }
       this.deferredStories.delete(id);
       doc.applySegState(state);
+    }
+  }
+
+  /** Worker의 표 레코드: 그 표의 로컬 변경이 아직 가는 중이면 미룬다 */
+  private takeTables(tables: Record<string, TableRecord>): void {
+    const pending = (id: string) => (this.outstanding?.some((c) => tableOf(c) === id) ?? false) || this.buffer.some((c) => tableOf(c) === id);
+    const ids = new Set([...Object.keys(tables), ...this.deferredTables.keys()]);
+    for (const id of ids) {
+      const t = tables[id] ?? this.deferredTables.get(id)!;
+      if (pending(id)) {
+        this.deferredTables.set(id, t);
+        continue;
+      }
+      this.deferredTables.delete(id);
+      this.currentDocument.applyRemoteTable(t);
     }
   }
 

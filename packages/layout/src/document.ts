@@ -56,6 +56,12 @@ export interface PageSetup {
   /** 글꼴 ascent·descent (em 비율, 기준선 계산). 없으면 0.8·0.2 */
   ascent?: number;
   descent?: number;
+  /**
+   * 좌표 원점 (표 셀 레이아웃, 11 §4.3): 줄 x·y에 더한다. 셀은 쪽 하나(높이 무한)로 조판하고 원점을 셀 자리로 옮겨,
+   * 본문과 같은 좌표계에서 캐럿·hit-test·그리기를 한다. PagedLayout.setOrigin으로 바꾼다
+   */
+  originX?: number;
+  originY?: number;
 }
 
 /** 모델의 문단 객체. 바뀌지 않은 문단은 같은 객체여야 하며, start는 제자리에서 갱신될 수 있다 */
@@ -294,6 +300,22 @@ export class PlacedPara {
     const box = this.layout.box;
     if (!first && y > 0) y += box ? box.before : setup.paraSpacing;
     const src = this.layout.lines;
+    const tbl = this.layout.table;
+    if (tbl) {
+      // 표: 행마다 (쪽은 행 사이에서만 나눈다)
+      for (const rh of tbl.rows) {
+        if (y + rh > contentHeight && y > 0) {
+          page++;
+          y = 0;
+        }
+        y += rh;
+      }
+      if (box && box.after > 0) y += box.after;
+      this.exclSig = reg.sig(this, this.pageBefore, page);
+      this.pageAfter = page;
+      this.yAfter = y;
+      return;
+    }
     // 이 문단의 떠 있는 개체: 문단 첫 줄이 놓일 쪽·y 기준으로 자리를 정하고 배제 영역을 넣는다
     if (this.layout.floats) {
       const lh0 = src.length ? lineHeight(setup, src[0]!.scale, box?.line) + objExtra(setup, src[0]!, box?.line) : setup.lineHeight;
@@ -335,7 +357,7 @@ export class PlacedPara {
       const x0 = f.relX === 'page' ? -setup.margin : 0;
       const x = x0 + (f.x === 'left' ? 0 : f.x === 'center' ? (baseW - f.w) / 2 : f.x === 'right' ? baseW - f.w : f.x);
       const y = f.relY === 'paragraph' ? top + f.y : f.relY === 'margin' ? f.y : f.y - setup.margin;
-      out.push({ k, page: pg, x: setup.margin + x, y: pageTop(setup, pg) + setup.margin + y, w: f.w, h: f.h, spec: f });
+      out.push({ k, page: pg, x: leftOf(setup) + x, y: pageTop(setup, pg) + setup.margin + y, w: f.w, h: f.h, spec: f });
       if (f.wrap === 'none') continue;
       const g = f.gap;
       reg.add(this, pg, {
@@ -422,8 +444,36 @@ export class PlacedPara {
     return pageTop(setup, this.pageAfter) + setup.margin + this.yAfter;
   }
 
+  /** 원점이 바뀌었다: 줄 위치를 다시 계산하게 한다 */
+  dropLines(): void {
+    this._lines = null;
+  }
+
+  /** 표 문단의 행 = 줄 (표시 인덱스는 모두 [0, 1): 표 원소 하나) */
+  private tableLines(): PlacedLine[] {
+    const { setup, contentHeight } = this.geo;
+    const tbl = this.layout.table!;
+    const box = this.layout.box;
+    let page = this.pageBefore;
+    let y = this.yBefore;
+    if (!this.first && y > 0) y += box ? box.before : setup.paraSpacing;
+    const cw = setup.width - setup.margin * 2;
+    const free = Math.max(0, cw - (box?.left ?? 0) - (box?.right ?? 0) - tbl.width);
+    const x = leftOf(setup) + (box?.left ?? 0) + (box?.align === 'center' ? free / 2 : box?.align === 'right' ? free : 0);
+    return tbl.rows.map((rh, k) => {
+      if (y + rh > contentHeight && y > 0) {
+        page++;
+        y = 0;
+      }
+      const top = pageTop(setup, page) + setup.margin + y;
+      y += rh;
+      return { index: k, start: 0, end: 1, page, x, y: top, height: rh, baseline: top + rh, adj: null, adjChars: false };
+    });
+  }
+
   get lines(): PlacedLine[] {
     if (this._lines) return this._lines;
+    if (this.layout.table) return (this._lines = this.tableLines());
     if (this.wrapped) return (this._lines = this.wrappedLines(this.wrapped));
     const { setup, contentHeight } = this.geo;
     let page = this.pageBefore;
@@ -447,7 +497,7 @@ export class PlacedPara {
         start: ln.start,
         end: ln.end,
         page,
-        x: setup.margin,
+        x: leftOf(setup),
         y: top,
         height: lh,
         baseline: top + baselineOffset(setup, lh - extra, ln.scale) + extra,
@@ -473,7 +523,7 @@ export class PlacedPara {
         start: w.start,
         end: w.end,
         page: w.page,
-        x: setup.margin + w.slotX,
+        x: leftOf(setup) + w.slotX,
         y: top,
         height: lh,
         baseline: top + baselineOffset(setup, lh - extra, w.scale) + extra,
@@ -589,7 +639,12 @@ export function baselineOffset(setup: PageSetup, height: number, scale: number):
 }
 
 export function pageTop(setup: PageSetup, page: number): number {
-  return setup.gap + page * (setup.height + setup.gap);
+  return (setup.originY ?? 0) + setup.gap + page * (setup.height + setup.gap);
+}
+
+/** 줄 x의 기준 (쪽 왼쪽 기준 본문 시작) */
+function leftOf(setup: PageSetup): number {
+  return setup.margin + (setup.originX ?? 0);
 }
 
 export class LayoutCache {
@@ -645,7 +700,8 @@ function formatKey(f: ParaFormat): string {
     (b ? `|${JSON.stringify(b)}` : '') +
     (f.marker ? `|#${f.marker.id},${f.marker.hanging},${f.marker.text}` : '') +
     (f.objs && f.objs.size ? `|o${[...f.objs].map(([k, o]) => `${k}:${o.w}x${o.h}`).join(',')}` : '') +
-    (f.floats && f.floats.size ? `|f${JSON.stringify([...f.floats])}` : '');
+    (f.floats && f.floats.size ? `|f${JSON.stringify([...f.floats])}` : '') +
+    (f.table ? `|t${f.table.width}:${f.table.rows.join(',')}` : '');
   return `${out}¶${f.mark}${bk}${f.key ? `|${f.key}` : ""}`;
 }
 
@@ -678,6 +734,22 @@ export class PagedLayout {
   ) {
     this.contentWidth = setup.width - setup.margin * 2;
     this.geo = { setup, contentHeight: setup.height - setup.margin * 2, floats: new FloatRegistry() };
+  }
+
+  /** 좌표 원점을 옮긴다 (표 셀, PageSetup.originX/Y). 배치는 그대로, 줄 위치만 다시 계산한다 */
+  setOrigin(x: number, y: number): void {
+    const s = this.setup as { originX?: number; originY?: number };
+    if ((s.originX ?? 0) === x && (s.originY ?? 0) === y) return;
+    s.originX = x;
+    s.originY = y;
+    for (const pp of this.paras) pp?.dropLines();
+  }
+
+  /** 내용 높이 (모두 배치한 뒤, 쪽 하나로 조판한 셀에서): 마지막 문단 아래 끝 */
+  get contentBottom(): number {
+    this.finish();
+    const last = this.paras[this.paras.length - 1];
+    return last ? last.yAfter : 0;
   }
 
   /** 모든 문단이 배치되었는가 */

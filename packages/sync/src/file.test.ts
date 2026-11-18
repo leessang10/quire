@@ -30,9 +30,9 @@ describe('canonical JSON', () => {
 
   it('joins runs and rejects content the model cannot hold', () => {
     const q = quireFromText('x\n');
-    q.stories.body[0]!.c = [{ t: '굵' }, { t: '게' }];
+    (q.stories.body[0] as { c: unknown[] }).c = [{ t: '굵' }, { t: '게' }];
     expect(textFromQuire(q)).toBe('굵게\n');
-    const table = { ...q, stories: { body: [{ table: {} }] } } as unknown as Parameters<typeof textFromQuire>[0];
+    const table = { ...q, stories: { body: [{ field: {} }] } } as unknown as Parameters<typeof textFromQuire>[0];
     expect(() => textFromQuire(table)).toThrow(/not a paragraph/);
     const field = { ...q, stories: { body: [{ p: {}, c: [{ field: 'pageNumber' }] }] } } as unknown as Parameters<typeof textFromQuire>[0];
     expect(() => textFromQuire(field)).toThrow(/not a text run/);

@@ -221,6 +221,8 @@ const editor = new Editor({
   onChange: () => {
     showStats();
     showMarks();
+    const t = (document.querySelector('.tbl-tools') as HTMLElement | null);
+    if (t) t.hidden = !editor?.tableState().inTable;
   },
   input: inputMode,
   fonts,
@@ -294,6 +296,29 @@ document.getElementById('img-alt')!.addEventListener('click', () => {
   if (alt !== null) editor.setObjectAttr('alt', alt || undefined);
   editor.focus();
 });
+
+// 표 (2-11)
+document.getElementById('tbl-insert')!.addEventListener('click', () => {
+  editor.insertTable(3, 3);
+  editor.focus();
+});
+document.querySelectorAll<HTMLButtonElement>('[data-tbl]').forEach((b) =>
+  b.addEventListener('click', () => {
+    const t = editor.tableState();
+    switch (b.dataset.tbl) {
+      case 'rowBelow': editor.tableAddRow(true); break;
+      case 'colRight': editor.tableAddCol(true); break;
+      case 'delRow': editor.tableDelete('row'); break;
+      case 'delCol': editor.tableDelete('col'); break;
+      case 'merge': editor.tableMerge(); break;
+      case 'unmerge': editor.tableUnmerge(); break;
+      case 'fill': editor.tableCellFill(t.inTable && !fillOn ? '#eeeeee' : undefined); fillOn = !fillOn; break;
+      case 'delete': editor.deleteTable(); break;
+    }
+    editor.focus();
+  }),
+);
+let fillOn = false;
 
 const placeSel = document.getElementById('img-place') as HTMLSelectElement;
 placeSel.addEventListener('change', () => {

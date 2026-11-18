@@ -20,8 +20,13 @@ import {
   readTail,
   storyIdsOf,
   storyNames,
+  TABLE_CONTAINER,
+  readTable,
+  tableIdsOf,
+  writeTable,
   type PeerId,
 } from './shape';
+import type { TableRecord } from '@quire/model';
 import { PresenceStore } from './presence-store';
 import type { RemoteSel, StoryDelta, StoryInit, ToMain, ToWorker } from './protocol';
 
@@ -81,6 +86,7 @@ export class SyncCore {
   /** 가져오기 중 바뀐 스토리 상태 */
   private storySeg = new Set<string>();
   private storyTail = new Set<string>();
+  private tablesDirty = new Set<string>();
   private readonly defIds: Set<string>;
   private readonly unsubscribe: () => void;
   private closed = false;
@@ -110,7 +116,9 @@ export class SyncCore {
     const { raw, keys } = readRaw(loro);
     const stories: Record<string, StoryInit> = {};
     for (const id of storyIdsOf(loro)) stories[id] = storyInit(loro, id);
-    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr, formats: readFormats(loro), stories };
+    const tables: Record<string, TableRecord> = {};
+    for (const id of tableIdsOf(loro)) tables[id] = readTable(loro, id);
+    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr, formats: readFormats(loro), stories, tables };
     opts.post(opts.reset ? { t: 'reset', ...init, lost: opts.reset.lost } : { t: 'init', ...init });
     this.heartbeat = setInterval(() => this.tick(), (opts.presenceTimeoutMs ?? 30000) / 2);
   }
@@ -208,6 +216,7 @@ export class SyncCore {
     let sel: { anchor: number; head: number } | null = null;
     for (const c of cs) {
       if (c.kind === 'sel') sel = { anchor: c.anchor, head: c.head };
+      else if (c.kind === 'tableList' || c.kind === 'tableMap') writeTable(this.loro, c);
       else if (c.story !== undefined) this.writerFor(c.story).apply(c);
       else this.writer.apply(c);
     }
@@ -222,7 +231,16 @@ export class SyncCore {
       for (const c of cs)
         if (c.story !== undefined && (SEG_KINDS.has(c.kind) || c.kind === 'tail'))
           stories[c.story] = { state: readState(this.loro, storyNames(c.story)), tail: readTail(this.loro, storyNames(c.story)) };
-      this.opts.post({ t: 'ack', state: readState(this.loro), defs: readDefs(this.loro), ...(Object.keys(stories).length ? { stories } : {}) });
+      // 로컬 표 변경이 있던 표의 레코드 (메인이 미뤄 둔 원격 레코드 대신 쓴다)
+      const tables: Record<string, TableRecord> = {};
+      for (const c of cs) if (c.kind === 'tableList' || c.kind === 'tableMap') tables[c.table] = readTable(this.loro, c.table);
+      this.opts.post({
+        t: 'ack',
+        state: readState(this.loro),
+        defs: readDefs(this.loro),
+        ...(Object.keys(stories).length ? { stories } : {}),
+        ...(Object.keys(tables).length ? { tables } : {}),
+      });
     } else this.opts.post({ t: 'ack' });
     if (sel) this.setSelection(sel.anchor, sel.head);
     if (this.pendingExport) this.schedule();
@@ -267,6 +285,12 @@ export class SyncCore {
         this.defsDirty = true;
         continue;
       }
+      // 표 레코드 (11 §2.4): 통째로 다시 읽어 보낸다
+      const tm = TABLE_CONTAINER.exec(String(ev.target));
+      if (tm) {
+        this.tablesDirty.add(tm[1]!);
+        continue;
+      }
       // 스토리 (11 §2.5): 텍스트는 연산으로, 구획·끝 ¶ 속성은 상태로
       const sm = STORY_CONTAINER.exec(String(ev.target));
       if (sm) {
@@ -302,7 +326,11 @@ export class SyncCore {
     this.storySeg = new Set();
     this.storyTail = new Set();
     const anyStory = Object.keys(stories).length > 0;
-    if (ops.length > 0 || dirty || defs || anyStory) {
+    const tables: Record<string, TableRecord> = {};
+    for (const id of this.tablesDirty) tables[id] = readTable(this.loro, id);
+    this.tablesDirty = new Set();
+    const anyTable = Object.keys(tables).length > 0;
+    if (ops.length > 0 || dirty || defs || anyStory || anyTable) {
       this.log.set(this.len, ops);
       this.len++;
       this.opts.post({
@@ -311,6 +339,7 @@ export class SyncCore {
         ...(dirty ? { state: readState(this.loro) } : {}),
         ...(defs ? { defs: readDefs(this.loro) } : {}),
         ...(anyStory ? { stories } : {}),
+        ...(anyTable ? { tables } : {}),
       });
     }
     if (this.store.states.size > 0) this.postRemotes();

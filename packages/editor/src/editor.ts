@@ -5,7 +5,10 @@
 import {
   BODY_STYLE,
   Doc,
+  Document,
   History,
+  normalizeTable,
+  type TableGrid,
   MARK_KEYS,
   MAX_LIST_LEVEL,
   OBJ,
@@ -23,12 +26,20 @@ import {
   type Position,
   type ResolvedStyle,
   type Selection,
+  cellKey,
+  cellStoryId,
   type Style,
 } from '@quire/model';
 import {
+  CELL_PAD,
   LayoutCache,
   PagedLayout,
   PLAIN_STYLE,
+  TableLayouter,
+  type PreeditAt,
+  type TableGridInput,
+  type TableMeasure,
+  type TableSpec,
   cpSlice,
   docToDisplay,
   lineX,
@@ -53,6 +64,8 @@ export interface EditorOptions {
   text?: string;
   /** 이미 있는 문서 모델을 편집한다 (동기화 브리지가 붙은 Doc 등). 주면 text는 무시 */
   doc?: Doc;
+  /** 여러 스토리 문서 (본문 + 표 셀 스토리 + 표 레코드, 11 §2.5). 주면 doc·text는 무시 */
+  document?: Document;
   fontFamily?: string;
   fontSize?: number;
   onInputLog?: (entry: InputLogEntry) => void;
@@ -181,6 +194,7 @@ const COLORS = {
   gripActive: '#3884ff',
   dragSource: 'rgba(56, 132, 255, 0.10)',
   dropLine: '#3884ff',
+  tableBorder: '#8e8e93',
 };
 
 /** 문단 손잡이 영역: 본문 왼쪽 여백 안 [margin - GRIP_LEFT, margin - GRIP_RIGHT) */
@@ -228,10 +242,40 @@ class CanvasMeasurer implements Measurer {
   }
 }
 
+/** 편집 중인 표 셀 (11 §5.4) */
+interface ActiveCell {
+  table: string;
+  row: string;
+  col: string;
+  story: string;
+}
+
+/** 조판한 표: 격자, 레이아웃 입력, 행 높이, 표 원소 위치 (본문) */
+interface TableView {
+  id: string;
+  grid: TableGrid;
+  input: TableGridInput;
+  measure: TableMeasure;
+  at: Position;
+}
+
+/** 셀 범위 선택 (격자 인덱스 대신 행·열 ID: 원격 변경에도 따라간다) */
+interface CellRange {
+  table: string;
+  rows: [string, string];
+  cols: [string, string];
+}
+
 export class Editor {
+  /** 여러 스토리 문서. 본문은 document.body */
+  document: Document;
+  /** 편집 중인 스토리 (본문, 또는 편집 중인 표 셀) */
   doc: Doc;
   history = new History();
+  /** 편집 중인 스토리의 레이아웃 (본문이면 bodyLayout) */
   layout!: PagedLayout;
+  /** 본문(쪽) 레이아웃 */
+  bodyLayout!: PagedLayout;
   stats: EditorStats = {
     layoutMs: 0, renderMs: 0, pages: 0, paragraphs: 0, lines: 0, characters: 0, cacheHits: 0, cacheMisses: 0,
     reflowed: 0, repositioned: 0, reused: 0, pendingParas: 0, backgroundMs: 0,
@@ -239,6 +283,23 @@ export class Editor {
 
   private sel: Selection;
   private goalX: number | null = null;
+  /** 편집 중인 셀 (null이면 본문) */
+  private active: ActiveCell | null = null;
+  private tables!: TableLayouter;
+  private readonly tableViews = new Map<string, TableView>();
+  /** 셀 범위 선택 (병합·여러 셀 지우기) */
+  private cellSel: CellRange | null = null;
+  /** 편집 중인 셀의 조합 문자열 (표 문단을 조판할 때 셀 레이아웃에 넣는다) */
+  private cellPreedit: PreeditAt | null = null;
+  /** 다음 relayout에서 모든 표를 다시 잰다 (원격 변경) */
+  private tablesAllDirty = false;
+  private readonly cellCache = new LayoutCache(20000);
+  private readonly docIds = new WeakMap<Doc, number>();
+  private docSeq = 0;
+  /** 지금 그리는 스토리 (서식 번호의 뜻이 스토리마다 다르다) */
+  private drawDoc!: Doc;
+  /** 지금 그리는 것이 편집 중인 스토리인가 (선택 영역을 그린다) */
+  private drawActive = true;
   private preedit = '';
   private focused = false;
 
@@ -260,27 +321,57 @@ export class Editor {
   private metrics: Metrics = {
     ascent: 0.8, descent: 0.2, underlinePosition: -0.1, underlineThickness: 0.06, strikePosition: 0.3, strikeThickness: 0.06,
   };
-  /** (문단 스타일, 서식 번호)별 그리기 정보. 문서·스타일 판이 바뀌면 비운다 */
-  private drawStyles = new Map<string, Array<DrawStyle | undefined>>();
-  private drawStylesKey: { doc: Doc; version: number } | null = null;
-  private styleFns = new Map<string, (id: number) => RunStyle>();
-  /** 문단 → 레이아웃 서식 (10 §4): 글자 서식, 스타일의 기본 글자 서식, 문단 상자 */
-  private readonly formatOf: FormatSource = (info, force) => {
+  /** 스토리마다 (문단 스타일, 서식 번호)별 그리기 정보. 스타일 판이 바뀌면 비운다 */
+  private readonly styleCaches = new WeakMap<
+    Doc,
+    { version: number; draw: Map<string, Array<DrawStyle | undefined>>; fns: Map<string, (id: number) => RunStyle> }
+  >();
+  /** 본문 문단 → 레이아웃 서식 */
+  private readonly formatOf: FormatSource = (info, force) => this.formatWith(this.document.body, info, force);
+  /** 셀 스토리의 FormatSource (스토리마다 하나) */
+  private readonly cellFormats = new WeakMap<Doc, FormatSource>();
+
+  /** 문단 → 레이아웃 서식 (10 §4): 글자 서식, 스타일의 기본 글자 서식, 문단 상자. 본문의 표 문단은 행 (11 §4.3) */
+  private formatWith(doc: Doc, info: Parameters<FormatSource>[0], force: boolean): ReturnType<FormatSource> {
     const p = info as ParagraphInfo;
+    const body = this.document.body;
+    if (doc === body) {
+      const t = p.objs?.get(0);
+      if (t?.kind === 'table' && t.table) {
+        const table = this.tableSpec(t.table, p.start);
+        if (table) return { fmt: null, mark: 0, style: () => PLAIN_STYLE, table };
+      }
+    }
     const attrs = p.attrs ?? {};
-    const rs = this.doc.resolvedStyle(attrs.style ?? BODY_STYLE);
+    // 스타일 정의는 문서에 하나 (본문에 있다)
+    const rs = body.resolvedStyle(attrs.style ?? BODY_STYLE);
     const styled = hasKeys(rs.marks);
-    const label = attrs.list ? this.doc.listLabel(p) : null;
+    const label = attrs.list ? doc.listLabel(p) : null;
     const box = this.paraBox(attrs, rs, label);
     if (!p.fmt && !p.mark && !force && !box && !styled && !p.objs) return null;
     const marker = label ? { text: label.text, id: p.mark ?? 0, hanging: pt(label.def.levels[label.level]!.hanging) } : null;
     const objs = p.objs ? objSizes(p.objs) : null;
-    const floats = p.objs ? floatSpecs(p.objs) : null;
+    // 셀 안의 떠 있는 개체는 인라인으로 (셀 원점이 바뀌어도 놓인 자리를 다시 구하지 않으므로)
+    const floats = p.objs && doc === body ? floatSpecs(p.objs) : null;
     const sty = styled ? (attrs.style ?? BODY_STYLE) : '';
     // 스타일 글자 서식은 서식 번호 0에도 걸리므로 fmt가 없으면 0으로 채운 열을 준다
     const fmt = p.fmt ?? (styled ? new Uint16Array(cpCount(p.text)) : null);
-    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty), box, marker, objs, floats, key: styled ? `${sty}@${this.doc.stylesVersion}` : undefined };
-  };
+    // 서식 번호의 뜻은 스토리마다 다르므로 셀은 캐시 키에 스토리 번호를 넣는다
+    const key = (doc === body ? '' : `d${this.docId(doc)}`) + (styled ? `${sty}@${body.stylesVersion}` : '');
+    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty, doc), box, marker, objs, floats, key: key || undefined };
+  }
+
+  private docId(doc: Doc): number {
+    let id = this.docIds.get(doc);
+    if (id === undefined) this.docIds.set(doc, (id = ++this.docSeq));
+    return id;
+  }
+
+  private cellFormat(doc: Doc): FormatSource {
+    let f = this.cellFormats.get(doc);
+    if (!f) this.cellFormats.set(doc, (f = (info, force) => this.formatWith(doc, info, force)));
+    return f;
+  }
   private readonly assets: AssetStore;
   /** 자산 ID → 그릴 이미지 (불러오는 중 null) */
   private readonly images = new Map<string, ImageBitmap | null | 'error'>();
@@ -340,7 +431,9 @@ export class Editor {
       descent: box.descent,
     };
 
-    this.doc = opts.doc ?? Doc.fromText(opts.text ?? '');
+    this.document = opts.document ?? new Document(opts.doc ?? Doc.fromText(opts.text ?? ''));
+    this.doc = this.document.body;
+    this.drawDoc = this.doc;
     const start = this.doc.positionAt(0);
     this.sel = { anchor: start, head: start };
 
@@ -421,6 +514,7 @@ export class Editor {
       const files = [...(ev.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('image/'));
       if (!files.length) return;
       ev.preventDefault();
+      this.leaveCell();
       const p = this.docPoint(ev);
       const at = this.layout.hitTest(p.x, Math.min(p.y, this.layout.validBottom - 1));
       void (async () => {
@@ -432,7 +526,7 @@ export class Editor {
     this.resizeObserver = new ResizeObserver(() => this.refresh());
     this.resizeObserver.observe(scroller);
 
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
+    this.resetLayouts();
     this.relayout();
     this.render();
     if (opts.fonts?.length) {
@@ -574,8 +668,7 @@ export class Editor {
 
   /** 측정이 바뀌었다 (글꼴을 받음): 모든 문단을 다시 조판한다 */
   private relayoutAll(): void {
-    this.cache.clear();
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
+    this.resetLayouts();
     this.refresh();
     this.opts.onChange?.(this);
   }
@@ -591,10 +684,28 @@ export class Editor {
     return this.input.kind;
   }
 
-  setText(text: string): void {
-    this.doc = Doc.fromText(text);
+  /** 본문·셀 레이아웃을 새로 만든다 (측정이나 문서가 바뀜). 편집 중인 셀은 다음 relayout에서 다시 붙는다 */
+  private resetLayouts(): void {
     this.cache.clear();
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
+    this.cellCache.clear();
+    this.bodyLayout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
+    this.tables = new TableLayouter(
+      this.setup,
+      this.measurer,
+      this.cellCache,
+      (id) => this.document.story(id),
+      (id) => this.cellFormat(this.document.story(id)),
+    );
+    this.tableViews.clear();
+    this.layout = this.bodyLayout;
+  }
+
+  setText(text: string): void {
+    this.document = new Document(Doc.fromText(text));
+    this.doc = this.document.body;
+    this.active = null;
+    this.cellSel = null;
+    this.resetLayouts();
     this.stats.backgroundMs = 0;
     this.scroller.scrollTop = 0;
     const start = this.doc.positionAt(0);
@@ -609,14 +720,26 @@ export class Editor {
    * (옛 문서의 원소 ID를 가리키므로).
    */
   setDoc(doc: Doc): void {
-    const { anchor, head } = this.selection();
-    this.doc = doc;
+    this.setDocument(doc === this.document.body ? this.document : new Document(doc));
+  }
+
+  /** 여러 스토리 문서를 통째로 바꾼다 (setDoc과 같다. 편집 중인 셀에서는 나온다) */
+  setDocument(document: Document): void {
+    const { anchor, head } = this.active ? { anchor: 0, head: 0 } : this.selection();
+    this.active = null;
+    this.cellSel = null;
+    this.document = document;
+    this.doc = document.body;
     this.pending = null;
-    this.cache.clear();
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.formatOf);
+    this.resetLayouts();
     this.history = new History();
     this.setSelection(anchor, head);
     this.refresh();
+  }
+
+  /** 본문 */
+  get body(): Doc {
+    return this.document.body;
   }
 
   /**
@@ -624,6 +747,7 @@ export class Editor {
    * 실행 취소 기록에는 들어가지 않는다.
    */
   docChanged(): void {
+    this.tablesAllDirty = true;
     this.relayout();
     this.render();
     this.opts.onChange?.(this);
@@ -636,7 +760,7 @@ export class Editor {
   }
 
   getText(): string {
-    return this.doc.text().slice(0, -1);
+    return this.body.text().slice(0, -1);
   }
 
   selection(): { anchor: number; head: number } {
@@ -668,15 +792,19 @@ export class Editor {
 
   private relayout(): void {
     const t0 = performance.now();
-    const paras = this.doc.paragraphs();
+    const body = this.body;
     const pre = this.preedit ? { offset: this.headOffset(), text: this.preedit, fmt: this.pendingFmt() } : null;
+    this.cellPreedit = this.active && pre ? { story: this.active.story, preedit: pre } : null;
+    // 바뀐 표 (레코드, 편집 중인 셀, 원격 변경)의 표 문단을 다시 조판하게 한다
+    this.touchTables();
     // 화면 아래 한 화면 분량까지만 즉시 배치하고 나머지는 백그라운드로
     const syncUntil = this.scroller.scrollTop + this.scroller.clientHeight * 2;
-    this.layout.update(paras, pre, syncUntil, this.doc.takeParagraphChanges());
+    this.bodyLayout.update(body.paragraphs(), this.active ? null : pre, syncUntil, body.takeParagraphChanges());
+    if (this.active) this.attachActive();
     this.stats.layoutMs = performance.now() - t0;
-    this.stats.reflowed = this.layout.counts.reflowed;
-    this.stats.repositioned = this.layout.counts.repositioned;
-    this.stats.reused = this.layout.counts.reused;
+    this.stats.reflowed = this.bodyLayout.counts.reflowed;
+    this.stats.repositioned = this.bodyLayout.counts.repositioned;
+    this.stats.reused = this.bodyLayout.counts.reused;
     this.updateDerived();
     this.scheduleBackground();
   }
@@ -684,30 +812,32 @@ export class Editor {
   /** 쪽 수, 스크롤 높이 등 레이아웃에서 파생되는 값 */
   private updateDerived(): void {
     const s = this.stats;
-    const paras = this.doc.paragraphs();
-    s.pages = this.layout.pageCount;
+    const body = this.body;
+    const layout = this.bodyLayout;
+    const paras = body.paragraphs();
+    s.pages = layout.pageCount;
     s.paragraphs = paras.length;
-    s.characters = this.doc.length - paras.length;
+    s.characters = body.length - paras.length;
     s.cacheHits = this.cache.hits;
     s.cacheMisses = this.cache.misses;
-    s.pendingParas = paras.length - this.layout.validCount;
-    if (this.layout.complete) {
+    s.pendingParas = paras.length - layout.validCount;
+    if (layout.complete) {
       let lines = 0;
-      for (const p of this.layout.paras) lines += p!.lines.length;
+      for (const p of layout.paras) lines += p!.lines.length;
       s.lines = lines;
     }
     const viewH = this.scroller.clientHeight;
-    this.spacer.style.height = `${Math.max(0, this.layout.totalHeight - viewH)}px`;
+    this.spacer.style.height = `${Math.max(0, layout.totalHeight - viewH)}px`;
     this.spacer.style.width = `${this.setup.width + this.setup.gap * 2}px`;
   }
 
   /** 남은 쪽 조립을 짧은 조각으로 나눠 유휴 시간에 진행 (02 §7) */
   private scheduleBackground(): void {
-    if (this.bgTimer !== null || this.layout.complete) return;
+    if (this.bgTimer !== null || this.bodyLayout.complete) return;
     this.bgTimer = setTimeout(() => {
       this.bgTimer = null;
       const t0 = performance.now();
-      const more = this.layout.step(8);
+      const more = this.bodyLayout.step(8);
       this.stats.backgroundMs += performance.now() - t0;
       this.updateDerived();
       if (more) this.scheduleBackground();
@@ -730,7 +860,8 @@ export class Editor {
 
   private render(): void {
     const t0 = performance.now();
-    const { scroller, canvas, ctx, layout, setup } = this;
+    const { scroller, canvas, ctx, setup } = this;
+    const layout = this.bodyLayout;
     const dpr = window.devicePixelRatio || 1;
     const w = scroller.clientWidth;
     const h = scroller.clientHeight;
@@ -765,20 +896,53 @@ export class Editor {
 
     // 떠 있는 개체 (11 §4.2): 글 뒤 개체는 글보다 먼저, 나머지는 글 다음에 그린다
     const floats = layout.floatsIn(top, top + h);
+    this.drawDoc = this.body;
     for (const f of floats) if (f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
 
-    // 줄
-    const { anchor, head } = this.selection();
+    // 줄 (표 문단은 표로, 셀 내용은 셀 레이아웃으로)
+    const visibleParas = new Set<number>();
+    const ready = this.drawLines(layout, this.body, px, top, h, visibleParas);
+
+    this.drawDoc = this.body;
+    this.drawActive = !this.active;
+    for (const f of floats) if (!f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
+    ctx.textBaseline = 'middle';
+    this.drawParagraphDrag(px, top);
+    this.drawRemoteCarets(px, top, w, visibleParas);
+
+    if (!ready) {
+      this.drawPendingPlaceholder(px, top, w, h);
+      this.scheduleRender();
+    }
+
+    this.releaseImages();
+    this.updateCaret();
+    this.updateMirror(visibleParas);
+    this.reportSelection();
+    this.stats.renderMs = performance.now() - t0;
+  }
+
+  /**
+   * 레이아웃의 보이는 줄을 그린다 (본문 또는 표 셀). 셀 레이아웃은 본문과 같은 문서 좌표다 (원점을 옮겨 놓았다).
+   * visibleParas: 본문이면 보이는 문단 번호를 모은다. 본문 영역이 아직 배치되지 않았으면 false
+   */
+  private drawLines(layout: PagedLayout, doc: Doc, px: number, top: number, h: number, visibleParas: Set<number> | null): boolean {
+    const { ctx, setup } = this;
+    const isBody = doc === this.body;
+    const active = layout === this.layout;
+    this.drawDoc = doc;
+    this.drawActive = active;
+    const { anchor, head } = active ? this.selection() : { anchor: 0, head: 0 };
     const selFrom = Math.min(anchor, head);
     const selTo = Math.max(anchor, head);
-    const visibleParas = new Set<number>();
     ctx.font = this.font;
     ctx.textBaseline = 'alphabetic';
     // 셰이핑 중이면 커닝을 켠다: 같은 글꼴 파일이면 캔버스가 HarfBuzz와 같은 폭으로 그린다 (ADR-0002)
     if (this.kerningOff) ctx.fontKerning = this.shapedFonts ? 'normal' : 'none';
     // 화면 영역이 아직 배치되지 않았으면 시간 예산 안에서만 배치한다 (스크롤바로 멀리 이동한 경우 등).
     // 못 끝낸 부분은 자리표시로 그리고 다음 프레임에 이어서 한다.
-    const ready = layout.ensureThroughY(top + h, RENDER_LAYOUT_BUDGET_MS);
+    const ready = isBody ? layout.ensureThroughY(top + h, RENDER_LAYOUT_BUDGET_MS) : true;
+    let lastTable = -1;
     const validCount = layout.validCount;
     const nextRef = (r: { para: number; line: number }) => {
       if (r.line + 1 < layout.paras[r.para]!.lines.length) return { para: r.para, line: r.line + 1 };
@@ -791,7 +955,19 @@ export class Editor {
       const y = ln.y - top;
       if (y > h) break;
       if (y + ln.height < 0) continue;
-      visibleParas.add(ref.para);
+      visibleParas?.add(ref.para);
+      if (para.layout.table) {
+        // 표 문단: 처음 보이는 행에서 표 전체(보이는 부분)를 그린다
+        if (lastTable !== ref.para) {
+          lastTable = ref.para;
+          this.drawTable(para, px, top, h);
+          this.drawDoc = doc;
+          this.drawActive = active;
+          ctx.font = this.font;
+          ctx.textBaseline = 'alphabetic';
+        }
+        continue;
+      }
       const { xs, preedit } = para.layout;
       const pStart = para.info.start;
       const x0 = px + ln.x - xs[ln.start]!;
@@ -800,7 +976,7 @@ export class Editor {
       const sty = this.styleKey(para.info as ParagraphInfo);
 
       // 끌고 있는 문단
-      if (this.drag && ref.para >= this.drag.i && ref.para <= this.drag.j) {
+      if (isBody && this.drag && ref.para >= this.drag.i && ref.para <= this.drag.j) {
         ctx.fillStyle = COLORS.dragSource;
         ctx.fillRect(px + ln.x - 6, y, setup.width - setup.margin * 2 + 12, ln.height);
       }
@@ -828,9 +1004,9 @@ export class Editor {
       }
 
       // 다른 사용자의 선택 영역
-      for (const rc of this.remotes) {
+      for (const rc of isBody ? this.remotes : []) {
         if (rc.anchor === rc.head) continue;
-        const pEnd = this.doc.paragraphs()[ref.para]!.end; // 이 문단 ¶의 오프셋
+        const pEnd = doc.paragraphs()[ref.para]!.end; // 이 문단 ¶의 오프셋
         const a = Math.max(Math.min(rc.anchor, rc.head), pStart);
         const b = Math.min(Math.max(rc.anchor, rc.head), pEnd + 1);
         if (a >= b) continue;
@@ -900,22 +1076,75 @@ export class Editor {
         }
       }
     }
+    return ready;
+  }
 
-    for (const f of floats) if (!f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
-    ctx.textBaseline = 'middle';
-    this.drawParagraphDrag(px, top);
-    this.drawRemoteCarets(px, top, w, visibleParas);
-
-    if (!ready) {
-      this.drawPendingPlaceholder(px, top, w, h);
-      this.scheduleRender();
+  /** 표 하나 (11 §4.3): 셀 배경, 셀 내용(덮인 셀은 주인 셀 아래에 이어서), 셀 범위 선택, 테두리 */
+  private drawTable(para: PlacedPara, px: number, top: number, h: number): void {
+    const info = para.info as ParagraphInfo;
+    const id = info.objs?.get(0)?.table;
+    const v = id ? this.tableViews.get(id) : undefined;
+    if (!v) return;
+    const { ctx } = this;
+    const lines = para.lines;
+    this.tables.place(v.input, v.measure, lines);
+    const rec = this.document.table(v.id);
+    const colX = v.measure.colX;
+    // 본문 선택이 표 원소를 덮으면 표 전체를 선택 색으로
+    let bodySel = false;
+    if (!this.active) {
+      const [a, b] = this.range();
+      bodySel = a <= info.start && b > info.start;
     }
+    const box = this.cellSelBox(v);
+    for (let y = 0; y < v.grid.cells.length; y++) {
+      const row = v.grid.cells[y]!;
+      for (let x = 0; x < row.length; x++) {
+        const cell = row[x];
+        if (!cell) continue;
+        const first = lines[y];
+        const last = lines[y + cell.span[0] - 1];
+        if (!first || !last) continue;
+        const cx = px + first.x + colX[x]!;
+        const cw = colX[x + cell.span[1]]! - colX[x]!;
+        const cy = first.y - top;
+        const ch = (last.page === first.page ? last.y + last.height : first.y + first.height) - first.y;
+        if (cy > h || cy + ch < 0) continue;
+        const fill = rec?.cellAttrs[cellKey(cell.row, cell.col)]?.fill;
+        if (fill) {
+          ctx.fillStyle = fill;
+          ctx.fillRect(cx, cy, cw, ch);
+        }
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(cx, cy, cw, ch);
+        ctx.clip();
+        for (const sid of [cell.story, ...cell.covered]) {
+          const c = this.tables.cells.get(sid);
+          const d = this.document.story(sid);
+          if (!c || (sid !== cell.story && isEmptyDoc(d))) continue;
+          this.drawLines(c.layout, d, px, top, h, null);
+        }
+        ctx.restore();
+        if (bodySel || (box && y >= box.y0 && y <= box.y1 && x >= box.x0 && x <= box.x1)) {
+          ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
+          ctx.fillRect(cx, cy, cw, ch);
+        }
+        ctx.strokeStyle = COLORS.tableBorder;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(Math.round(cx) + 0.5, Math.round(cy) + 0.5, Math.round(cw), Math.round(ch));
+      }
+    }
+  }
 
-    this.releaseImages();
-    this.updateCaret();
-    this.updateMirror(visibleParas);
-    this.reportSelection();
-    this.stats.renderMs = performance.now() - t0;
+  /** 셀 범위 선택의 격자 인덱스 (이 표가 아니거나 범위의 행·열이 사라졌으면 null) */
+  private cellSelBox(v: TableView): { y0: number; y1: number; x0: number; x1: number } | null {
+    const c = this.cellSel;
+    if (!c || c.table !== v.id) return null;
+    const ys = c.rows.map((r) => v.grid.rows.indexOf(r));
+    const xs = c.cols.map((r) => v.grid.cols.indexOf(r));
+    if (ys.includes(-1) || xs.includes(-1)) return null;
+    return { y0: Math.min(...ys), y1: Math.max(...ys), x0: Math.min(...xs), x1: Math.max(...xs) };
   }
 
   // ── 서식 (10 §4) ──────────────────────────────────────
@@ -923,41 +1152,40 @@ export class Editor {
   /** 문단의 스타일 캐시 키: 스타일에 기본 글자 서식이 있으면 그 이름, 없으면 '' */
   private styleKey(info: ParagraphInfo): string {
     const name = info.attrs?.style ?? BODY_STYLE;
-    return hasKeys(this.doc.resolvedStyle(name).marks) ? name : '';
+    return hasKeys(this.body.resolvedStyle(name).marks) ? name : '';
   }
 
   /** 스타일 sty 문단의 서식 번호 → 레이아웃 영향 (함수는 스타일마다 하나) */
-  private styleFn(sty: string): (id: number) => RunStyle {
-    this.checkStyleCaches();
-    let f = this.styleFns.get(sty);
+  private styleFn(sty: string, doc: Doc = this.drawDoc): (id: number) => RunStyle {
+    const c = this.styleCache(doc);
+    let f = c.fns.get(sty);
     if (!f) {
-      f = (id: number) => this.drawStyle(id, sty).run;
-      this.styleFns.set(sty, f);
+      f = (id: number) => this.drawStyle(id, sty, doc).run;
+      c.fns.set(sty, f);
     }
     return f;
   }
 
-  private checkStyleCaches(): void {
-    const k = this.drawStylesKey;
-    if (!k || k.doc !== this.doc || k.version !== this.doc.stylesVersion) {
-      this.drawStyles.clear();
-      this.styleFns.clear();
-      this.drawStylesKey = { doc: this.doc, version: this.doc.stylesVersion };
-    }
+  /** 스토리의 서식 캐시 (스타일 정의 판이 바뀌면 새로) */
+  private styleCache(doc: Doc) {
+    const v = this.body.stylesVersion;
+    let c = this.styleCaches.get(doc);
+    if (!c || c.version !== v) this.styleCaches.set(doc, (c = { version: v, draw: new Map(), fns: new Map() }));
+    return c;
   }
 
   /** (문단 스타일 sty, 서식 번호) → 그리기 정보. 스타일의 기본 글자 서식 위에 글자 서식을 덮는다 */
-  private drawStyle(id: number, sty = ''): DrawStyle {
-    this.checkStyleCaches();
-    let table = this.drawStyles.get(sty);
+  private drawStyle(id: number, sty = '', doc: Doc = this.drawDoc): DrawStyle {
+    const c = this.styleCache(doc);
+    let table = c.draw.get(sty);
     if (!table) {
       table = [];
-      this.drawStyles.set(sty, table);
+      c.draw.set(sty, table);
     }
     let d = table[id];
     if (d) return d;
-    const own = this.doc.markSet(id);
-    const m: MarkSet = sty ? { ...this.doc.resolvedStyle(sty).marks, ...own } : own;
+    const own = doc.markSet(id);
+    const m: MarkSet = sty ? { ...this.body.resolvedStyle(sty).marks, ...own } : own;
     if (!hasKeys(m)) d = PLAIN_DRAW;
     else {
       // 크기는 1/1000pt → px (96dpi)
@@ -1143,7 +1371,7 @@ export class Editor {
     const { ctx } = this;
     const pl = para.layout;
     const info = para.info as ParagraphInfo;
-    const [selFrom, selTo] = this.range();
+    const [selFrom, selTo] = this.drawActive ? this.range() : [0, 0];
     for (const [k, box] of pl.objs!) {
       if (k < ln.start || k >= ln.end) continue;
       const attrs = info.objs?.get(pl.preedit && k >= pl.preedit[0] ? k - (pl.preedit[1] - pl.preedit[0]) : k);
@@ -1204,7 +1432,7 @@ export class Editor {
       ctx.font = `${Math.min(13, this.fontSize)}px ${this.family}`;
       ctx.fillText(attrs?.alt ?? '이미지', x + 6, y + 18, w - 12);
     }
-    const [from, to] = this.range();
+    const [from, to] = this.active ? [0, 0] : this.range();
     if (to - from === 1 && from === offset) {
       ctx.strokeStyle = COLORS.gripActive;
       ctx.lineWidth = 1.5;
@@ -1548,10 +1776,10 @@ export class Editor {
   setStyleDef(name: string, def: Style | undefined): void {
     this.input.commitComposition();
     const before: Selection = { ...this.sel };
-    const ops = this.doc.setStyle(name, def);
+    const ops = this.body.setStyle(name, def);
     if (ops.length === 0) return;
     this.history.seal();
-    this.commit(ops, before);
+    this.commitRaw(ops, before);
     this.history.seal();
   }
 
@@ -1693,7 +1921,8 @@ export class Editor {
 
   /** 문단 손잡이(⋮⋮)와 끌어서 놓을 자리 표시 */
   private drawParagraphDrag(px: number, top: number): void {
-    const { ctx, setup, layout } = this;
+    const { ctx, setup } = this;
+    const layout = this.bodyLayout;
     const g = this.drag ? this.drag.i : this.hoverPara;
     if (g >= 0 && g < layout.validCount) {
       const ln = layout.paras[g]!.lines[0]!;
@@ -1709,7 +1938,7 @@ export class Editor {
       }
     }
     if (!this.drag || this.drag.to < 0) return;
-    const n = this.doc.paragraphs().length;
+    const n = this.body.paragraphs().length;
     const to = this.drag.to;
     let yLine: number;
     if (to < n) {
@@ -1736,9 +1965,9 @@ export class Editor {
     ctx.font = `600 11px ${this.font.replace(/^\d+px /, '')}`;
     ctx.textBaseline = 'middle';
     for (const rc of this.remotes) {
-      const head = Math.min(rc.head, this.doc.maxCaret);
-      if (!visible.has(this.doc.paragraphIndexAt(head))) continue;
-      const r = this.layout.caretRect(head);
+      const head = Math.min(rc.head, this.body.maxCaret);
+      if (!visible.has(this.body.paragraphIndexAt(head))) continue;
+      const r = this.bodyLayout.caretRect(head);
       const x = Math.round(px + r.x);
       const y = r.y - top;
       ctx.fillStyle = rc.color;
@@ -1759,18 +1988,22 @@ export class Editor {
   private reportSelection(): void {
     if (this.sel === this.reportedSel || !this.opts.onSelectionChange) return;
     this.reportedSel = this.sel;
+    // 셀에서는 표 원소 자리를 알린다 (프레즌스는 본문 오프셋)
+    const at = this.active ? this.tableOffset(this.active.table) : null;
+    if (at !== null) return this.opts.onSelectionChange(at, at);
     const { anchor, head } = this.selection();
     this.opts.onSelectionChange(anchor, head);
   }
 
   /** 아직 배치되지 않은 영역: 쪽 위에 옅은 막과 진행률을 그린다 */
   private drawPendingPlaceholder(px: number, top: number, w: number, h: number): void {
-    const { ctx, setup, layout } = this;
+    const { ctx, setup } = this;
+    const layout = this.bodyLayout;
     const from = Math.max(0, layout.validBottom - top);
     if (from >= h) return;
     ctx.fillStyle = COLORS.placeholder;
     ctx.fillRect(px, from, setup.width, h - from);
-    const total = this.doc.paragraphs().length;
+    const total = this.body.paragraphs().length;
     const pct = total ? Math.floor((layout.validCount / total) * 100) : 100;
     ctx.fillStyle = COLORS.placeholderText;
     ctx.textAlign = 'center';
@@ -1806,9 +2039,14 @@ export class Editor {
   }
 
   private updateMirror(paras: Set<number>): void {
-    const infos = [...paras].sort((a, b) => a - b).map((p) => this.doc.paragraphs()[p]).filter((p) => p !== undefined);
+    const body = this.body;
+    const infos = [...paras].sort((a, b) => a - b).map((p) => body.paragraphs()[p]).filter((p) => p !== undefined);
     const key = infos
-      .map((p) => `${p.attrs.style ?? ''}\u0002${this.doc.listLabel(p)?.text ?? ''}\u0003${p.fmt ? `${p.text}\u0001${p.fmt.join(',')}` : p.text}`)
+      .map((p) => {
+        const t = p.objs?.get(0)?.table;
+        if (t) return `table\u0004${this.mirrorTableKey(t)}`;
+        return `${p.attrs.style ?? ''}\u0002${body.listLabel(p)?.text ?? ''}\u0003${p.fmt ? `${p.text}\u0001${p.fmt.join(',')}` : p.text}`;
+      })
       .join('\n');
     if (this.mirror.dataset.key === key) return;
     this.mirror.dataset.key = key;
@@ -1816,7 +2054,13 @@ export class Editor {
     const out: HTMLElement[] = [];
     let group: { id: string; el: HTMLElement } | null = null;
     for (const info of infos) {
-      const label = this.doc.listLabel(info);
+      const t = info.objs?.get(0)?.table;
+      if (t) {
+        group = null;
+        out.push(this.mirrorTable(t));
+        continue;
+      }
+      const label = body.listLabel(info);
       if (!label) {
         group = null;
         out.push(this.mirrorPara(info));
@@ -1834,8 +2078,39 @@ export class Editor {
     this.mirror.replaceChildren(...out);
   }
 
+  /** 표의 미러 키 (셀 글이 바뀌면 다시 만든다) */
+  private mirrorTableKey(id: string): string {
+    const v = this.tableViews.get(id);
+    if (!v) return id;
+    return v.grid.cells.map((row) => row.map((c) => (c ? `${c.span}:${this.document.story(c.story).version}` : '-')).join(',')).join(';');
+  }
+
+  /** 표의 미러 (04 §3, 11 §7): table/tr/td, 병합은 rowspan·colspan */
+  private mirrorTable(id: string): HTMLElement {
+    const v = this.tableViews.get(id);
+    const table = document.createElement('table');
+    if (!v) return table;
+    for (const row of v.grid.cells) {
+      const tr = document.createElement('tr');
+      for (const c of row) {
+        if (!c) continue;
+        const td = document.createElement('td');
+        if (c.span[0] > 1) td.rowSpan = c.span[0];
+        if (c.span[1] > 1) td.colSpan = c.span[1];
+        for (const sid of [c.story, ...c.covered]) {
+          const d = this.document.story(sid);
+          if (sid !== c.story && isEmptyDoc(d)) continue;
+          for (const info of d.paragraphs()) td.append(this.mirrorPara(info as ParagraphInfo, undefined, d));
+        }
+        tr.append(td);
+      }
+      table.append(tr);
+    }
+    return table;
+  }
+
   /** 문단 하나의 미러 요소 */
-  private mirrorPara(info: ParagraphInfo, forceTag?: string): HTMLElement {
+  private mirrorPara(info: ParagraphInfo, forceTag?: string, doc: Doc = this.body): HTMLElement {
     // 제목·인용은 h1–h3·blockquote로 (04 §3): 스크린리더가 구조를 읽는다
     const tag = forceTag ?? ({ h1: 'h1', h2: 'h2', h3: 'h3', quote: 'blockquote' } as Record<string, string>)[info.attrs.style ?? ''] ?? 'p';
     const p = document.createElement(tag);
@@ -1860,7 +2135,7 @@ export class Editor {
       }
       let j = k + 1;
       while (j < cps.length && fmt[j] === fmt[k] && !info.objs?.has(j)) j++;
-      const m = this.doc.markSet(fmt[k]!);
+      const m = doc.markSet(fmt[k]!);
       let node: Node = document.createTextNode(cps.slice(k, j).join(''));
       if (m.italic) {
         const em = document.createElement('em');
@@ -1903,8 +2178,9 @@ export class Editor {
     const max = this.doc.maxCaret;
     anchor = Math.max(0, Math.min(max, anchor));
     head = Math.max(0, Math.min(max, head));
-    this.sel = { anchor: this.doc.positionAt(anchor), head: this.doc.positionAt(head) };
+    this.sel = { anchor: this.doc.positionAt(anchor), head: this.doc.positionAt(head), ...(this.active ? { story: this.active.story } : {}) };
     if (!keepGoal) this.goalX = null;
+    this.cellSel = null;
     if (this.pending && (anchor !== head || head !== this.pending.at)) this.pending = null;
   }
 
@@ -1978,7 +2254,13 @@ export class Editor {
     this.commit(ops, before);
   }
 
+  /** 편집 중인 스토리의 연산을 기록한다 (셀이면 스토리로 감싼다, 11 §2.5) */
   private commit(ops: Op[], before: Selection, mergeKey?: string): void {
+    this.commitRaw(this.active ? Document.tag(this.active.story, ops) : ops, before, mergeKey);
+  }
+
+  /** 문서 연산 그대로 기록 (본문 연산, 표 레코드 연산, 이미 감싼 스토리 연산) */
+  private commitRaw(ops: Op[], before: Selection, mergeKey?: string): void {
     this.history.record({ ops, before, after: { ...this.sel }, mergeKey, time: Date.now() });
     this.afterChange();
   }
@@ -1991,6 +2273,16 @@ export class Editor {
   }
 
   private moveTo(offset: number, extend: boolean, keepGoal = false): void {
+    if (!this.active && !extend) {
+      const t = this.tableAtOffset(offset);
+      if (t && this.enterTableEdge(t, offset < this.headOffset() ? 'last' : 'first', null)) {
+        this.history.seal();
+        this.scrollCaretIntoView();
+        this.render();
+        this.opts.onChange?.(this);
+        return;
+      }
+    }
     const { anchor } = this.selection();
     this.setSelection(extend ? anchor : offset, offset, keepGoal);
     this.history.seal();
@@ -2000,19 +2292,507 @@ export class Editor {
   }
 
   private undo(): void {
-    const sel = this.history.undo(this.doc);
-    if (sel) {
-      this.sel = sel;
-      this.afterChange();
-    }
+    this.input.commitComposition();
+    const sel = this.history.undo(this.document);
+    if (sel) this.restoreSelection(sel);
   }
 
   private redo(): void {
-    const sel = this.history.redo(this.doc);
-    if (sel) {
-      this.sel = sel;
-      this.afterChange();
+    this.input.commitComposition();
+    const sel = this.history.redo(this.document);
+    if (sel) this.restoreSelection(sel);
+  }
+
+  /** 실행 취소가 돌려준 선택: 그 스토리(셀)로 옮겨 간다. 셀이 사라졌으면 relayout이 표 뒤 본문으로 내보낸다 */
+  private restoreSelection(sel: Selection): void {
+    this.cellSel = null;
+    this.pending = null;
+    if (sel.story) {
+      const [table, row, col] = sel.story.split('|') as [string, string, string];
+      this.active = { table, row, col, story: sel.story };
+      this.doc = this.document.story(sel.story);
+    } else if (this.active) {
+      this.active = null;
+      this.doc = this.body;
+      this.layout = this.bodyLayout;
     }
+    this.sel = sel;
+    this.afterChange();
+  }
+
+  // ── 표 (11 §2.4, §4.3, §5.4) ──────────────────────────
+
+  /** 표 문단의 레이아웃 입력: 표 레코드 → 격자 → 셀 레이아웃 → 행 높이. 표 문단을 조판할 때 부른다 */
+  private tableSpec(id: string, start: number): TableSpec | null {
+    const rec = this.document.table(id);
+    if (!rec) return null;
+    const grid = normalizeTable(rec);
+    if (!grid.rows.length || !grid.cols.length) return null;
+    const input: TableGridInput = {
+      widths: grid.widths.map((w) => pt(w)),
+      minHeights: grid.rows.map((r) => pt(rec.rowAttrs[r]?.minHeight)),
+      cells: grid.cells,
+    };
+    const pre = this.cellPreedit && this.cellPreedit.story.startsWith(`${id}|`) ? this.cellPreedit : null;
+    const measure = this.tables.measure(input, this.setup.lineHeight + CELL_PAD * 2, pre);
+    this.tableViews.set(id, { id, grid, input, measure, at: this.body.positionAt(start) });
+    return { width: measure.width, rows: measure.rows };
+  }
+
+  /** 본문에서 표 문단 번호 (없으면 -1) */
+  private tableIndex(id: string): number {
+    const body = this.body;
+    const v = this.tableViews.get(id);
+    if (v) {
+      const i = body.paragraphIndexAt(body.resolve(v.at));
+      if (body.paragraphs()[i]?.objs?.get(0)?.table === id) return i;
+    }
+    return body.paragraphs().findIndex((q) => q.objs?.get(0)?.table === id);
+  }
+
+  /** 바뀐 표 (레코드가 바뀐 표, 편집 중인 셀의 표, 원격 변경이면 모든 표)의 표 문단을 다시 조판하게 한다 */
+  private touchTables(): void {
+    const ids = new Set(this.document.takeDirtyTables());
+    if (this.active) ids.add(this.active.table);
+    if (this.tablesAllDirty) {
+      for (const id of this.tableViews.keys()) ids.add(id);
+      this.tablesAllDirty = false;
+    }
+    for (const id of ids) {
+      const i = this.tableIndex(id);
+      if (i >= 0) this.body.touchParagraph(i);
+    }
+  }
+
+  /** 표 문단 (본문 레이아웃에 놓은 것). 표 레코드가 없거나 비었으면 null */
+  private locateTable(id: string): { index: number; para: PlacedPara; view: TableView } | null {
+    const index = this.tableIndex(id);
+    if (index < 0) return null;
+    const para = this.bodyLayout.para(index);
+    const view = this.tableViews.get(id);
+    return para.layout.table && view ? { index, para, view } : null;
+  }
+
+  /** 표 원소의 본문 오프셋 (프레즌스·캐럿 내보내기) */
+  private tableOffset(id: string): number | null {
+    const i = this.tableIndex(id);
+    return i < 0 ? null : this.body.paragraphs()[i]!.start;
+  }
+
+  /** 격자 (y, x)를 덮는 셀과 그 왼쪽 위 자리 */
+  private ownerAt(v: TableView, y: number, x: number): { cell: NonNullable<TableGrid['cells'][0][0]>; y: number; x: number } | null {
+    for (let yy = y; yy >= 0; yy--)
+      for (let xx = x; xx >= 0; xx--) {
+        const c = v.grid.cells[yy]?.[xx];
+        if (c && yy + c.span[0] > y && xx + c.span[1] > x) return { cell: c, y: yy, x: xx };
+      }
+    return null;
+  }
+
+  /** 스토리가 주인인 셀의 격자 자리 */
+  private cellPos(v: TableView, story: string): { cell: NonNullable<TableGrid['cells'][0][0]>; y: number; x: number } | null {
+    for (let y = 0; y < v.grid.cells.length; y++) {
+      const row = v.grid.cells[y]!;
+      for (let x = 0; x < row.length; x++) if (row[x]?.story === story) return { cell: row[x]!, y, x };
+    }
+    return null;
+  }
+
+  /** 편집 중인 셀의 레이아웃을 붙인다 (셀 원점을 맞춘다). 셀이 사라졌으면 표 뒤 본문으로 나온다 */
+  private attachActive(): void {
+    const a = this.active!;
+    const loc = this.locateTable(a.table);
+    if (!loc || !this.cellPos(loc.view, a.story)) {
+      this.leaveTable(loc ? loc.index : this.tableIndex(a.table), 1);
+      return;
+    }
+    this.tables.place(loc.view.input, loc.view.measure, loc.para.lines);
+    this.layout = this.tables.cells.get(a.story)!.layout;
+  }
+
+  /** 셀 편집을 끝내고 본문으로 (선택은 본문 처음: 부르는 쪽이 정한다) */
+  private leaveCell(): void {
+    if (!this.active) return;
+    this.input.commitComposition();
+    this.active = null;
+    this.doc = this.body;
+    this.layout = this.bodyLayout;
+    this.pending = null;
+    this.setSelection(0);
+  }
+
+  /** 표 밖 본문으로: dir < 0이면 표 앞 문단 끝, 아니면 표 뒤 문단 처음 (그 문단도 표면 그 표로) */
+  private leaveTable(index: number, dir: number, goalX: number | null = null): void {
+    this.leaveCell();
+    const paras = this.body.paragraphs();
+    if (index < 0) return;
+    const j = dir < 0 ? index - 1 : index + 1;
+    const q = paras[j];
+    if (!q) {
+      this.setSelection(dir < 0 ? paras[index]!.start : paras[index]!.end);
+      return;
+    }
+    const t = q.objs?.get(0)?.table;
+    if (t && this.enterTableEdge(t, dir < 0 ? 'last' : 'first', goalX)) return;
+    if (goalX !== null) {
+      const pp = this.bodyLayout.para(j);
+      this.setSelection(this.bodyLayout.offsetInLine({ para: j, line: dir < 0 ? pp.lines.length - 1 : 0 }, goalX), undefined, true);
+    } else this.setSelection(dir < 0 ? q.end : q.start);
+  }
+
+  /** 셀로 들어간다 (캐럿은 부르는 쪽이 정한다). 셀이 없으면 false */
+  private enterCell(table: string, row: string, col: string): boolean {
+    const story = cellStoryId(table, row, col);
+    if (this.active?.story === story) return true;
+    this.input.commitComposition();
+    this.history.seal();
+    this.active = { table, row, col, story };
+    this.doc = this.document.story(story);
+    this.pending = null;
+    this.attachActive();
+    return this.active !== null;
+  }
+
+  /** 표의 첫 행(first) 또는 끝 행(last) 셀로 들어간다. x(문서 좌표)가 있으면 그 열, 캐럿도 그 x에 */
+  private enterTableEdge(id: string, edge: 'first' | 'last', x: number | null, caret: 'start' | 'end' = edge === 'first' ? 'start' : 'end'): boolean {
+    const loc = this.locateTable(id);
+    if (!loc) return false;
+    const v = loc.view;
+    const y = edge === 'first' ? 0 : v.grid.cells.length - 1;
+    let col = edge === 'first' ? 0 : v.grid.cols.length - 1;
+    if (x !== null) {
+      const rx = x - loc.para.lines[y]!.x;
+      col = 0;
+      while (col + 1 < v.grid.cols.length && v.measure.colX[col + 1]! <= rx) col++;
+    }
+    const o = this.ownerAt(v, y, col);
+    if (!o || !this.enterCell(id, o.cell.row, o.cell.col)) return false;
+    this.caretInCell(x, edge === 'first' ? 1 : -1, caret);
+    return true;
+  }
+
+  /** 막 들어간 셀 안의 캐럿: x가 있으면 첫 줄(dir > 0)이나 끝 줄의 그 x, 없으면 처음·끝 */
+  private caretInCell(x: number | null, dir: number, caret: 'start' | 'end'): void {
+    if (x !== null) {
+      const L = this.layout;
+      const last = L.paras.length - 1;
+      const ref = dir > 0 ? { para: 0, line: 0 } : { para: last, line: L.para(last).lines.length - 1 };
+      this.setSelection(L.offsetInLine(ref, x), undefined, true);
+    } else this.setSelection(caret === 'start' ? 0 : this.doc.maxCaret);
+  }
+
+  /** 문서 좌표의 셀 (표 문단의 행 안, 표 폭 안) */
+  private cellAt(x: number, y: number): { view: TableView; cell: NonNullable<TableGrid['cells'][0][0]>; y: number; x: number } | null {
+    const L = this.bodyLayout;
+    if (y >= L.validBottom) return null;
+    const ref = L.firstLineBelow(y, false);
+    if (!ref) return null;
+    const para = L.paras[ref.para]!;
+    if (!para.layout.table) return null;
+    const ln = para.lines[ref.line]!;
+    if (y < ln.y || y >= ln.y + ln.height) return null;
+    const id = (para.info as ParagraphInfo).objs?.get(0)?.table;
+    const v = id ? this.tableViews.get(id) : undefined;
+    if (!v) return null;
+    const rx = x - ln.x;
+    if (rx < 0 || rx >= v.measure.width) return null;
+    let col = 0;
+    while (col + 1 < v.grid.cols.length && v.measure.colX[col + 1]! <= rx) col++;
+    const o = this.ownerAt(v, ref.line, col);
+    return o ? { view: v, ...o } : null;
+  }
+
+  /** 셀 안을 눌렀다: 셀로 들어가 캐럿, Shift는 셀 범위 선택, 끌어서 다른 셀로 가면 셀 범위 선택 */
+  private mouseInCell(hit: NonNullable<ReturnType<Editor['cellAt']>>, p: { x: number; y: number }, e: MouseEvent): void {
+    const id = hit.view.id;
+    const a = this.active;
+    if (e.shiftKey && a && a.table === id && a.story !== hit.cell.story) {
+      this.cellSel = { table: id, rows: [a.row, hit.cell.row], cols: [a.col, hit.cell.col] };
+      this.render();
+      this.opts.onChange?.(this);
+      return;
+    }
+    if (!this.enterCell(id, hit.cell.row, hit.cell.col)) return;
+    const start = this.active!;
+    const offset = this.layout.hitTest(p.x, p.y);
+    if (e.detail === 2) {
+      const [x0, x1] = this.wordAt(offset);
+      this.setSelection(x0, x1);
+    } else if (e.detail >= 3) {
+      const para = this.doc.paragraphs()[this.layout.paraIndexAt(offset)]!;
+      this.setSelection(para.start, para.end);
+    } else if (e.shiftKey && a?.story === start.story) this.setSelection(this.selection().anchor, offset);
+    else this.setSelection(offset);
+    this.history.seal();
+    this.render();
+    this.opts.onChange?.(this);
+    if (e.detail !== 1) return;
+    const anchor = this.selection().anchor;
+    const onMove = (ev: MouseEvent) => {
+      const q = this.docPoint(ev);
+      const h2 = this.cellAt(q.x, q.y);
+      if (h2 && h2.view.id === id && h2.cell.story !== start.story) {
+        this.cellSel = { table: id, rows: [start.row, h2.cell.row], cols: [start.col, h2.cell.col] };
+      } else if (this.active?.story === start.story) {
+        this.setSelection(anchor, this.layout.hitTest(q.x, q.y));
+      }
+      this.scheduleRender();
+      this.opts.onChange?.(this);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  /** 행 우선 순서로 이웃 셀 (dir ±1). 표 끝을 넘으면 표 밖 본문으로 */
+  private stepCell(dir: -1 | 1, caret: 'start' | 'end' | 'all'): void {
+    const a = this.active;
+    const loc = a && this.locateTable(a.table);
+    if (!a || !loc) return;
+    const list = loc.view.grid.cells.flat().filter((c) => c !== null);
+    const k = list.findIndex((c) => c!.story === a.story);
+    const next = list[k + dir];
+    if (!next) {
+      this.leaveTable(loc.index, dir);
+    } else {
+      this.enterCell(a.table, next.row, next.col);
+      if (caret === 'all') this.setSelection(0, this.doc.maxCaret);
+      else this.setSelection(caret === 'start' ? 0 : this.doc.maxCaret);
+    }
+    this.history.seal();
+    this.scrollCaretIntoView();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** Tab: 다음 셀 (내용 선택). 마지막 셀에서는 행을 더한다 */
+  private tabCell(dir: -1 | 1): void {
+    const a = this.active;
+    const loc = a && this.locateTable(a.table);
+    if (!a || !loc) return;
+    const list = loc.view.grid.cells.flat().filter((c) => c !== null);
+    if (dir > 0 && list[list.length - 1]!.story === a.story) {
+      this.tableAddRow(true);
+      const loc2 = this.locateTable(a.table);
+      const y = loc2 ? loc2.view.grid.cells.length - 1 : -1;
+      const first = loc2?.view.grid.cells[y]?.find((c) => c !== null);
+      if (first) {
+        this.enterCell(a.table, first.row, first.col);
+        this.setSelection(0);
+        this.render();
+      }
+      return;
+    }
+    this.stepCell(dir, 'all');
+  }
+
+  /** 셀의 첫 줄 위·끝 줄 아래로: 위·아래 셀, 표 끝이면 표 밖 본문 */
+  private leaveCellVertical(dir: number): void {
+    const a = this.active!;
+    const loc = this.locateTable(a.table);
+    if (!loc) return;
+    const pos = this.cellPos(loc.view, a.story);
+    if (!pos) return;
+    const ny = dir < 0 ? pos.y - 1 : pos.y + pos.cell.span[0];
+    const goal = this.goalX;
+    if (ny < 0 || ny >= loc.view.grid.cells.length) {
+      this.leaveTable(loc.index, dir, goal);
+    } else {
+      const o = this.ownerAt(loc.view, ny, pos.x);
+      if (o) {
+        this.enterCell(a.table, o.cell.row, o.cell.col);
+        this.caretInCell(goal, dir, dir > 0 ? 'start' : 'end');
+      }
+    }
+    this.goalX = goal;
+    this.scrollCaretIntoView();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 본문 오프셋이 표 문단 안이면 그 표 ID */
+  private tableAtOffset(offset: number): string | null {
+    const q = this.body.paragraphs()[this.body.paragraphIndexAt(offset)];
+    const t = q?.objs?.get(0)?.table;
+    return t && this.document.table(t) ? t : null;
+  }
+
+  /** 표 레코드 연산 기록 (셀 선택 그대로) */
+  private commitTable(ops: Op[], before: Selection): void {
+    if (ops.length === 0) return;
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.history.seal();
+  }
+
+  /** 편집 중인 표·셀 (도구 막대 상태) */
+  tableState(): { inTable: boolean; merged: boolean; range: boolean } {
+    const a = this.active;
+    const v = a && this.tableViews.get(a.table);
+    const pos = v && this.cellPos(v, a.story);
+    return { inTable: !!a, merged: !!pos && (pos.cell.span[0] > 1 || pos.cell.span[1] > 1), range: !!this.cellSel && !!v && !!this.cellSelBox(v) };
+  }
+
+  /** 캐럿 문단 앞에 표를 넣는다 (행 × 열, 본문 폭을 열마다 똑같이) 그리고 첫 셀로 */
+  insertTable(rows: number, cols: number): void {
+    this.input.commitComposition();
+    this.leaveCellKeep();
+    const before: Selection = { ...this.sel };
+    const width = Math.round((this.setup.width - this.setup.margin * 2) * (72 / 96) * 1000);
+    const { id, ops } = this.document.insertTable(this.headOffset(), rows, cols, width);
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+    const t = this.document.table(id)!;
+    if (this.enterCell(id, t.rows[0]!, t.cols[0]!)) this.setSelection(0);
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 셀에서 나오되 캐럿을 표 앞에 (표 명령) */
+  private leaveCellKeep(): void {
+    const a = this.active;
+    if (!a) return;
+    const at = this.tableOffset(a.table);
+    this.leaveCell();
+    if (at !== null) this.setSelection(at);
+  }
+
+  /** 편집 중인 셀의 행 아래(below)·위에 행 */
+  tableAddRow(below = true): void {
+    const a = this.active;
+    const loc = a && this.locateTable(a.table);
+    const pos = loc && this.cellPos(loc.view, a.story);
+    if (!a || !loc || !pos) return;
+    const rows = loc.view.grid.rows;
+    const after = below ? rows[pos.y + pos.cell.span[0] - 1]! : pos.y > 0 ? rows[pos.y - 1]! : null;
+    const before: Selection = { ...this.sel };
+    this.commitTable(this.document.addRow(a.table, after).ops, before);
+  }
+
+  /** 편집 중인 셀의 열 오른쪽(right)·왼쪽에 열 (너비는 그 열과 같게) */
+  tableAddCol(right = true): void {
+    const a = this.active;
+    const loc = a && this.locateTable(a.table);
+    const pos = loc && this.cellPos(loc.view, a.story);
+    if (!a || !loc || !pos) return;
+    const cols = loc.view.grid.cols;
+    const after = right ? cols[pos.x + pos.cell.span[1] - 1]! : pos.x > 0 ? cols[pos.x - 1]! : null;
+    const before: Selection = { ...this.sel };
+    const w = this.document.table(a.table)!.widths[cols[pos.x]!];
+    this.commitTable(this.document.addCol(a.table, after, w).ops, before);
+  }
+
+  /** 편집 중인 셀(또는 셀 범위)의 행·열을 지운다. 다 지우면 표를 지운다 */
+  tableDelete(what: 'row' | 'col'): void {
+    const a = this.active;
+    const loc = a && this.locateTable(a.table);
+    const pos = loc && this.cellPos(loc.view, a.story);
+    if (!a || !loc || !pos) return;
+    const v = loc.view;
+    const box = this.cellSelBox(v) ?? { y0: pos.y, y1: pos.y + pos.cell.span[0] - 1, x0: pos.x, x1: pos.x + pos.cell.span[1] - 1 };
+    const ids = what === 'row' ? v.grid.rows.slice(box.y0, box.y1 + 1) : v.grid.cols.slice(box.x0, box.x1 + 1);
+    const all = what === 'row' ? v.grid.rows : v.grid.cols;
+    if (ids.length >= all.length) return this.deleteTable();
+    const before: Selection = { ...this.sel };
+    const ops: Op[] = [];
+    for (const id of ids) ops.push(...this.document.deleteRowOrCol(a.table, id));
+    // 캐럿은 지운 범위 다음(없으면 앞) 행·열의 셀로
+    const ny = what === 'row' ? (box.y1 + 1 < v.grid.rows.length ? box.y1 + 1 : box.y0 - 1) : pos.y;
+    const nx = what === 'col' ? (box.x1 + 1 < v.grid.cols.length ? box.x1 + 1 : box.x0 - 1) : pos.x;
+    const o = this.ownerAt(v, ny, nx);
+    this.cellSel = null;
+    this.history.seal();
+    this.history.record({ ops, before, after: { ...this.sel }, time: Date.now() });
+    if (o) this.enterCell(a.table, o.cell.row, o.cell.col);
+    if (this.active) this.setSelection(0);
+    this.history.seal();
+    this.afterChange();
+  }
+
+  /** 셀 범위를 병합 (왼쪽 위 셀이 주인, 덮인 셀의 글은 그대로 주인 셀 아래에 이어 보인다) */
+  tableMerge(): void {
+    const a = this.active;
+    const v = a && this.tableViews.get(a.table);
+    const box = v && this.cellSelBox(v);
+    if (!a || !v || !box) return;
+    const owner = v.grid.cells[box.y0]?.[box.x0];
+    if (!owner) return;
+    const before: Selection = { ...this.sel };
+    const ops = this.document.mergeCells(a.table, owner.row, owner.col, v.grid.rows.slice(box.y0 + 1, box.y1 + 1), v.grid.cols.slice(box.x0 + 1, box.x1 + 1));
+    this.cellSel = null;
+    this.history.seal();
+    this.history.record({ ops, before, after: { ...this.sel }, time: Date.now() });
+    if (this.enterCell(a.table, owner.row, owner.col)) this.setSelection(this.doc.maxCaret);
+    this.history.seal();
+    this.afterChange();
+  }
+
+  /** 편집 중인 병합 셀을 나눈다 */
+  tableUnmerge(): void {
+    const a = this.active;
+    if (!a) return;
+    this.commitTable(this.document.unmergeCell(a.table, a.row, a.col), { ...this.sel });
+  }
+
+  /** 편집 중인 셀(범위)의 배경색 */
+  tableCellFill(fill: string | undefined): void {
+    const a = this.active;
+    const v = a && this.tableViews.get(a.table);
+    if (!a || !v) return;
+    const box = this.cellSelBox(v);
+    const cells = box
+      ? v.grid.cells.slice(box.y0, box.y1 + 1).flatMap((r) => r.slice(box.x0, box.x1 + 1)).filter((c) => c !== null)
+      : [{ row: a.row, col: a.col }];
+    const ops: Op[] = [];
+    const rec = this.document.table(a.table)!;
+    for (const c of cells) ops.push(...this.document.setCellAttrs(a.table, c!.row, c!.col, fill ? { ...rec.cellAttrs[cellKey(c!.row, c!.col)], fill } : undefined));
+    this.commitTable(ops, { ...this.sel });
+  }
+
+  /** 편집 중인 셀의 열 너비 (px) */
+  tableSetColWidth(px: number): void {
+    const a = this.active;
+    if (!a) return;
+    this.commitTable(this.document.setColWidth(a.table, a.col, px * (72 / 96) * 1000), { ...this.sel });
+  }
+
+  /** 편집 중인 표를 지운다 (표 문단 [표][¶]) */
+  deleteTable(): void {
+    const a = this.active;
+    if (!a) return;
+    const i = this.tableIndex(a.table);
+    this.leaveCell();
+    if (i < 0) return;
+    const q = this.body.paragraphs()[i]!;
+    this.setSelection(q.start);
+    const before: Selection = { ...this.sel };
+    const ops = this.body.deleteRange(q.start, q.end + 1);
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.history.seal();
+  }
+
+  /** 셀 범위의 내용을 지운다 (Delete·Backspace) */
+  private clearCellRange(): void {
+    const a = this.active;
+    const v = a && this.tableViews.get(a.table);
+    const box = v && this.cellSelBox(v);
+    if (!a || !v || !box) return;
+    const before: Selection = { ...this.sel };
+    const ops: Op[] = [];
+    for (const c of v.grid.cells.slice(box.y0, box.y1 + 1).flatMap((r) => r.slice(box.x0, box.x1 + 1))) {
+      if (!c) continue;
+      const d = this.document.story(c.story);
+      if (d.maxCaret > 0) ops.push(...Document.tag(c.story, d.deleteRange(0, d.maxCaret)));
+    }
+    const keep = this.cellSel;
+    this.setSelection(0);
+    this.cellSel = keep;
+    if (ops.length) this.commitTable(ops, before);
   }
 
   // ── 입력 의도 처리 ────────────────────────────────────
@@ -2080,6 +2860,19 @@ export class Editor {
     const head = this.headOffset();
     const [from, to] = this.range();
     let handled = true;
+
+    // 셀 범위 선택 (11 §5.4): 지우기는 셀 내용, Esc는 해제
+    if (this.cellSel && !mod && (e.key === 'Backspace' || e.key === 'Delete')) {
+      this.clearCellRange();
+      e.preventDefault();
+      return;
+    }
+    if (this.cellSel && e.key === 'Escape') {
+      this.cellSel = null;
+      this.render();
+      e.preventDefault();
+      return;
+    }
 
     if (e.altKey && shift && !mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       this.moveParagraphs(e.key === 'ArrowUp' ? -1 : 1);
@@ -2174,18 +2967,22 @@ export class Editor {
         case 'Backspace':
           if (this.caretAtListStart()) this.outdentListItem(this.caretAtListStart()!.i, true); // 목록 첫머리: 번호부터 지운다
           else if (from !== to) this.deleteRange(from, to);
+          else if (!this.active && head > 0 && this.tableAtOffset(head - 1)) this.moveTo(head - 1, false); // 표 뒤 문단 처음: 표와 합치지 않고 표로
           else if (head > 0) this.deleteRange(this.layout.prevStop(head), head, 'delete');
           break;
         case 'Delete':
           if (from !== to) this.deleteRange(from, to);
+          else if (!this.active && head < this.doc.maxCaret && this.tableAtOffset(head + 1)) this.moveTo(head + 1, false); // 표 앞 문단 끝
           else if (head < this.doc.maxCaret) this.deleteRange(head, this.layout.nextStop(head), 'delete');
           break;
         case 'ArrowLeft':
           if (from !== to && !shift) this.moveTo(from, false);
+          else if (this.active && head === 0 && !shift) this.stepCell(-1, 'end');
           else this.moveTo(this.layout.prevStop(head), shift);
           break;
         case 'ArrowRight':
           if (from !== to && !shift) this.moveTo(to, false);
+          else if (this.active && head >= this.doc.maxCaret && !shift) this.stepCell(1, 'start');
           else this.moveTo(Math.min(this.doc.maxCaret, this.layout.nextStop(head)), shift);
           break;
         case 'ArrowUp':
@@ -2211,8 +3008,9 @@ export class Editor {
           break;
         }
         case 'Tab':
-          // 목록 문단이면 수준 ±1 (10 §2.4), 아니면 탭 문자 (Shift+Tab은 목록에서만)
-          if (!this.listLevel(shift ? -1 : 1) && !shift) this.replaceSelection('\t', 'type');
+          // 표 셀이면 다음·앞 셀 (11 §5.4). 목록 문단이면 수준 ±1 (10 §2.4), 아니면 탭 문자 (Shift+Tab은 목록에서만)
+          if (this.active) this.tabCell(shift ? -1 : 1);
+          else if (!this.listLevel(shift ? -1 : 1) && !shift) this.replaceSelection('\t', 'type');
           break;
         default:
           handled = false;
@@ -2226,6 +3024,20 @@ export class Editor {
     const r = this.layout.caretRect(head);
     if (this.goalX === null) this.goalX = r.x;
     const target = this.layout.stepLine(r.ref, dir);
+    if (!extend && this.active && !target) return this.leaveCellVertical(dir);
+    if (!extend && !this.active && target && this.bodyLayout.para(target.para).layout.table) {
+      // 위·아래 표로: 첫 행(내려갈 때)이나 끝 행의 goalX 열
+      const id = (this.bodyLayout.para(target.para).info as ParagraphInfo).objs?.get(0)?.table;
+      const goal = this.goalX;
+      if (id && this.enterTableEdge(id, dir > 0 ? 'first' : 'last', goal)) {
+        this.goalX = goal;
+        this.history.seal();
+        this.scrollCaretIntoView();
+        this.render();
+        this.opts.onChange?.(this);
+        return;
+      }
+    }
     let offset: number;
     if (target) offset = this.layout.offsetInLine(target, this.goalX);
     else offset = dir < 0 ? 0 : this.doc.maxCaret;
@@ -2269,14 +3081,19 @@ export class Editor {
 
     const p = this.docPoint(e);
     // 아직 쪽 조립이 안 된 영역의 클릭은 무시 (자리표시가 보이는 상태)
-    if (p.y >= this.layout.validBottom) return;
+    if (p.y >= this.bodyLayout.validBottom) return;
     if (e.detail === 1 && this.inGrip(p.x)) {
-      const ref = this.layout.firstLineBelow(p.y, false);
+      const ref = this.bodyLayout.firstLineBelow(p.y, false);
       if (ref) {
+        this.leaveCellKeep();
         this.startParagraphDrag(ref.para, e);
         return;
       }
     }
+    // 표 셀 (11 §5.4)
+    const hit = this.cellAt(p.x, p.y);
+    if (hit) return this.mouseInCell(hit, p, e);
+    this.leaveCell();
     // 개체: 선택한 개체의 손잡이면 크기 조절, 개체를 누르면 개체 선택 (11 §5.1)
     const obj = this.objectAt(p.x, p.y);
     const sel = this.selectedObject();
@@ -2356,9 +3173,10 @@ export class Editor {
     const p = this.docPoint(e);
     const { margin, width } = this.setup;
     let para = -1;
-    if (p.x >= margin - GRIP_LEFT && p.x <= width - margin && p.y < this.layout.validBottom) {
-      const ref = this.layout.firstLineBelow(p.y, false);
-      if (ref && p.y >= this.layout.paras[ref.para]!.lines[0]!.y - this.setup.paraSpacing) para = ref.para;
+    const L = this.bodyLayout;
+    if (p.x >= margin - GRIP_LEFT && p.x <= width - margin && p.y < L.validBottom) {
+      const ref = L.firstLineBelow(p.y, false);
+      if (ref && p.y >= L.paras[ref.para]!.lines[0]!.y - this.setup.paraSpacing) para = ref.para;
     }
     this.setHover(para, para >= 0 && this.inGrip(p.x));
   }
@@ -2424,7 +3242,7 @@ export class Editor {
 
   /** 문서 y에 놓으면 들어갈 자리: 그 문단 앞이면 문단 번호, 뒤면 다음 번호 */
   private dropIndexAt(y: number): number {
-    const layout = this.layout;
+    const layout = this.bodyLayout;
     const ref = layout.firstLineBelow(Math.max(0, y));
     const para = layout.para(ref.para);
     const lines = para.lines;
@@ -2512,6 +3330,11 @@ function wordBounds(text: string): Array<{ start: number; end: number; isWord: b
 
 
 export type { Position };
+
+/** 빈 스토리 (빈 문단 하나) */
+function isEmptyDoc(d: Doc): boolean {
+  return d.length === 1;
+}
 
 function hasKeys(o: object): boolean {
   for (const _ in o) return true;

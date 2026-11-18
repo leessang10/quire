@@ -77,6 +77,19 @@ export interface ParaFormat {
   floats?: ReadonlyMap<number, FloatSpec> | null;
   /** 레이아웃 캐시 키에 더할 값: style 함수가 서식 번호 밖의 것(문단 스타일 등)에 따라 달라지면 그것을 나타내는 문자열 */
   key?: string;
+  /**
+   * 표 문단 (11 §4.3): 줄 대신 행을 놓는다. 행 높이(px)는 편집기가 셀 레이아웃에서 구한다. 쪽은 행 사이에서만 나눈다
+   * (행 하나가 쪽보다 높으면 넘친다)
+   */
+  table?: TableSpec | null;
+}
+
+/** 표 문단의 행 (px) */
+export interface TableSpec {
+  /** 표 폭 */
+  width: number;
+  /** 행마다 높이 (1개 이상) */
+  rows: readonly number[];
 }
 
 export interface Measurer {
@@ -137,6 +150,8 @@ export interface ParaLayout {
   objs: Map<number, { w: number; h: number }> | null;
   /** 떠 있는 개체: 표시 코드포인트 위치(앵커) → 위치·배치. 없으면 null */
   floats: Map<number, FloatSpec> | null;
+  /** 표 문단이면 행 (11 §4.3) */
+  table?: TableSpec | null;
   /** 코드포인트별 줄 높이 배율 (서식 있을 때, 어울림 줄바꿈에서 줄 높이를 다시 구할 때). 없으면 모두 1 */
   cpLine: Float32Array | null;
   /** ¶의 줄 높이 배율 (마지막 줄) */
@@ -311,7 +326,7 @@ export function layoutParagraph(
   if (objs) lineObjects(lines, objs);
   const cpLine = st ? Float32Array.from({ length: n }, (_, k) => st(k).line) : null;
   const markLine = format ? format.style(format.mark).line : 1;
-    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, cpLine, markLine };
+    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, cpLine, markLine, table: format?.table ?? null };
   }
   for (const seg of segmenter.segment(display)) {
     const s = seg.segment;
@@ -343,7 +358,7 @@ export function layoutParagraph(
   if (objs) lineObjects(lines, objs);
   const cpLine = st ? Float32Array.from({ length: n }, (_, k) => st(k).line) : null;
   const markLine = format ? format.style(format.mark).line : 1;
-  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, cpLine, markLine };
+  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, cpLine, markLine, table: format?.table ?? null };
 }
 
 /** 그리기용 인라인 개체 표: 앵커(폭 0)는 뺀다 */
