@@ -2,7 +2,7 @@
  * 연산, 트랜잭션, 실행 취소 (0단계: 단일 사용자)
  * 설계: docs/design/01-document-model.md §5, 05-collaboration-and-history.md §4
  */
-import type { Doc, Op, Position } from './doc';
+import type { Op, Position } from './doc';
 
 export type { Op } from './doc';
 
@@ -20,7 +20,12 @@ export interface Transaction {
   time: number;
 }
 
-export function applyOp(doc: Doc, op: Op): void {
+/** 연산을 적용할 수 있는 것: Doc 하나, 또는 여러 스토리를 가진 Document */
+export interface OpTarget {
+  apply(op: Op): void;
+}
+
+export function applyOp(doc: OpTarget, op: Op): void {
   doc.apply(op);
 }
 
@@ -46,6 +51,8 @@ export function invertOp(op: Op): Op {
       return { type: 'list', id: op.id, before: op.after, after: op.before };
     case 'obj':
       return { type: 'obj', ctr: op.ctr, key: op.key, before: op.after, after: op.before };
+    case 'story':
+      return { type: 'story', story: op.story, op: invertOp(op.op) };
   }
 }
 
@@ -87,7 +94,7 @@ export class History {
     if (last) last.mergeKey = undefined;
   }
 
-  undo(doc: Doc): Selection | null {
+  undo(doc: OpTarget): Selection | null {
     const tr = this.undoStack.pop();
     if (!tr) return null;
     for (let i = tr.ops.length - 1; i >= 0; i--) applyOp(doc, invertOp(tr.ops[i]!));
@@ -95,7 +102,7 @@ export class History {
     return tr.before;
   }
 
-  redo(doc: Doc): Selection | null {
+  redo(doc: OpTarget): Selection | null {
     const tr = this.redoStack.pop();
     if (!tr) return null;
     for (const op of tr.ops) applyOp(doc, op);

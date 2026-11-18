@@ -4,12 +4,40 @@
  */
 import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector } from 'loro-crdt';
 import { type RemoteOp, type LocalChange, deltaToOps, transform } from './ot';
-import { LISTS, LoroWriter, SEG_MARK, STYLES, TEXT, displayOrderFromLoro, initLoro, newLoro, readDefs, readFormats, readRaw, readState, type PeerId } from './shape';
+import {
+  LISTS,
+  LoroWriter,
+  SEG_MARK,
+  STYLES,
+  TEXT,
+  displayOrderFromLoro,
+  initLoro,
+  newLoro,
+  readDefs,
+  readFormats,
+  readRaw,
+  readState,
+  readTail,
+  storyIdsOf,
+  storyNames,
+  type PeerId,
+} from './shape';
 import { PresenceStore } from './presence-store';
-import type { RemoteSel, ToMain, ToWorker } from './protocol';
+import type { RemoteSel, StoryDelta, StoryInit, ToMain, ToWorker } from './protocol';
+
+/** 스토리 컨테이너 ID → (역할, 스토리 ID) (storyNames의 접두사) */
+const STORY_CONTAINER = /^cid:root-(s|so|sh|sp|su|tp):(.*):(Text|Map|MovableList)$/;
+
+/** Loro의 스토리 하나 → 처음 상태 */
+export function storyInit(loro: LoroDoc, id: string): StoryInit {
+  const names = storyNames(id);
+  const { raw, keys } = readRaw(loro, names);
+  return { raw, keys, state: readState(loro, names), formats: readFormats(loro, names), tail: readTail(loro, names) };
+}
 import type { PresenceUser } from './presence';
 
 const LOCAL_ORIGIN = 'quire-local';
+const SEG_KINDS = new Set(['order', 'list', 'hidden', 'flag']);
 
 /** 네트워크로 내보내는 길 (중계 모드: 메인으로 넘김, WebSocket 모드: WsLink) */
 export interface NetOut {
@@ -48,6 +76,11 @@ export class SyncCore {
   private incoming: RemoteOp[] = [];
   private segDirty = false;
   private defsDirty = false;
+  /** 스토리별 쓰기 (11 §2.5) */
+  private readonly storyWriters = new Map<string, LoroWriter>();
+  /** 가져오기 중 바뀐 스토리 상태 */
+  private storySeg = new Set<string>();
+  private storyTail = new Set<string>();
   private readonly defIds: Set<string>;
   private readonly unsubscribe: () => void;
   private closed = false;
@@ -75,7 +108,9 @@ export class SyncCore {
     this.exported = loro.oplogVersion();
     this.unsubscribe = loro.subscribe((e) => this.onEvent(e));
     const { raw, keys } = readRaw(loro);
-    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr, formats: readFormats(loro) };
+    const stories: Record<string, StoryInit> = {};
+    for (const id of storyIdsOf(loro)) stories[id] = storyInit(loro, id);
+    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr, formats: readFormats(loro), stories };
     opts.post(opts.reset ? { t: 'reset', ...init, lost: opts.reset.lost } : { t: 'init', ...init });
     this.heartbeat = setInterval(() => this.tick(), (opts.presenceTimeoutMs ?? 30000) / 2);
   }
@@ -173,15 +208,34 @@ export class SyncCore {
     let sel: { anchor: number; head: number } | null = null;
     for (const c of cs) {
       if (c.kind === 'sel') sel = { anchor: c.anchor, head: c.head };
+      else if (c.story !== undefined) this.writerFor(c.story).apply(c);
       else this.writer.apply(c);
     }
     if (cs.some((c) => c.kind !== 'sel')) this.loro.commit({ origin: LOCAL_ORIGIN });
     this.len++;
     // 메인의 다음 묶음은 이 ack까지 받은 뒤에 만든 것이므로 지금까지의 항목은 다시 쓰지 않는다
     this.log.clear();
-    this.opts.post(wantState ? { t: 'ack', state: readState(this.loro), defs: readDefs(this.loro) } : { t: 'ack' });
+    if (wantState) {
+      // 로컬 구획 변경이 있던 스토리의 상태도
+      const stories: Record<string, StoryDelta> = {};
+      // 로컬 구획·끝 ¶ 변경이 있던 스토리의 상태 (메인이 미뤄 둔 원격 상태 대신 쓴다)
+      for (const c of cs)
+        if (c.story !== undefined && (SEG_KINDS.has(c.kind) || c.kind === 'tail'))
+          stories[c.story] = { state: readState(this.loro, storyNames(c.story)), tail: readTail(this.loro, storyNames(c.story)) };
+      this.opts.post({ t: 'ack', state: readState(this.loro), defs: readDefs(this.loro), ...(Object.keys(stories).length ? { stories } : {}) });
+    } else this.opts.post({ t: 'ack' });
     if (sel) this.setSelection(sel.anchor, sel.head);
     if (this.pendingExport) this.schedule();
+  }
+
+  private writerFor(id: string): LoroWriter {
+    let w = this.storyWriters.get(id);
+    if (!w) {
+      const names = storyNames(id);
+      w = new LoroWriter(this.loro, () => displayOrderFromLoro(this.loro, names), names);
+      this.storyWriters.set(id, w);
+    }
+    return w;
   }
 
   private setSelection(anchor: number, head: number): void {
@@ -213,6 +267,18 @@ export class SyncCore {
         this.defsDirty = true;
         continue;
       }
+      // 스토리 (11 §2.5): 텍스트는 연산으로, 구획·끝 ¶ 속성은 상태로
+      const sm = STORY_CONTAINER.exec(String(ev.target));
+      if (sm) {
+        const [, role, id] = sm as unknown as [string, string, string];
+        if (role === 's' && ev.diff.type === 'text') {
+          const delta = ev.diff.diff;
+          deltaToOps(delta, this.incoming, id);
+          if (delta.some((d) => d.attributes?.[SEG_MARK] !== undefined)) this.storySeg.add(id);
+        } else if (role === 'tp') this.storyTail.add(id);
+        else this.storySeg.add(id);
+        continue;
+      }
       if (ev.target === this.text.id && ev.diff.type === 'text') {
         const delta = ev.diff.diff;
         deltaToOps(delta, this.incoming);
@@ -227,10 +293,16 @@ export class SyncCore {
     const ops = this.incoming;
     const dirty = this.segDirty;
     const defs = this.defsDirty;
+    const stories: Record<string, StoryDelta> = {};
+    for (const id of this.storySeg) stories[id] = { state: readState(this.loro, storyNames(id)) };
+    for (const id of this.storyTail) stories[id] = { ...stories[id], tail: readTail(this.loro, storyNames(id)) };
     this.incoming = [];
     this.segDirty = false;
     this.defsDirty = false;
-    if (ops.length > 0 || dirty || defs) {
+    this.storySeg = new Set();
+    this.storyTail = new Set();
+    const anyStory = Object.keys(stories).length > 0;
+    if (ops.length > 0 || dirty || defs || anyStory) {
       this.log.set(this.len, ops);
       this.len++;
       this.opts.post({
@@ -238,6 +310,7 @@ export class SyncCore {
         ops,
         ...(dirty ? { state: readState(this.loro) } : {}),
         ...(defs ? { defs: readDefs(this.loro) } : {}),
+        ...(anyStory ? { stories } : {}),
       });
     }
     if (this.store.states.size > 0) this.postRemotes();

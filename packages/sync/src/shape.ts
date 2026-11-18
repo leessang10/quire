@@ -13,6 +13,7 @@ import {
   BRK_CHAR,
   DEFAULT_STYLES,
   Doc,
+  Document,
   INHERITED_MARKS,
   MARK_KEYS,
   OBJ_KEYS,
@@ -34,6 +35,38 @@ export const END = '$end';
 export const SEG_MARK = 'seg';
 export const STYLES = 'styles';
 export const LISTS = 'lists';
+
+/** 스토리 하나의 Loro 컨테이너 이름 (11 §3.1). 본문은 옛 이름 그대로, 다른 스토리는 접두사 + 스토리 ID */
+export interface Names {
+  text: string;
+  order: string;
+  hidden: string;
+  placeholder: string;
+  used: string;
+  /** 가벼운 스토리의 끝 ¶ 속성 맵 (본문은 없음) */
+  tail: string | null;
+}
+
+export const BODY_NAMES: Names = { text: TEXT, order: ORDER, hidden: 'hidden', placeholder: 'placeholder', used: 'used', tail: null };
+
+export function storyNames(id: string): Names {
+  return { text: `s:${id}`, order: `so:${id}`, hidden: `sh:${id}`, placeholder: `sp:${id}`, used: `su:${id}`, tail: `tp:${id}` };
+}
+
+/** 스토리 텍스트 컨테이너 이름 → 스토리 ID (아니면 null) */
+export function storyOfText(name: string): string | null {
+  return name.startsWith('s:') ? name.slice(2) : null;
+}
+
+/** Loro 문서에 있는 스토리 ID들 (텍스트 컨테이너가 있는 것) */
+export function storyIdsOf(loro: LoroDoc): string[] {
+  const out: string[] = [];
+  for (const k of Object.keys(loro.toJSON() as Record<string, unknown>)) {
+    const id = storyOfText(k);
+    if (id !== null) out.push(id);
+  }
+  return out.sort();
+}
 const NL = String.fromCharCode(10);
 
 export type PeerId = number | bigint | `${number}`;
@@ -69,10 +102,10 @@ export function initLoro(loro: LoroDoc, text: string, peer: PeerId): void {
 }
 
 /** Loro 텍스트 → Doc.fromRaw 입력 (살아 있는 원소 열과 저장 순서의 구획 키) */
-export function readRaw(loro: LoroDoc): { raw: string; keys: SegId[] } {
+export function readRaw(loro: LoroDoc, names: Names = BODY_NAMES): { raw: string; keys: SegId[] } {
   const keys: SegId[] = [];
   let raw = '';
-  for (const op of loro.getText(TEXT).toDelta()) {
+  for (const op of loro.getText(names.text).toDelta()) {
     if (typeof op.insert !== 'string') continue;
     raw += op.insert;
     const key = op.attributes?.[SEG_MARK];
@@ -82,10 +115,10 @@ export function readRaw(loro: LoroDoc): { raw: string; keys: SegId[] } {
 }
 
 /** Loro 텍스트의 서식 → 서식만 바꾸는 델타 (retain + attributes). Doc.fromRaw로 만든 문서에 applyDelta로 입힌다 */
-export function formatDelta(loro: LoroDoc): TextDelta {
+export function formatDelta(loro: LoroDoc, names: Names = BODY_NAMES): TextDelta {
   const out: TextDelta = [];
   let plain = 0;
-  for (const op of loro.getText(TEXT).toDelta()) {
+  for (const op of loro.getText(names.text).toDelta()) {
     if (typeof op.insert !== 'string') continue;
     const n = op.insert.length;
     const attrs: Record<string, unknown> = {};
@@ -120,8 +153,13 @@ export interface FormatState {
   lists: Record<string, ListDef | null> | null;
 }
 
-export function readFormats(loro: LoroDoc): FormatState {
-  return { fmt: formatDelta(loro), ...readDefs(loro) };
+export function readFormats(loro: LoroDoc, names: Names = BODY_NAMES): FormatState {
+  return { fmt: formatDelta(loro, names), ...readDefs(loro) };
+}
+
+/** 가벼운 스토리의 끝 ¶ 속성 (맵 tp:<스토리>) */
+export function readTail(loro: LoroDoc, names: Names): Record<string, unknown> {
+  return names.tail ? (loro.getMap(names.tail).toJSON() as Record<string, unknown>) : {};
 }
 
 /** Doc.fromRaw로 만든 문서에 서식·정의를 입힌다 (기록 없음) */
@@ -131,13 +169,14 @@ export function applyFormats(doc: Doc, f: FormatState): void {
   doc.takeParagraphChanges();
 }
 
-/** Loro 문서 → 서식까지 담은 Doc (텍스트와 서식을 한 번에 읽는다) */
-export function docFromLoro(loro: LoroDoc, peer?: string): Doc {
+/** Loro 문서 → 서식까지 담은 Doc (텍스트와 서식을 한 번에 읽는다). story를 주면 그 스토리 (가벼운 모양) */
+export function docFromLoro(loro: LoroDoc, peer?: string, story?: string): Doc {
+  const names = story === undefined ? BODY_NAMES : storyNames(story);
   const keys: SegId[] = [];
   const fmt: TextDelta = [];
   let raw = '';
   let plain = 0;
-  for (const op of loro.getText(TEXT).toDelta()) {
+  for (const op of loro.getText(names.text).toDelta()) {
     if (typeof op.insert !== 'string') continue;
     raw += op.insert;
     const n = op.insert.length;
@@ -158,17 +197,28 @@ export function docFromLoro(loro: LoroDoc, peer?: string): Doc {
     plain = 0;
     fmt.push({ retain: n, attributes: attrs });
   }
-  const doc = Doc.fromRaw(raw, keys, readState(loro), peer ?? loro.peerIdStr);
+  const doc = Doc.fromRaw(raw, keys, readState(loro, names), peer ?? loro.peerIdStr, story !== undefined);
   applyFormats(doc, { fmt, ...readDefs(loro) });
+  for (const [k, v] of Object.entries(readTail(loro, names))) doc.applyTail(k, v);
+  doc.takeParagraphChanges();
   return doc;
+}
+
+/** Loro 문서 → 여러 스토리 문서 (본문 + Loro에 있는 모든 스토리, 없는 스토리는 빈 가벼운 스토리로 만든다) */
+export function documentFromLoro(loro: LoroDoc, peer?: string): Document {
+  const p = peer ?? loro.peerIdStr;
+  const d = new Document(docFromLoro(loro, p), (id) => docFromLoro(loro, p, id));
+  for (const id of storyIdsOf(loro)) d.story(id);
+  return d;
 }
 
 /**
  * 압축한 새 Loro 문서(initLoro로 화면 텍스트를 넣은 것, 구획 하나)에 doc의 서식·문단 속성·정의를 쓴다 (커밋은 부르는 쪽).
  * 화면 텍스트 위치 = Loro 위치 (UTF-16).
  */
-export function writeFormats(loro: LoroDoc, doc: Doc): void {
-  const text = loro.getText(TEXT);
+export function writeFormats(loro: LoroDoc, doc: Doc, names: Names = BODY_NAMES): void {
+  const text = loro.getText(names.text);
+  const tail = names.tail ? loro.getMap(names.tail) : null;
   let u = 0;
   const paras = doc.paragraphs();
   for (let i = 0; i < paras.length; i++) {
@@ -190,11 +240,18 @@ export function writeFormats(loro: LoroDoc, doc: Doc): void {
       u += w;
       k = j;
     }
-    // ¶: 글자 서식(빈 줄 높이)과 문단 속성
+    // ¶: 글자 서식(빈 줄 높이)과 문단 속성. 가벼운 스토리의 끝 ¶(유령)는 Loro 텍스트에 없으므로 맵에
+    const ghost = tail !== null && i === paras.length - 1;
+    if (ghost) {
+      if (p.mark !== 0) for (const [key, v] of Object.entries(doc.markSet(p.mark))) tail.set(key, v);
+      for (const [key, v] of Object.entries(p.attrs)) if (v !== undefined) tail.set(PARA_MARK_PREFIX + key, v);
+      continue;
+    }
     if (p.mark !== 0) for (const [key, v] of Object.entries(doc.markSet(p.mark))) text.mark({ start: u, end: u + 1 }, key, v);
     for (const [key, v] of Object.entries(p.attrs)) if (v !== undefined) text.mark({ start: u, end: u + 1 }, PARA_MARK_PREFIX + key, v);
     u += 1;
   }
+  if (names !== BODY_NAMES) return; // 정의는 문서에 하나
   const defaults = new Map(DEFAULT_STYLES.map((st) => [st.name, JSON.stringify(st)]));
   const sm = loro.getMap(STYLES);
   for (const st of doc.styles()) if (defaults.get(st.name) !== JSON.stringify(st)) sm.set(st.name, structuredClone(st));
@@ -209,12 +266,12 @@ function keysOf(map: LoroMap): SegId[] {
   return out;
 }
 
-export function readState(loro: LoroDoc): SegState {
+export function readState(loro: LoroDoc, names: Names = BODY_NAMES): SegState {
   return {
-    order: (loro.getMovableList(ORDER).toJSON() as string[]).filter((v) => v !== END),
-    hidden: keysOf(loro.getMap('hidden')),
-    placeholder: keysOf(loro.getMap('placeholder')),
-    used: keysOf(loro.getMap('used')),
+    order: (loro.getMovableList(names.order).toJSON() as string[]).filter((v) => v !== END),
+    hidden: keysOf(loro.getMap(names.hidden)),
+    placeholder: keysOf(loro.getMap(names.placeholder)),
+    used: keysOf(loro.getMap(names.used)),
   };
 }
 
@@ -222,12 +279,12 @@ export function readState(loro: LoroDoc): SegState {
  * Loro만으로 화면 순서의 구획 키를 구한다 (Doc.setSegState와 같은 규칙: 목록에 없는 구획은 저장 순서상 다음 구획 앞).
  * 텍스트 전체를 훑으므로 큰 문서에서는 느리다. Worker 코어가 목록에 없는 구획 앞으로 옮길 때만 쓴다.
  */
-export function displayOrderFromLoro(loro: LoroDoc): SegId[] {
-  const segs = [...readRaw(loro).keys, 'tail'];
+export function displayOrderFromLoro(loro: LoroDoc, names: Names = BODY_NAMES): SegId[] {
+  const segs = [...readRaw(loro, names).keys, 'tail'];
   const order: SegId[] = [];
   const placed = new Set<SegId>();
   const known = new Set(segs);
-  for (const id of readState(loro).order) {
+  for (const id of readState(loro, names).order) {
     if (known.has(id) && !placed.has(id)) {
       order.push(id);
       placed.add(id);
@@ -254,14 +311,17 @@ export class LoroWriter {
   private readonly maps: Record<'hidden' | 'placeholder' | 'used', LoroMap>;
   private readonly styles: LoroMap;
   private readonly lists: LoroMap;
+  private readonly tail: LoroMap | null;
 
   constructor(
     loro: LoroDoc,
     private readonly displayOrder: () => SegId[],
+    names: Names = BODY_NAMES,
   ) {
-    this.text = loro.getText(TEXT);
-    this.order = loro.getMovableList(ORDER);
-    this.maps = { hidden: loro.getMap('hidden'), placeholder: loro.getMap('placeholder'), used: loro.getMap('used') };
+    this.text = loro.getText(names.text);
+    this.order = loro.getMovableList(names.order);
+    this.maps = { hidden: loro.getMap(names.hidden), placeholder: loro.getMap(names.placeholder), used: loro.getMap(names.used) };
+    this.tail = names.tail ? loro.getMap(names.tail) : null;
     this.styles = loro.getMap(STYLES);
     this.lists = loro.getMap(LISTS);
   }
@@ -338,6 +398,11 @@ export class LoroWriter {
         else this.text.mark({ start: c.at, end: c.at + 1 }, key, c.value);
         break;
       }
+      case 'tail':
+        if (!this.tail) break;
+        if (c.value === undefined || c.value === null) this.tail.delete(c.key);
+        else this.tail.set(c.key, c.value);
+        break;
       case 'style':
         this.styles.set(c.name, c.def);
         break;
@@ -357,7 +422,8 @@ export class LoroWriter {
     for (let k = idxs.length - 1; k >= 1; k--) this.order.delete(idxs[k]!, 1);
     const now = this.order.toJSON() as string[];
     const cur = now.indexOf(seg);
-    let to = before !== null ? now.indexOf(before) : now.indexOf(END);
+    const endAt = now.indexOf(END) < 0 ? now.length : now.indexOf(END); // 가벼운 스토리의 목록에는 END가 없다
+    let to = before !== null ? now.indexOf(before) : endAt;
     if (cur < 0) {
       this.order.insert(to, seg);
       return;
@@ -372,7 +438,7 @@ export class LoroWriter {
     if (list.includes(seg)) return;
     const docOrder = this.displayOrder();
     const listed = new Set(list);
-    let to = list.indexOf(END);
+    let to = list.indexOf(END) < 0 ? list.length : list.indexOf(END);
     for (let k = docOrder.indexOf(seg) + 1; k < docOrder.length; k++) {
       if (listed.has(docOrder[k]!)) {
         to = list.indexOf(docOrder[k]!);

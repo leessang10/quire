@@ -5,7 +5,7 @@
  * - 키 순서를 고정해 직렬화한다(키 사전순, 들여쓰기 2칸, 끝 줄바꿈). 같은 문서는 늘 같은 바이트열 → 해시·diff가 안정적이다.
  * - CRDT 원소 ID·묘비·구획 표식은 들어가지 않는다. 그래서 정본으로 저장했다 다시 열면 구획이 하나뿐인 깨끗한 문서가 된다.
  */
-import { DEFAULT_STYLES, Doc, MARK_KEYS, OBJ, OBJ_KEYS, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quire/model';
+import { DEFAULT_STYLES, Doc, Document, MARK_KEYS, OBJ, OBJ_KEYS, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
 import { readRaw, readState } from './shape';
 
@@ -82,6 +82,47 @@ export function textFromQuire(q: QuireDoc): string {
 
 /** 지금 모델이 아는 문단 속성 키 (10 §2.2) */
 const PARA_KEYS = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore'];
+
+/** 문서의 문단들 → 정본 문단 배열 */
+function paragraphsOf(doc: Doc): QuireParagraph[] {
+  return doc.paragraphRuns().map((p) => ({
+    p: { ...p.attrs },
+    c: p.runs
+      .filter((r) => r.text)
+      .map((r): QuireRun => {
+        const m = Object.keys(r.marks).length ? { m: { ...r.marks } } : {};
+        return r.obj ? { img: { ...r.obj }, ...m } : { t: r.text, ...m };
+      }),
+  }));
+}
+
+/** 여러 스토리 문서 → QuireDoc (11 §6): 비지 않은 스토리는 stories.<ID> */
+export function quireFromDocument(document: Document): QuireDoc {
+  const q = quireFromDoc(document.body);
+  for (const id of document.storyIds().sort()) {
+    const d = document.story(id);
+    if (d.text() === '\n' && d.plain && Object.keys(d.paraAttrs(0)).length === 0) continue;
+    (q.stories as Record<string, unknown>)[id] = paragraphsOf(d);
+  }
+  return q;
+}
+
+/** QuireDoc → 여러 스토리 문서 (스토리는 가벼운 모양) */
+export function documentFromQuire(q: QuireDoc, peer?: string): { document: Document; notes: string[] } {
+  const { doc, notes } = docFromQuire(q, peer);
+  const built = new Map<string, Doc>();
+  for (const [id, paras] of Object.entries(q.stories)) {
+    if (id === 'body' || !Array.isArray(paras)) continue;
+    const runs = (paras as QuireParagraph[]).map((b) => ({
+      attrs: (b.p ?? {}) as ParaAttrs,
+      runs: (b.c ?? []).map((r) => (r.img ? { text: OBJ, marks: r.m, obj: r.img } : { text: r.t ?? '', marks: r.m })),
+    }));
+    built.set(id, Doc.fromParagraphRuns(runs, peer, true));
+  }
+  const document = new Document(doc, (id) => built.get(id) ?? Doc.fromParagraphRuns([{ runs: [] }], peer, true));
+  for (const id of built.keys()) document.story(id);
+  return { document, notes };
+}
 
 /** 서식·문단 속성이 있는 문서 → QuireDoc. 같은 서식이 이어진 글자는 한 런 (정규화) */
 export function quireFromDoc(doc: Doc): QuireDoc {
