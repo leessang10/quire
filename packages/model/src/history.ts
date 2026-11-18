@@ -11,6 +11,8 @@ export interface Selection {
   head: Position;
   /** 선택이 있는 스토리 (표 셀 등, 11 §2.5). 없으면 본문 */
   story?: string;
+  /** 다중 커서 (11 §5.2): 첫 캐럿 말고 다른 캐럿·범위 (같은 스토리) */
+  more?: Array<{ anchor: Position; head: Position }>;
 }
 
 export interface Transaction {
