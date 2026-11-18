@@ -42,6 +42,20 @@ export interface ParaBox {
   line: { rule: 'multiple' | 'exact' | 'atLeast'; value: number } | null;
 }
 
+/** 떠 있는 개체의 위치·배치 (11 §2.3). 길이는 px */
+export interface FloatSpec {
+  w: number;
+  h: number;
+  relX: 'column' | 'margin' | 'page';
+  relY: 'paragraph' | 'margin' | 'page';
+  x: number | 'left' | 'center' | 'right';
+  y: number;
+  wrap: 'square' | 'topBottom' | 'none';
+  side: 'both' | 'left' | 'right' | 'largest';
+  gap: number;
+  behind: boolean;
+}
+
 /** 문단의 서식 (레이아웃 입력) */
 export interface ParaFormat {
   /** 글자(코드포인트)마다 서식 번호. null이면 모두 0 */
@@ -59,6 +73,8 @@ export interface ParaFormat {
   marker?: { text: string; id: number; hanging: number } | null;
   /** 개체 크기 (px): 원래 텍스트의 코드포인트 위치 → 폭·높이 */
   objs?: ReadonlyMap<number, { w: number; h: number }> | null;
+  /** 떠 있는 개체 (11 §2.3, px): 원래 텍스트의 코드포인트 위치(앵커) → 위치·크기·배치. 앵커는 폭 0 */
+  floats?: ReadonlyMap<number, FloatSpec> | null;
   /** 레이아웃 캐시 키에 더할 값: style 함수가 서식 번호 밖의 것(문단 스타일 등)에 따라 달라지면 그것을 나타내는 문자열 */
   key?: string;
 }
@@ -119,6 +135,12 @@ export interface ParaLayout {
   marker: MarkerLayout | null;
   /** 개체: 표시 코드포인트 위치 → 놓인 크기 (px, 줄 폭으로 줄인 것). 없으면 null */
   objs: Map<number, { w: number; h: number }> | null;
+  /** 떠 있는 개체: 표시 코드포인트 위치(앵커) → 위치·배치. 없으면 null */
+  floats: Map<number, FloatSpec> | null;
+  /** 코드포인트별 줄 높이 배율 (서식 있을 때, 어울림 줄바꿈에서 줄 높이를 다시 구할 때). 없으면 모두 1 */
+  cpLine: Float32Array | null;
+  /** ¶의 줄 높이 배율 (마지막 줄) */
+  markLine: number;
 }
 
 /** 개체 글자 */
@@ -220,6 +242,15 @@ export function layoutParagraph(
       objs.set(pre && k >= pre[0] ? k + shift : k, { w, h: o.w > 0 ? (o.h * w) / o.w : o.h });
     }
   }
+  let floats: Map<number, FloatSpec> | null = null;
+  if (format?.floats && format.floats.size) {
+    floats = new Map();
+    const shift = pre ? pre[1] - pre[0] : 0;
+    for (const [k, f] of format.floats) floats.set(pre && k >= pre[0] ? k + shift : k, f);
+    // 앵커는 폭 0 (인라인 개체 표에 폭 0으로 넣는다: 진행폭·줄바꿈 계산이 같은 길을 탄다)
+    objs ??= new Map();
+    for (const k of floats.keys()) objs.set(k, { w: 0, h: 0 });
+  }
   const style = format?.style;
   const dfmt = fmt;
   const st = dfmt && style ? (k: number) => style(dfmt[k]!) : null;
@@ -278,7 +309,9 @@ export function layoutParagraph(
     const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
     lineScales(lines, st, format);
   if (objs) lineObjects(lines, objs);
-    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs };
+  const cpLine = st ? Float32Array.from({ length: n }, (_, k) => st(k).line) : null;
+  const markLine = format ? format.style(format.mark).line : 1;
+    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, cpLine, markLine };
   }
   for (const seg of segmenter.segment(display)) {
     const s = seg.segment;
@@ -308,7 +341,56 @@ export function layoutParagraph(
   const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
   lineScales(lines, st, format);
   if (objs) lineObjects(lines, objs);
-  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs };
+  const cpLine = st ? Float32Array.from({ length: n }, (_, k) => st(k).line) : null;
+  const markLine = format ? format.style(format.mark).line : 1;
+  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, cpLine, markLine };
+}
+
+/** 그리기용 인라인 개체 표: 앵커(폭 0)는 뺀다 */
+function withoutFloats(objs: Map<number, { w: number; h: number }>, floats: Map<number, FloatSpec>): Map<number, { w: number; h: number }> | null {
+  const out = new Map([...objs].filter(([k]) => !floats.has(k)));
+  return out.size ? out : null;
+}
+
+/**
+ * 어울림 줄바꿈 (11 §4.2): start에서 시작해 폭 width에 들어가는 줄의 끝. breakLines와 같은 규칙 (어절·개체 앞뒤, 어절이 줄보다
+ * 길면 글자 단위 + 금칙). 적어도 grapheme 하나는 넣는다.
+ */
+export function breakFrom(pl: ParaLayout, start: number, width: number): number {
+  const { n, xs, stops } = pl;
+  if (start >= n) return n;
+  const nextStop = (i: number) => {
+    let j = i + 1;
+    while (j < n && !stops[j]) j++;
+    return j;
+  };
+  let lastBreak = -1;
+  let prev = -1;
+  let i = start;
+  while (i < n) {
+    const next = nextStop(i);
+    const ch = cpSlice(pl, i, i + 1);
+    if (ch === OBJ_CHAR && i > start) lastBreak = i;
+    if (!isSpace(ch) && xs[next]! - xs[start]! > width && i > start) {
+      if (lastBreak > start) return lastBreak;
+      if (NO_LINE_START.has(ch) && prev > start) return prev;
+      return i;
+    }
+    if (isSpace(ch) || ch === OBJ_CHAR) lastBreak = next;
+    prev = i;
+    i = next;
+  }
+  return n;
+}
+
+/** 줄 [start, end)의 높이 배율과 개체 높이 (어울림 줄바꿈으로 새로 나눈 줄) */
+export function lineMetrics(pl: ParaLayout, start: number, end: number, last: boolean): { scale: number; objH: number } {
+  let scale = last ? pl.markLine : 0;
+  if (pl.cpLine) for (let k = start; k < end; k++) scale = Math.max(scale, pl.cpLine[k]!);
+  else if (end > start) scale = Math.max(scale, 1);
+  let objH = 0;
+  if (pl.objs) for (const [k, o] of pl.objs) if (k >= start && k < end) objH = Math.max(objH, o.h);
+  return { scale: scale > 0 ? scale : 1, objH };
 }
 
 /** 줄마다 개체의 가장 큰 높이 */

@@ -15,6 +15,7 @@ import {
   type Op,
   type ParaAttrs,
   type ParaKey,
+  type FloatAttrs,
   type ListLabel,
   type ObjAttrs,
   type ObjKey,
@@ -32,11 +33,13 @@ import {
   docToDisplay,
   lineX,
   pageTop,
+  type FloatSpec,
   type FormatSource,
   type Measurer,
   type PageSetup,
   type ParaBox,
   type ParaLayout,
+  type PlacedFloat,
   type PlacedLine,
   type PlacedPara,
   type RunStyle,
@@ -272,10 +275,11 @@ export class Editor {
     if (!p.fmt && !p.mark && !force && !box && !styled && !p.objs) return null;
     const marker = label ? { text: label.text, id: p.mark ?? 0, hanging: pt(label.def.levels[label.level]!.hanging) } : null;
     const objs = p.objs ? objSizes(p.objs) : null;
+    const floats = p.objs ? floatSpecs(p.objs) : null;
     const sty = styled ? (attrs.style ?? BODY_STYLE) : '';
     // 스타일 글자 서식은 서식 번호 0에도 걸리므로 fmt가 없으면 0으로 채운 열을 준다
     const fmt = p.fmt ?? (styled ? new Uint16Array(cpCount(p.text)) : null);
-    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty), box, marker, objs, key: styled ? `${sty}@${this.doc.stylesVersion}` : undefined };
+    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty), box, marker, objs, floats, key: styled ? `${sty}@${this.doc.stylesVersion}` : undefined };
   };
   private readonly assets: AssetStore;
   /** 자산 ID → 그릴 이미지 (불러오는 중 null) */
@@ -285,6 +289,8 @@ export class Editor {
   private frame = 0;
   /** 크기 조절 중인 개체: 오프셋과 미리 보기 크기 (px) */
   private resizing: { offset: number; w: number; h: number } | null = null;
+  /** 옮기는 중인 떠 있는 개체: 오프셋과 끈 거리 (px) */
+  private moving: { offset: number; dx: number; dy: number } | null = null;
   /** 캐럿에서 다음 입력이 받을 서식 (Ctrl+B 등을 선택 없이 눌렀을 때). at: 그 캐럿 오프셋 */
   private pending: { at: number; marks: MarkSet } | null = null;
   /** 상태 표시: 측정 방식 */
@@ -757,6 +763,10 @@ export class Editor {
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
 
+    // 떠 있는 개체 (11 §4.2): 글 뒤 개체는 글보다 먼저, 나머지는 글 다음에 그린다
+    const floats = layout.floatsIn(top, top + h);
+    for (const f of floats) if (f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
+
     // 줄
     const { anchor, head } = this.selection();
     const selFrom = Math.min(anchor, head);
@@ -891,6 +901,7 @@ export class Editor {
       }
     }
 
+    for (const f of floats) if (!f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
     ctx.textBaseline = 'middle';
     this.drawParagraphDrag(px, top);
     this.drawRemoteCarets(px, top, w, visibleParas);
@@ -1167,8 +1178,64 @@ export class Editor {
     }
   }
 
-  /** 문서 좌표 (x, y)에 있는 개체: 오프셋, 화면 상자 (쪽 왼쪽 기준 x, 문서 y) */
-  private objectAt(x: number, y: number): { offset: number; x: number; y: number; w: number; h: number } | null {
+  /** 떠 있는 개체 하나 그리기 (선택했으면 손잡이) */
+  private drawFloat(para: PlacedPara, f: PlacedFloat, px: number, top: number): void {
+    const { ctx } = this;
+    const info = para.info as ParagraphInfo;
+    const pl = para.layout;
+    const k = pl.preedit && f.k >= pl.preedit[0] ? f.k - (pl.preedit[1] - pl.preedit[0]) : f.k;
+    const attrs = info.objs?.get(k);
+    const offset = info.start + k;
+    let { w, h } = f;
+    if (this.resizing && this.resizing.offset === offset) ({ w, h } = this.resizing);
+    let x = px + f.x;
+    let y = f.y - top;
+    if (this.moving && this.moving.offset === offset) {
+      x += this.moving.dx;
+      y += this.moving.dy;
+    }
+    const img = attrs?.asset ? this.image(attrs.asset) : 'error';
+    ctx.textBaseline = 'alphabetic';
+    if (img && img !== 'error') ctx.drawImage(img, x, y, w, h);
+    else {
+      ctx.fillStyle = '#e9e9ec';
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = COLORS.placeholderText;
+      ctx.font = `${Math.min(13, this.fontSize)}px ${this.family}`;
+      ctx.fillText(attrs?.alt ?? '이미지', x + 6, y + 18, w - 12);
+    }
+    const [from, to] = this.range();
+    if (to - from === 1 && from === offset) {
+      ctx.strokeStyle = COLORS.gripActive;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x, y, w, h);
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#ffffff';
+      for (const [hx, hy] of handlePoints(x, y, w, h)) {
+        ctx.fillRect(hx - 4, hy - 4, 8, 8);
+        ctx.strokeRect(hx - 4 + 0.5, hy - 4 + 0.5, 7, 7);
+      }
+      // 앵커 표시: 개체가 붙은 문단의 첫 줄 왼쪽
+      const ln = para.lines[0];
+      if (ln) {
+        ctx.fillStyle = COLORS.gripActive;
+        ctx.font = `12px ${this.family}`;
+        ctx.fillText('⚓', px + this.setup.margin - 18, ln.baseline - top);
+      }
+    }
+  }
+
+  /** 문서 좌표 (x, y)에 있는 개체: 오프셋, 화면 상자 (쪽 왼쪽 기준 x, 문서 y). 떠 있는 개체(앞에 그린 것부터)를 먼저 본다 */
+  private objectAt(x: number, y: number): { offset: number; x: number; y: number; w: number; h: number; float?: boolean } | null {
+    const fl = this.layout.floatsIn(y - 1, y + 1);
+    for (let i = fl.length - 1; i >= 0; i--) {
+      const { para, float: f } = fl[i]!;
+      if (x >= f.x - 5 && x <= f.x + f.w + 5 && y >= f.y - 5 && y <= f.y + f.h + 5) {
+        const pl = para.layout;
+        const k = pl.preedit && f.k >= pl.preedit[0] ? f.k - (pl.preedit[1] - pl.preedit[0]) : f.k;
+        return { offset: (para.info as ParagraphInfo).start + k, x: f.x, y: f.y, w: f.w, h: f.h, float: true };
+      }
+    }
     const ref = this.layout.firstLineBelow(y, false);
     if (!ref) return null;
     for (const r of [ref, this.layout.stepLine(ref, -1)]) {
@@ -1231,6 +1298,70 @@ export class Editor {
     this.history.seal();
     this.commit(ops, before);
     this.history.seal();
+  }
+
+  /**
+   * 떠 있는 개체 배치 바꾸기 (11 §5.3): inline(글자처럼) / square(어울림) / topBottom(자리 차지) / front(글 앞) / behind(글 뒤).
+   * 처음 띄울 때는 앵커 문단 위쪽 왼쪽에 둔다.
+   */
+  setPlacement(mode: 'inline' | 'square' | 'topBottom' | 'front' | 'behind'): void {
+    const o = this.selectedObject();
+    if (!o) return;
+    const cur = o.attrs.float;
+    const base: FloatAttrs = cur ?? { relX: 'column', relY: 'paragraph', x: 0, y: 0, wrap: 'square', side: 'largest', gap: 9000 };
+    const next: FloatAttrs | undefined =
+      mode === 'inline'
+        ? undefined
+        : { ...base, wrap: mode === 'front' || mode === 'behind' ? 'none' : mode, behind: mode === 'behind' ? true : undefined };
+    if (next && next.behind === undefined) delete next.behind;
+    this.setObjectAttr('float', next);
+  }
+
+  /** 떠 있는 개체 끌어 옮기기: 같은 문단 안이면 위치만, 다른 문단 위에 놓으면 그 문단으로 앵커를 옮긴다 (지우고 넣기, 속성 복사) */
+  private startMove(obj: { offset: number; x: number; y: number; w: number; h: number }, e: MouseEvent): void {
+    const start = this.docPoint(e);
+    const onMove = (ev: MouseEvent) => {
+      const q = this.docPoint(ev);
+      this.moving = { offset: obj.offset, dx: q.x - start.x, dy: q.y - start.y };
+      this.scheduleRender();
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const mv = this.moving;
+      this.moving = null;
+      if (!mv || (Math.abs(mv.dx) < 2 && Math.abs(mv.dy) < 2)) {
+        this.render();
+        return;
+      }
+      const attrs = this.doc.objAt(obj.offset);
+      if (!attrs?.float) return;
+      const toPt = (v: number) => Math.round(v * 0.75 * 1000);
+      const newX = obj.x + mv.dx;
+      const newY = obj.y + mv.dy;
+      // 놓은 자리의 문단 (개체 위쪽이 걸친 줄)
+      const ref = this.layout.firstLineBelow(newY, false) ?? this.layout.lineAt(obj.offset);
+      const target = this.layout.para(ref.para);
+      const tTop = target.lines[0]!.y;
+      const anchorPara = this.doc.paragraphIndexAt(obj.offset);
+      const float: FloatAttrs = { ...attrs.float, relX: 'column', x: toPt(newX - this.setup.margin), y: toPt(newY - tTop), relY: 'paragraph' };
+      const before: Selection = { ...this.sel };
+      const ops: Op[] = [];
+      let at = obj.offset;
+      if (ref.para === anchorPara) ops.push(...this.doc.setObjAttr(obj.offset, 'float', float));
+      else {
+        const tStart = (target.info as ParagraphInfo).start;
+        ops.push(...this.doc.deleteRange(obj.offset, obj.offset + 1));
+        at = tStart > obj.offset ? tStart - 1 : tStart;
+        ops.push(...this.doc.insertObject(at, { ...attrs, float }));
+      }
+      this.setSelection(at, at + 1);
+      this.history.seal();
+      this.commit(ops, before);
+      this.history.seal();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }
 
   /** 개체 손잡이를 끌어 크기 조절: 모서리는 비율 유지, 변은 한 방향 (11 §5.1) */
@@ -2156,6 +2287,10 @@ export class Editor {
         return;
       }
     }
+    if (obj && obj.float && sel && sel.offset === obj.offset && !e.shiftKey && e.detail === 1) {
+      this.startMove(obj, e);
+      return;
+    }
     if (obj && !e.shiftKey && e.detail === 1) {
       this.setSelection(obj.offset, obj.offset + 1);
       this.history.seal();
@@ -2399,10 +2534,32 @@ function pt(v: number | undefined): number {
   return ((v ?? 0) / 1000) * (96 / 72);
 }
 
-/** 개체 속성 → 레이아웃 크기 (px). 크기가 없으면 100px 정사각형 */
-function objSizes(objs: ReadonlyMap<number, ObjAttrs>): Map<number, { w: number; h: number }> {
+/** 인라인 개체 속성 → 레이아웃 크기 (px). 크기가 없으면 100px 정사각형. 떠 있는 개체는 뺀다 */
+function objSizes(objs: ReadonlyMap<number, ObjAttrs>): Map<number, { w: number; h: number }> | null {
   const out = new Map<number, { w: number; h: number }>();
-  for (const [k, o] of objs) out.set(k, { w: o.w ? pt(o.w) : 100, h: o.h ? pt(o.h) : 100 });
+  for (const [k, o] of objs) if (!o.float) out.set(k, { w: o.w ? pt(o.w) : 100, h: o.h ? pt(o.h) : 100 });
+  return out.size ? out : null;
+}
+
+/** 떠 있는 개체 → 레이아웃 입력 (px) */
+function floatSpecs(objs: ReadonlyMap<number, ObjAttrs>): Map<number, FloatSpec> | null {
+  let out: Map<number, FloatSpec> | null = null;
+  for (const [k, o] of objs) {
+    const f = o.float;
+    if (!f) continue;
+    (out ??= new Map()).set(k, {
+      w: o.w ? pt(o.w) : 100,
+      h: o.h ? pt(o.h) : 100,
+      relX: f.relX,
+      relY: f.relY,
+      x: typeof f.x === 'number' ? pt(f.x) : f.x,
+      y: pt(f.y),
+      wrap: f.wrap,
+      side: f.side ?? 'largest',
+      gap: pt(f.gap ?? 9000),
+      behind: !!f.behind,
+    });
+  }
   return out;
 }
 

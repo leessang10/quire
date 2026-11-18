@@ -131,7 +131,12 @@ describe('format sync through the worker (random message timing)', () => {
           for (const q of doc.paragraphs()) if (q.objs) for (const k of q.objs.keys()) objOffsets.push(q.start + k);
           if (objOffsets.length === 0 || r() < 0.4)
             rec(doc.insertObject(Math.floor(r() * len0), { id: `o${step}`, kind: 'image', asset: 'a'.repeat(32), w: 72000, h: 36000 }));
-          else rec(doc.setObjAttr(objOffsets[Math.floor(r() * objOffsets.length)]!, r() < 0.5 ? 'w' : 'alt', r() < 0.5 ? Math.floor(r() * 100000) : `alt${step}`));
+          else {
+            const at = objOffsets[Math.floor(r() * objOffsets.length)]!;
+            // 떠 있는 개체 (2-9): float 값은 객체다
+            if (r() < 0.3) rec(doc.setObjAttr(at, 'float', r() < 0.4 ? undefined : { relX: 'column', relY: 'paragraph', x: Math.floor(r() * 50000), y: 0, wrap: 'square' }));
+            else rec(doc.setObjAttr(at, r() < 0.5 ? 'w' : 'alt', r() < 0.5 ? Math.floor(r() * 100000) : `alt${step}`));
+          }
           continue;
         }
         const roll = r();

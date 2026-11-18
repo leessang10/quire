@@ -18,7 +18,19 @@
  * [validCount, staleFrom) 문단은 직전 레이아웃에서 정확했던 결과다 (수렴 판단에 쓸 수 있음).
  * [staleFrom, 끝) 문단은 줄 나눔만 믿을 수 있고 위치는 믿을 수 없다.
  */
-import { cpSlice, layoutParagraph, type Measurer, type ParaBox, type ParaFormat, type ParaLayout, type Preedit, type RunStyle } from './paragraph';
+import {
+  breakFrom,
+  cpSlice,
+  layoutParagraph,
+  lineMetrics,
+  type FloatSpec,
+  type Measurer,
+  type ParaBox,
+  type ParaFormat,
+  type ParaLayout,
+  type Preedit,
+  type RunStyle,
+} from './paragraph';
 
 /**
  * 문단 → 레이아웃 서식 (편집기가 서식 묶음·스타일·문단 속성에서 만든다). null이면 서식 없는 문단.
@@ -105,6 +117,140 @@ function trimEnd(pl: ParaLayout, start: number, end: number): number {
 interface Geometry {
   setup: PageSetup;
   contentHeight: number;
+  floats: FloatRegistry;
+}
+
+/** 놓인 떠 있는 개체 (그리기·누르기용) */
+export interface PlacedFloat {
+  /** 앵커의 표시 코드포인트 위치 (문단 안) */
+  k: number;
+  page: number;
+  /** 쪽 왼쪽 기준 x (PlacedLine.x와 같은 기준), 문서 y */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  spec: FloatSpec;
+}
+
+/** 배제 영역 (본문 영역 기준 좌표: x는 본문 왼쪽, y는 본문 위에서) */
+interface Excl {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  side: FloatSpec['side'];
+  /** 이 영역을 만든 문단 (앞 문단의 개체만 뒤 문단에 영향을 준다) */
+  owner: PlacedPara;
+}
+
+/** 쪽마다 배제 영역 (11 §4.2). 문단이 다시 놓이면 그 문단 것을 지우고 다시 넣는다 */
+class FloatRegistry {
+  private readonly byPage = new Map<number, Map<PlacedPara, Excl[]>>();
+  private readonly pagesOf = new Map<PlacedPara, number[]>();
+  /** 떠 있는 개체를 가진 문단 (글 앞·뒤 개체 포함: 그리기용) */
+  readonly owners = new Set<PlacedPara>();
+
+  remove(owner: PlacedPara): void {
+    this.owners.delete(owner);
+    const pages = this.pagesOf.get(owner);
+    if (!pages) return;
+    for (const pg of pages) {
+      const m = this.byPage.get(pg);
+      m?.delete(owner);
+      if (m && m.size === 0) this.byPage.delete(pg);
+    }
+    this.pagesOf.delete(owner);
+  }
+
+  add(owner: PlacedPara, page: number, ex: Excl): void {
+    let m = this.byPage.get(page);
+    if (!m) this.byPage.set(page, (m = new Map()));
+    let list = m.get(owner);
+    if (!list) m.set(owner, (list = []));
+    list.push(ex);
+    const pages = this.pagesOf.get(owner) ?? [];
+    if (!pages.includes(page)) pages.push(page);
+    this.pagesOf.set(owner, pages);
+  }
+
+  /** 쪽 page에서 문단 para에 영향을 주는 배제 영역 (para와 그 앞 문단이 만든 것) */
+  forPage(page: number, para: PlacedPara): Excl[] {
+    const m = this.byPage.get(page);
+    if (!m) return NO_EXCL;
+    const out: Excl[] = [];
+    const at = para.info.start;
+    for (const [owner, list] of m) if (owner === para || owner.info.start < at) out.push(...list);
+    return out;
+  }
+
+  clear(): void {
+    this.byPage.clear();
+    this.pagesOf.clear();
+    this.owners.clear();
+  }
+
+  hasAny(): boolean {
+    return this.byPage.size > 0;
+  }
+
+  /** 문단 para가 쪽 p0–p1에서 본 배제 영역의 서명 (수렴 판단) */
+  sig(para: PlacedPara, p0: number, p1: number): string {
+    if (this.byPage.size === 0) return '';
+    let sig = '';
+    for (let pg = p0; pg <= p1; pg++) {
+      const ex = this.forPage(pg, para);
+      if (ex.length) sig += `${pg}:${ex.map((e) => `${e.x0},${e.x1},${e.y0},${e.y1}`).join(';')}|`;
+    }
+    return sig;
+  }
+}
+
+const NO_EXCL: Excl[] = [];
+const NO_BOX: ParaBox = { align: 'left', left: 0, right: 0, first: 0, before: 0, after: 0, line: null };
+const NO_FLOATS: PlacedFloat[] = [];
+
+/** 어울림으로 새로 나눈 줄 (쪽·y까지 정해진 것) */
+interface WrapLine {
+  start: number;
+  end: number;
+  scale: number;
+  objH?: number;
+  page: number;
+  /** 본문 영역 기준 줄 위쪽 */
+  y: number;
+  /** 빈 구간 시작 (본문 왼쪽 기준), 줄에 쓸 수 있는 폭 (들여쓰기 빼기 전) */
+  slotX: number;
+  slotW: number;
+}
+
+/** [y0, y1)에서 줄이 들어갈 빈 구간. 막혔으면 null과 막힌 영역의 아래 끝 */
+function slotAt(ex: Excl[], width: number, y0: number, y1: number): { x: number; w: number } | { blockedUntil: number } {
+  const hits = ex.filter((e) => e.y0 < y1 && e.y1 > y0);
+  if (hits.length === 0) return { x: 0, w: width };
+  // 빈 구간들 = [0, width]에서 배제 x 범위를 뺀 것
+  let free: Array<[number, number]> = [[0, width]];
+  for (const e of hits) {
+    const next: Array<[number, number]> = [];
+    for (const [a, b] of free) {
+      if (e.x1 <= a || e.x0 >= b) next.push([a, b]);
+      else {
+        if (e.x0 > a) next.push([a, e.x0]);
+        if (e.x1 < b) next.push([e.x1, b]);
+      }
+    }
+    free = next;
+  }
+  // 글이 흐를 쪽 (첫 개체의 side): 왼쪽만·오른쪽만·넓은 쪽 (both는 2단계에서 넓은 쪽)
+  const side = hits[0]!.side;
+  const ex0 = Math.min(...hits.map((e) => e.x0));
+  const ex1 = Math.max(...hits.map((e) => e.x1));
+  if (side === 'left') free = free.filter(([, b]) => b <= ex0);
+  else if (side === 'right') free = free.filter(([a]) => a >= ex1);
+  const best = free.reduce<[number, number] | null>((m, f) => (!m || f[1] - f[0] > m[1] - m[0] ? f : m), null);
+  const MIN = 24; // 이보다 좁은 구간에는 글을 넣지 않는다 (px)
+  if (!best || best[1] - best[0] < MIN) return { blockedUntil: Math.min(...hits.map((e) => e.y1)) };
+  return { x: best[0], w: best[1] - best[0] };
 }
 
 /**
@@ -120,6 +266,12 @@ export class PlacedPara {
   yAfter = 0;
   private first = false;
   private _lines: PlacedLine[] | null = null;
+  /** 이 문단의 떠 있는 개체 (놓인 자리) */
+  floats: PlacedFloat[] = NO_FLOATS;
+  /** 어울림으로 다시 나눈 줄 (배제 영역과 겹치지 않으면 null: 캐시한 줄 나눔을 그대로) */
+  private wrapped: WrapLine[] | null = null;
+  /** 놓을 때 본 배제 영역 (수렴 판단: 같은 자리라도 영역이 바뀌면 다시 놓는다) */
+  exclSig = '';
 
   constructor(
     readonly info: ParaInput,
@@ -135,21 +287,133 @@ export class PlacedPara {
     this.yBefore = y;
     this.first = first;
     this._lines = null;
-    const { setup, contentHeight } = this.geo;
+    this.wrapped = null;
+    const { setup, contentHeight, floats: reg } = this.geo;
+    reg.remove(this);
+    this.floats = NO_FLOATS;
     const box = this.layout.box;
     if (!first && y > 0) y += box ? box.before : setup.paraSpacing;
     const src = this.layout.lines;
+    // 이 문단의 떠 있는 개체: 문단 첫 줄이 놓일 쪽·y 기준으로 자리를 정하고 배제 영역을 넣는다
+    if (this.layout.floats) {
+      const lh0 = src.length ? lineHeight(setup, src[0]!.scale, box?.line) + objExtra(setup, src[0]!, box?.line) : setup.lineHeight;
+      let pg = page;
+      let top = y;
+      if (top + lh0 > contentHeight && top > 0) {
+        pg++;
+        top = 0;
+      }
+      this.placeFloats(pg, top);
+    }
     for (let k = 0; k < src.length; k++) {
       const lh = lineHeight(setup, src[k]!.scale, box?.line) + objExtra(setup, src[k]!, box?.line);
       if (y + lh > contentHeight && y > 0) {
         page++;
         y = 0;
       }
+      const ex = reg.forPage(page, this);
+      if (ex.length && ex.some((e) => e.y0 < y + lh && e.y1 > y)) {
+        // 여기서부터 어울림 줄바꿈
+        [page, y] = this.wrapFrom(k, page, y);
+        break;
+      }
       y += lh;
     }
     if (box && box.after > 0) y += box.after;
+    this.exclSig = reg.sig(this, this.pageBefore, page);
     this.pageAfter = page;
     this.yAfter = y;
+  }
+
+  /** 떠 있는 개체의 자리 (11 §2.3): 문단 위쪽 (pg, top) 기준. 배제 영역을 등록한다 */
+  private placeFloats(pg: number, top: number): void {
+    const { setup, floats: reg } = this.geo;
+    const cw = setup.width - setup.margin * 2;
+    const out: PlacedFloat[] = [];
+    for (const [k, f] of this.layout.floats!) {
+      const baseW = f.relX === 'page' ? setup.width : cw;
+      const x0 = f.relX === 'page' ? -setup.margin : 0;
+      const x = x0 + (f.x === 'left' ? 0 : f.x === 'center' ? (baseW - f.w) / 2 : f.x === 'right' ? baseW - f.w : f.x);
+      const y = f.relY === 'paragraph' ? top + f.y : f.relY === 'margin' ? f.y : f.y - setup.margin;
+      out.push({ k, page: pg, x: setup.margin + x, y: pageTop(setup, pg) + setup.margin + y, w: f.w, h: f.h, spec: f });
+      if (f.wrap === 'none') continue;
+      const g = f.gap;
+      reg.add(this, pg, {
+        x0: f.wrap === 'topBottom' ? -Infinity : x - g,
+        x1: f.wrap === 'topBottom' ? Infinity : x + f.w + g,
+        y0: y - g,
+        y1: y + f.h + g,
+        side: f.side,
+        owner: this,
+      });
+    }
+    this.floats = out;
+    if (out.length) reg.owners.add(this);
+  }
+
+  /**
+   * 줄 k부터 배제 영역을 피해 다시 나눈다 (11 §4.2): 줄마다 그 y의 빈 구간 폭으로 breakFrom. 빈 구간을 찾을 때는 기본 줄 높이로
+   * 보고, 나눈 뒤 실제 높이를 쓴다. 막힌 y는 배제 영역 아래로 건너뛴다.
+   * @returns 끝 쪽, 끝 y
+   */
+  private wrapFrom(k0: number, page: number, y: number): [number, number] {
+    const { setup, contentHeight, floats: reg } = this.geo;
+    const pl = this.layout;
+    const box = pl.box;
+    const src = pl.lines;
+    const cw = setup.width - setup.margin * 2;
+    const lines: WrapLine[] = [];
+    // 앞 줄들은 캐시한 줄 나눔 그대로 (쪽·y를 다시 계산)
+    {
+      let pg = this.pageBefore;
+      let yy = this.yBefore;
+      if (!this.first && yy > 0) yy += box ? box.before : setup.paraSpacing;
+      for (let k = 0; k < k0; k++) {
+        const ln = src[k]!;
+        const lh = lineHeight(setup, ln.scale, box?.line) + objExtra(setup, ln, box?.line);
+        if (yy + lh > contentHeight && yy > 0) {
+          pg++;
+          yy = 0;
+        }
+        lines.push({ start: ln.start, end: ln.end, scale: ln.scale, objH: ln.objH, page: pg, y: yy, slotX: 0, slotW: cw });
+        yy += lh;
+      }
+    }
+    let start = src[k0]!.start;
+    const n = pl.n;
+    let guard = 0;
+    do {
+      const probe = lineHeight(setup, 1, box?.line);
+      if (y + probe > contentHeight && y > 0) {
+        page++;
+        y = 0;
+      }
+      const slot = slotAt(reg.forPage(page, this), cw, y, y + probe);
+      if ('blockedUntil' in slot) {
+        y = Math.max(y + 1, slot.blockedUntil);
+        if (++guard > 10_000) break;
+        continue;
+      }
+      const firstLine = lines.length === 0;
+      const indent = (box?.left ?? 0) + (box?.right ?? 0) + (firstLine ? (box?.first ?? 0) + (pl.marker?.shift ?? 0) : 0);
+      const avail = Math.max(1, slot.w - indent);
+      let end = breakFrom(pl, start, avail);
+      if (end <= start && start < n) end = start + 1;
+      const last = end >= n;
+      const m = lineMetrics(pl, start, end, last);
+      const ln = { scale: m.scale, objH: m.objH || undefined };
+      const lh = lineHeight(setup, m.scale, box?.line) + objExtra(setup, ln, box?.line);
+      if (y + lh > contentHeight && y > 0) {
+        page++;
+        y = 0;
+        continue; // 새 쪽에서 빈 구간을 다시 본다
+      }
+      lines.push({ start, end, scale: m.scale, objH: ln.objH, page, y, slotX: slot.x, slotW: slot.w });
+      y += lh;
+      start = end;
+    } while (start < n && ++guard < 100_000);
+    this.wrapped = lines;
+    return [page, y];
   }
 
   /** 문서 기준 마지막 줄 아래쪽 y */
@@ -160,6 +424,7 @@ export class PlacedPara {
 
   get lines(): PlacedLine[] {
     if (this._lines) return this._lines;
+    if (this.wrapped) return (this._lines = this.wrappedLines(this.wrapped));
     const { setup, contentHeight } = this.geo;
     let page = this.pageBefore;
     let y = this.yBefore;
@@ -196,11 +461,36 @@ export class PlacedPara {
     return lines;
   }
 
-  /** 들여쓰기·정렬·양쪽 맞춤 (10 §4) */
-  private alignLine(line: PlacedLine, last: boolean): void {
+  private wrappedLines(src: WrapLine[]): PlacedLine[] {
+    const { setup } = this.geo;
+    const box = this.layout.box;
+    return src.map((w, k) => {
+      const extra = objExtra(setup, w, box?.line);
+      const lh = lineHeight(setup, w.scale, box?.line) + extra;
+      const top = pageTop(setup, w.page) + setup.margin + w.y;
+      const line: PlacedLine = {
+        index: k,
+        start: w.start,
+        end: w.end,
+        page: w.page,
+        x: setup.margin + w.slotX,
+        y: top,
+        height: lh,
+        baseline: top + baselineOffset(setup, lh - extra, w.scale) + extra,
+        adj: null,
+        adjChars: false,
+      };
+      const indent = (box?.left ?? 0) + (box?.right ?? 0) + (k === 0 ? (box?.first ?? 0) + (this.layout.marker?.shift ?? 0) : 0);
+      this.alignLine(line, k === src.length - 1, Math.max(1, w.slotW - indent));
+      return line;
+    });
+  }
+
+  /** 들여쓰기·정렬·양쪽 맞춤 (10 §4). avail: 줄에 쓸 수 있는 폭 (어울림 줄이면 빈 구간에서 들여쓰기를 뺀 것) */
+  private alignLine(line: PlacedLine, last: boolean, availOverride?: number): void {
     const pl = this.layout;
-    const box = pl.box!;
-    const avail = pl.widths[line.index === 0 ? 0 : 1];
+    const box = pl.box ?? NO_BOX;
+    const avail = availOverride ?? pl.widths[line.index === 0 ? 0 : 1];
     line.x += box.left + (line.index === 0 ? box.first + (pl.marker?.shift ?? 0) : 0);
     const end = trimEnd(pl, line.start, line.end);
     const free = avail - (pl.xs[end]! - pl.xs[line.start]!);
@@ -354,7 +644,8 @@ function formatKey(f: ParaFormat): string {
   const bk =
     (b ? `|${JSON.stringify(b)}` : '') +
     (f.marker ? `|#${f.marker.id},${f.marker.hanging},${f.marker.text}` : '') +
-    (f.objs && f.objs.size ? `|o${[...f.objs].map(([k, o]) => `${k}:${o.w}x${o.h}`).join(',')}` : '');
+    (f.objs && f.objs.size ? `|o${[...f.objs].map(([k, o]) => `${k}:${o.w}x${o.h}`).join(',')}` : '') +
+    (f.floats && f.floats.size ? `|f${JSON.stringify([...f.floats])}` : '');
   return `${out}¶${f.mark}${bk}${f.key ? `|${f.key}` : ""}`;
 }
 
@@ -386,7 +677,7 @@ export class PagedLayout {
     private readonly format: FormatSource | null = null,
   ) {
     this.contentWidth = setup.width - setup.margin * 2;
-    this.geo = { setup, contentHeight: setup.height - setup.margin * 2 };
+    this.geo = { setup, contentHeight: setup.height - setup.margin * 2, floats: new FloatRegistry() };
   }
 
   /** 모든 문단이 배치되었는가 */
@@ -489,7 +780,11 @@ export class PagedLayout {
       this.staleFrom = Math.max(hi, oldStale >= oldHi ? oldStale + delta : hi);
     }
 
-    // 바뀐 구간을 비우고 lo부터 다시 배치
+    // 바뀐 구간을 비우고 lo부터 다시 배치 (지우는 문단의 배제 영역도 뺀다)
+    for (let k = lo; k < oldHi; k++) {
+      const o = old[k];
+      if (o) this.geo.floats.remove(o);
+    }
     spliceFill(old, lo, oldHi - lo, hi - lo);
     const prev = lo > 0 ? old[lo - 1]! : null;
     this.pending = { next: lo, page: prev ? prev.pageAfter : 0, y: prev ? prev.yAfter : 0 };
@@ -677,6 +972,20 @@ export class PagedLayout {
     return start + k;
   }
 
+  /** 수렴 판단: pp가 놓일 때 본 배제 영역이 지금도 같은가 (떠 있는 개체가 없는 쪽은 늘 같다) */
+  private sameExclusions(pp: PlacedPara): boolean {
+    if (pp.exclSig === '' && !this.geo.floats.hasAny()) return true;
+    return pp.exclSig === this.geo.floats.sig(pp, pp.pageBefore, pp.pageAfter);
+  }
+
+  /** 문서 y 범위 [y0, y1)에 걸친 쪽의 떠 있는 개체와 그 문단 */
+  floatsIn(y0: number, y1: number): Array<{ para: PlacedPara; float: PlacedFloat }> {
+    const out: Array<{ para: PlacedPara; float: PlacedFloat }> = [];
+    for (const pp of this.geo.floats.owners) for (const f of pp.floats) if (f.y < y1 && f.y + f.h > y0) out.push({ para: pp, float: f });
+    // 문서 순서 (앞 문단의 개체를 먼저 그린다)
+    return out.sort((a, b) => a.para.info.start - b.para.info.start || a.float.k - b.float.k);
+  }
+
   // ── 내부 ──────────────────────────────────────────────
 
   /** pending에서 시작해 stop이 true가 될 때까지(또는 끝까지) 배치한다 */
@@ -696,7 +1005,7 @@ export class PagedLayout {
       const pp = paras[m] ?? null;
       let layout: ParaLayout;
       if (pp && pp.info === info && pp.layout.preedit === null && m !== this.preeditPara) {
-        if (m < this.staleFrom && pp.pageBefore === page && pp.yBefore === y) {
+        if (m < this.staleFrom && pp.pageBefore === page && pp.yBefore === y && this.sameExclusions(pp)) {
           // 수렴: [m, staleFrom)은 이전 결과 그대로
           const until = Math.min(this.staleFrom, len);
           this.counts.reused += until - m;
@@ -730,6 +1039,7 @@ export class PagedLayout {
         pp && pp.info === info
           ? pp.length
           : layout.n - (layout.preedit ? layout.preedit[1] - layout.preedit[0] : 0);
+      if (pp) this.geo.floats.remove(pp);
       const placed = new PlacedPara(info, length, layout, this.geo);
       placed.placeAt(page, y, m === 0);
       paras[m] = placed;
