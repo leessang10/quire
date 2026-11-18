@@ -707,6 +707,7 @@ export class Editor {
     this.doc = this.document.body;
     this.active = null;
     this.cellSel = null;
+    this.extras = [];
     this.resetLayouts();
     this.stats.backgroundMs = 0;
     this.scroller.scrollTop = 0;
@@ -730,6 +731,7 @@ export class Editor {
     const { anchor, head } = this.active ? { anchor: 0, head: 0 } : this.selection();
     this.active = null;
     this.cellSel = null;
+    this.extras = []; // 다른 캐럿은 옛 문서의 원소를 가리킨다
     this.document = document;
     this.doc = document.body;
     this.pending = null;
@@ -1524,7 +1526,7 @@ export class Editor {
     const ops: Op[] = [];
     if (from !== to) ops.push(...this.doc.deleteRange(from, to));
     ops.push(...this.doc.insertObject(from, attrs));
-    this.setSelection(from, from + 1); // 넣은 이미지를 선택
+    this.setSelection(from + 1); // 캐럿은 넣은 이미지 뒤 (Google Docs처럼: 이어 쓰거나 Enter를 눌러도 이미지가 남는다. 누르면 개체 선택)
     this.history.seal();
     this.commit(ops, before);
     this.history.seal();
@@ -2482,7 +2484,51 @@ export class Editor {
 
   /** 편집 중인 스토리의 연산을 기록한다 (셀이면 스토리로 감싼다, 11 §2.5) */
   private commit(ops: Op[], before: Selection, mergeKey?: string): void {
+    // 편집으로 같은 종류 목록이 붙었으면 한 목록으로 (같은 실행 취소 단계)
+    const join = ops.length ? this.joinTouchingLists() : [];
+    if (join.length) {
+      ops = [...ops, ...join];
+      mergeKey = undefined;
+    }
     this.commitRaw(this.active ? Document.tag(this.active.story, ops) : ops, before, mergeKey);
+  }
+
+  /**
+   * 캐럿 둘레(캐럿들이 걸친 문단 ± 1)에서 붙은 목록을 하나로 합친다 (Word·Google Docs처럼 "붙으면 한 목록"):
+   * 목록 문단이 끊기지 않고 이어지는 곳에서, 같은 종류(번호·글머리)인데 다른 목록이면 뒤 목록의 이어진 문단들을 앞 목록 id로 바꾼다.
+   * 그래서 나중에 사이에 보통 문단이 끼거나 한 항목의 번호를 풀어도 번호가 이어진다. 화면 번호는 numberLists가 붙은 목록을 이미
+   * 잇는다 (원격 편집·문단 이동도). 이것은 그 이음을 문서에 남긴다
+   */
+  private joinTouchingLists(): Op[] {
+    const d = this.doc;
+    const ps = this.caretParagraphs();
+    if (!ps.length) return [];
+    const n = d.paragraphs().length;
+    const lo = Math.max(1, ps[0]! - 1);
+    const hi = Math.min(n, ps[ps.length - 1]! + 2);
+    const kind = (k: number) => {
+      const li = d.paraAttrs(k).list;
+      return li ? (d.listDef(li.id)?.kind ?? null) : null;
+    };
+    const ops: Op[] = [];
+    for (let k = lo; k < hi; k++) {
+      const b = d.paraAttrs(k).list;
+      const bk = kind(k);
+      if (!b || !bk) continue;
+      // 이어진 목록 문단들에서 가장 가까운 같은 종류 문단
+      let a: { id: string } | undefined;
+      for (let m = k - 1; m >= 0 && kind(m); m--)
+        if (kind(m) === bk) {
+          a = d.paraAttrs(m).list;
+          break;
+        }
+      if (!a || a.id === b.id) continue;
+      for (let m = k; m < n && kind(m); m++) {
+        const li = d.paraAttrs(m).list!;
+        if (li.id === b.id) ops.push(...d.setParaAttr(m, 'list', { id: a.id, level: li.level }));
+      }
+    }
+    return ops;
   }
 
   /** 문서 연산 그대로 기록 (본문 연산, 표 레코드 연산, 이미 감싼 스토리 연산) */
@@ -2642,6 +2688,7 @@ export class Editor {
     if (!this.active) return;
     this.input.commitComposition();
     this.active = null;
+    this.extras = [];
     this.doc = this.body;
     this.layout = this.bodyLayout;
     this.pending = null;
@@ -2674,6 +2721,7 @@ export class Editor {
     this.input.commitComposition();
     this.history.seal();
     this.active = { table, row, col, story };
+    this.extras = []; // 다른 캐럿은 같은 스토리 안에만 있다
     this.doc = this.document.story(story);
     this.pending = null;
     this.attachActive();

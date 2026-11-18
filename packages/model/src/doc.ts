@@ -2698,9 +2698,13 @@ function sameValue(a: unknown, b: unknown): boolean {
 
 /** old[a, b)와 rebuilt의 목록 문단 열이 같은가 (ID·목록·수준) */
 function sameListSeq(old: ParagraphInfo[], a: number, b: number, rebuilt: ParagraphInfo[]): boolean {
+  // 목록이 아닌 문단은 "끊김" 하나로 본다: 끊김이 생기거나 사라지면 붙은 목록의 번호(numberLists)가 바뀐다
   let k = a;
   let m = 0;
   for (;;) {
+    const gapK = k < b && !old[k]!.attrs.list;
+    const gapM = m < rebuilt.length && !rebuilt[m]!.attrs.list;
+    if (gapK !== gapM) return false;
     while (k < b && !old[k]!.attrs.list) k++;
     while (m < rebuilt.length && !rebuilt[m]!.attrs.list) m++;
     if (k >= b || m >= rebuilt.length) return k >= b && m >= rebuilt.length;
