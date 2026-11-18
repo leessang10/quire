@@ -122,8 +122,92 @@ function trimEnd(pl: ParaLayout, start: number, end: number): number {
 
 interface Geometry {
   setup: PageSetup;
-  contentHeight: number;
+  /** 본문을 흘려 넣는 프레임 열 (12 §2) */
+  frames: FrameSource;
+  /** 프레임 k의 높이 */
+  h: (k: number) => number;
   floats: FloatRegistry;
+}
+
+/**
+ * 본문을 흘려 넣는 직사각형 하나 (12 §2): 쪽의 본문 영역, 다단이면 단 하나. 문서 좌표.
+ * 배치 상태는 (프레임 번호, 프레임 안 y)다. PlacedPara.pageBefore·pageAfter와 FloatRegistry의 "쪽"은 프레임 번호다.
+ */
+export interface Frame {
+  /** 이 프레임이 있는 쪽 */
+  page: number;
+  /** 같은 쪽에서 몇 번째 단 */
+  column: number;
+  /** 왼쪽 (쪽 그리기 기준 x, PlacedLine.x와 같은 기준) */
+  x: number;
+  /** 위쪽 (문서 y) */
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** 쪽 상자 (문서 좌표): 그리기·스크롤 */
+export interface PageBox {
+  x: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** 프레임 열: k번째 프레임과 쪽 상자 (필요할 때 만든다) */
+export interface FrameSource {
+  frame(k: number): Frame;
+  page(p: number): PageBox;
+  /** 문서 y가 든 쪽 (쪽 사이 틈은 아래 쪽) */
+  pageAt(y: number): number;
+  /** 쪽 n개의 전체 높이 (마지막 쪽 아래 틈까지) */
+  height(pages: number): number;
+}
+
+/**
+ * 모든 쪽이 같고 쪽마다 본문 영역 하나 (2단계까지의 모양). 프레임 k = 쪽 k. 원점(PageSetup.originX/Y, 표 셀)이 바뀌면
+ * 캐시를 비운다
+ */
+export class UniformFrames implements FrameSource {
+  private cache: Frame[] = [];
+  private ox = 0;
+  private oy = 0;
+
+  constructor(private readonly setup: PageSetup) {}
+
+  private check(): void {
+    const s = this.setup;
+    if ((s.originX ?? 0) !== this.ox || (s.originY ?? 0) !== this.oy) {
+      this.ox = s.originX ?? 0;
+      this.oy = s.originY ?? 0;
+      this.cache = [];
+    }
+  }
+
+  frame(k: number): Frame {
+    this.check();
+    let f = this.cache[k];
+    if (!f) {
+      const s = this.setup;
+      f = { page: k, column: 0, x: leftOf(s), top: pageTop(s, k) + s.margin, width: s.width - s.margin * 2, height: s.height - s.margin * 2 };
+      if (k < 1 << 20) this.cache[k] = f;
+    }
+    return f;
+  }
+
+  page(p: number): PageBox {
+    const s = this.setup;
+    return { x: s.originX ?? 0, top: pageTop(s, p), width: s.width, height: s.height };
+  }
+
+  pageAt(y: number): number {
+    const s = this.setup;
+    return Math.max(0, Math.floor((y - (s.originY ?? 0) - s.gap) / (s.height + s.gap)));
+  }
+
+  height(pages: number): number {
+    return pageTop(this.setup, pages);
+  }
 }
 
 /** 놓인 떠 있는 개체 (그리기·누르기용) */
@@ -294,7 +378,8 @@ export class PlacedPara {
     this.first = first;
     this._lines = null;
     this.wrapped = null;
-    const { setup, contentHeight, floats: reg } = this.geo;
+    const { setup, floats: reg } = this.geo;
+    const H = this.geo.h;
     reg.remove(this);
     this.floats = NO_FLOATS;
     const box = this.layout.box;
@@ -304,7 +389,7 @@ export class PlacedPara {
     if (tbl) {
       // 표: 행마다 (쪽은 행 사이에서만 나눈다)
       for (const rh of tbl.rows) {
-        if (y + rh > contentHeight && y > 0) {
+        if (y + rh > H(page) && y > 0) {
           page++;
           y = 0;
         }
@@ -321,7 +406,7 @@ export class PlacedPara {
       const lh0 = src.length ? lineHeight(setup, src[0]!.scale, box?.line) + objExtra(setup, src[0]!, box?.line) : setup.lineHeight;
       let pg = page;
       let top = y;
-      if (top + lh0 > contentHeight && top > 0) {
+      if (top + lh0 > H(pg) && top > 0) {
         pg++;
         top = 0;
       }
@@ -329,7 +414,7 @@ export class PlacedPara {
     }
     for (let k = 0; k < src.length; k++) {
       const lh = lineHeight(setup, src[k]!.scale, box?.line) + objExtra(setup, src[k]!, box?.line);
-      if (y + lh > contentHeight && y > 0) {
+      if (y + lh > H(page) && y > 0) {
         page++;
         y = 0;
       }
@@ -349,15 +434,17 @@ export class PlacedPara {
 
   /** 떠 있는 개체의 자리 (11 §2.3): 문단 위쪽 (pg, top) 기준. 배제 영역을 등록한다 */
   private placeFloats(pg: number, top: number): void {
-    const { setup, floats: reg } = this.geo;
-    const cw = setup.width - setup.margin * 2;
+    const { floats: reg, frames } = this.geo;
+    const fr = frames.frame(pg);
+    const pb = frames.page(fr.page);
+    const cw = fr.width;
     const out: PlacedFloat[] = [];
     for (const [k, f] of this.layout.floats!) {
-      const baseW = f.relX === 'page' ? setup.width : cw;
-      const x0 = f.relX === 'page' ? -setup.margin : 0;
+      const baseW = f.relX === 'page' ? pb.width : cw;
+      const x0 = f.relX === 'page' ? pb.x - fr.x : 0;
       const x = x0 + (f.x === 'left' ? 0 : f.x === 'center' ? (baseW - f.w) / 2 : f.x === 'right' ? baseW - f.w : f.x);
-      const y = f.relY === 'paragraph' ? top + f.y : f.relY === 'margin' ? f.y : f.y - setup.margin;
-      out.push({ k, page: pg, x: leftOf(setup) + x, y: pageTop(setup, pg) + setup.margin + y, w: f.w, h: f.h, spec: f });
+      const y = f.relY === 'paragraph' ? top + f.y : f.relY === 'margin' ? f.y : f.y - (fr.top - pb.top);
+      out.push({ k, page: pg, x: fr.x + x, y: fr.top + y, w: f.w, h: f.h, spec: f });
       if (f.wrap === 'none') continue;
       const g = f.gap;
       reg.add(this, pg, {
@@ -379,11 +466,12 @@ export class PlacedPara {
    * @returns 끝 쪽, 끝 y
    */
   private wrapFrom(k0: number, page: number, y: number): [number, number] {
-    const { setup, contentHeight, floats: reg } = this.geo;
+    const { setup, floats: reg } = this.geo;
+    const H = this.geo.h;
     const pl = this.layout;
     const box = pl.box;
     const src = pl.lines;
-    const cw = setup.width - setup.margin * 2;
+    const cw = this.geo.frames.frame(this.pageBefore).width;
     const lines: WrapLine[] = [];
     // 앞 줄들은 캐시한 줄 나눔 그대로 (쪽·y를 다시 계산)
     {
@@ -393,7 +481,7 @@ export class PlacedPara {
       for (let k = 0; k < k0; k++) {
         const ln = src[k]!;
         const lh = lineHeight(setup, ln.scale, box?.line) + objExtra(setup, ln, box?.line);
-        if (yy + lh > contentHeight && yy > 0) {
+        if (yy + lh > H(pg) && yy > 0) {
           pg++;
           yy = 0;
         }
@@ -406,7 +494,7 @@ export class PlacedPara {
     let guard = 0;
     do {
       const probe = lineHeight(setup, 1, box?.line);
-      if (y + probe > contentHeight && y > 0) {
+      if (y + probe > H(page) && y > 0) {
         page++;
         y = 0;
       }
@@ -425,7 +513,7 @@ export class PlacedPara {
       const m = lineMetrics(pl, start, end, last);
       const ln = { scale: m.scale, objH: m.objH || undefined };
       const lh = lineHeight(setup, m.scale, box?.line) + objExtra(setup, ln, box?.line);
-      if (y + lh > contentHeight && y > 0) {
+      if (y + lh > H(page) && y > 0) {
         page++;
         y = 0;
         continue; // 새 쪽에서 빈 구간을 다시 본다
@@ -440,8 +528,7 @@ export class PlacedPara {
 
   /** 문서 기준 마지막 줄 아래쪽 y */
   get bottom(): number {
-    const { setup } = this.geo;
-    return pageTop(setup, this.pageAfter) + setup.margin + this.yAfter;
+    return this.geo.frames.frame(this.pageAfter).top + this.yAfter;
   }
 
   /** 원점이 바뀌었다: 줄 위치를 다시 계산하게 한다 */
@@ -451,23 +538,24 @@ export class PlacedPara {
 
   /** 표 문단의 행 = 줄 (표시 인덱스는 모두 [0, 1): 표 원소 하나) */
   private tableLines(): PlacedLine[] {
-    const { setup, contentHeight } = this.geo;
+    const { setup, frames } = this.geo;
+    const H = this.geo.h;
     const tbl = this.layout.table!;
     const box = this.layout.box;
     let page = this.pageBefore;
     let y = this.yBefore;
     if (!this.first && y > 0) y += box ? box.before : setup.paraSpacing;
-    const cw = setup.width - setup.margin * 2;
-    const free = Math.max(0, cw - (box?.left ?? 0) - (box?.right ?? 0) - tbl.width);
-    const x = leftOf(setup) + (box?.left ?? 0) + (box?.align === 'center' ? free / 2 : box?.align === 'right' ? free : 0);
     return tbl.rows.map((rh, k) => {
-      if (y + rh > contentHeight && y > 0) {
+      if (y + rh > H(page) && y > 0) {
         page++;
         y = 0;
       }
-      const top = pageTop(setup, page) + setup.margin + y;
+      const fr = frames.frame(page);
+      const free = Math.max(0, fr.width - (box?.left ?? 0) - (box?.right ?? 0) - tbl.width);
+      const x = fr.x + (box?.left ?? 0) + (box?.align === 'center' ? free / 2 : box?.align === 'right' ? free : 0);
+      const top = fr.top + y;
       y += rh;
-      return { index: k, start: 0, end: 1, page, x, y: top, height: rh, baseline: top + rh, adj: null, adjChars: false };
+      return { index: k, start: 0, end: 1, page: fr.page, x, y: top, height: rh, baseline: top + rh, adj: null, adjChars: false };
     });
   }
 
@@ -475,7 +563,8 @@ export class PlacedPara {
     if (this._lines) return this._lines;
     if (this.layout.table) return (this._lines = this.tableLines());
     if (this.wrapped) return (this._lines = this.wrappedLines(this.wrapped));
-    const { setup, contentHeight } = this.geo;
+    const { setup, frames } = this.geo;
+    const H = this.geo.h;
     let page = this.pageBefore;
     let y = this.yBefore;
     const pl = this.layout;
@@ -487,17 +576,18 @@ export class PlacedPara {
       const ln = src[k]!;
       const extra = objExtra(setup, ln, box?.line);
       const lh = lineHeight(setup, ln.scale, box?.line) + extra;
-      if (y + lh > contentHeight && y > 0) {
+      if (y + lh > H(page) && y > 0) {
         page++;
         y = 0;
       }
-      const top = pageTop(setup, page) + setup.margin + y;
+      const fr = frames.frame(page);
+      const top = fr.top + y;
       lines[k] = {
         index: k,
         start: ln.start,
         end: ln.end,
-        page,
-        x: leftOf(setup),
+        page: fr.page,
+        x: fr.x,
         y: top,
         height: lh,
         baseline: top + baselineOffset(setup, lh - extra, ln.scale) + extra,
@@ -517,13 +607,14 @@ export class PlacedPara {
     return src.map((w, k) => {
       const extra = objExtra(setup, w, box?.line);
       const lh = lineHeight(setup, w.scale, box?.line) + extra;
-      const top = pageTop(setup, w.page) + setup.margin + w.y;
+      const fr = this.geo.frames.frame(w.page);
+      const top = fr.top + w.y;
       const line: PlacedLine = {
         index: k,
         start: w.start,
         end: w.end,
-        page: w.page,
-        x: leftOf(setup) + w.slotX,
+        page: fr.page,
+        x: fr.x + w.slotX,
         y: top,
         height: lh,
         baseline: top + baselineOffset(setup, lh - extra, w.scale) + extra,
@@ -731,9 +822,21 @@ export class PagedLayout {
     private readonly cache: LayoutCache = new LayoutCache(),
     /** 문단 → 레이아웃 서식 (없으면 서식을 무시). charFormats(style)이면 글자 서식만 */
     private readonly format: FormatSource | null = null,
+    /** 프레임 열 (12 §2). 없으면 모든 쪽이 같은 UniformFrames */
+    readonly frames: FrameSource = new UniformFrames(setup),
   ) {
-    this.contentWidth = setup.width - setup.margin * 2;
-    this.geo = { setup, contentHeight: setup.height - setup.margin * 2, floats: new FloatRegistry() };
+    this.contentWidth = frames.frame(0).width;
+    this.geo = { setup, frames, h: (k) => frames.frame(k).height, floats: new FloatRegistry() };
+  }
+
+  /** 쪽 p의 상자 (문서 좌표) */
+  pageBox(p: number): PageBox {
+    return this.frames.page(p);
+  }
+
+  /** 문서 y가 든 쪽 */
+  pageAt(y: number): number {
+    return this.frames.pageAt(y);
   }
 
   /** 좌표 원점을 옮긴다 (표 셀, PageSetup.originX/Y). 배치는 그대로, 줄 위치만 다시 계산한다 */
@@ -766,13 +869,13 @@ export class PagedLayout {
   get pageCount(): number {
     const valid = this.validCount;
     if (valid === 0) return 1;
-    const lastPage = this.paras[valid - 1]!.pageAfter + 1;
+    const lastPage = this.frames.frame(this.paras[valid - 1]!.pageAfter).page + 1;
     if (!this.pending) return lastPage;
     return Math.max(lastPage, Math.ceil((lastPage * this.paras.length) / valid));
   }
 
   get totalHeight(): number {
-    return pageTop(this.setup, this.pageCount);
+    return this.frames.height(this.pageCount);
   }
 
   /**
@@ -1062,7 +1165,7 @@ export class PagedLayout {
 
   /** pending에서 시작해 stop이 true가 될 때까지(또는 끝까지) 배치한다 */
   private run(stop: (m: number, nextTopY: number) => boolean): void {
-    const { setup, model, paras } = this;
+    const { model, paras } = this;
     const len = model.length;
     while (this.pending) {
       let { next: m, page, y } = this.pending;
@@ -1071,7 +1174,7 @@ export class PagedLayout {
         this.staleFrom = Infinity;
         break;
       }
-      if (stop(m, pageTop(setup, page) + setup.margin + y)) break;
+      if (stop(m, this.geo.frames.frame(page).top + y)) break;
 
       const info = model[m]!;
       const pp = paras[m] ?? null;

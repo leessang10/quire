@@ -8,3 +8,4 @@ export { EditContextInput, editContextSupported } from './edit-context';
 export type { EditContextLike, EditContextDeps } from './edit-context';
 export { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment } from './clipboard';
 export type { Fragment } from './clipboard';
+export { Formatter, defaultPageSetup } from './formatter';
