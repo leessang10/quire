@@ -12,6 +12,7 @@
       <span class="phase">0단계 프로토타입</span>
       <div class="actions">
         <button data-doc="sample">예제 문서</button>
+        <button data-doc="format">서식 예제</button>
         <button data-doc="100">100쪽 생성</button>
         <button data-doc="1000">1,000쪽 생성</button>
         <button data-doc="10000">10,000쪽 생성</button>
@@ -22,6 +23,42 @@
         <a class="link" href="/shaping.html">셰이핑 검증</a>
       </div>
     </header>
+    <div class="format-bar" role="toolbar" aria-label="글자 서식">
+      <button data-mark="bold" aria-pressed="false" title="굵게 (Ctrl+B)"><b>가</b></button>
+      <button data-mark="italic" aria-pressed="false" title="기울임 (Ctrl+I)"><i>가</i></button>
+      <button data-mark="underline" aria-pressed="false" title="밑줄 (Ctrl+U)"><u>가</u></button>
+      <button data-mark="strike" aria-pressed="false" title="취소선 (Ctrl+Shift+X)"><s>가</s></button>
+      <button data-script="sup" aria-pressed="false" title="위 첨자 (Ctrl+.)">x²</button>
+      <button data-script="sub" aria-pressed="false" title="아래 첨자 (Ctrl+,)">x₂</button>
+      <label>크기
+        <select id="fmt-size">
+          <option value="">기본</option>
+          <option value="9000">9pt</option>
+          <option value="12000">12pt</option>
+          <option value="14000">14pt</option>
+          <option value="18000">18pt</option>
+          <option value="24000">24pt</option>
+          <option value="36000">36pt</option>
+        </select>
+      </label>
+      <label>색
+        <select id="fmt-color">
+          <option value="">기본</option>
+          <option value="#c01c28">빨강</option>
+          <option value="#1a5fb4">파랑</option>
+          <option value="#26a269">초록</option>
+        </select>
+      </label>
+      <label>형광펜
+        <select id="fmt-highlight">
+          <option value="">없음</option>
+          <option value="#fff3a3">노랑</option>
+          <option value="#c8f7c5">연두</option>
+          <option value="#ffd1dc">분홍</option>
+        </select>
+      </label>
+      <button id="fmt-clear" title="서식 지우기 (Ctrl+\)">서식 지우기</button>
+    </div>
     <main class="layout">
       <section id="editor" class="editor" aria-label="편집기"></section>
       <aside class="panel">

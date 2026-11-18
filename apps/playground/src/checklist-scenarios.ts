@@ -143,6 +143,16 @@ export const SCENARIOS: Scenario[] = [
     accept: (t) => t.trimEnd() === '안녕하세요',
   },
 
+  {
+    id: 'v1-bold-ime',
+    group: 'V1',
+    title: '굵게 켜고 한글 조합 (서식 2-3)',
+    start: { text: '보통 ', anchor: 3 },
+    steps: ['선택 없이 Ctrl+B (macOS ⌘B)를 누른다.', '"굵게 입력"을 입력한다.'],
+    expect: '"보통 굵게 입력". 조합 중인 글자도 처음부터 굵게 보이고, 확정한 뒤에도 굵게 남는다.',
+    expected: '보통 굵게 입력',
+    look: '조합 중 글자가 보통 굵기로 보였다가 확정 때 굵어지면 실패 (메모에 적는다).',
+  },
   // ── V2 후보 창 ──
   {
     id: 'v2-hanja',

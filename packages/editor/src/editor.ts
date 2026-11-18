@@ -2,8 +2,19 @@
  * 0단계 에디터: 캔버스 렌더링 + 숨긴 textarea 입력 + 자체 선택 모델
  * 설계: docs/design/03, 04, 08
  */
-import { Doc, History, type Op, type Position, type Selection } from '@quire/model';
-import { LayoutCache, PagedLayout, cpSlice, docToDisplay, pageTop, type Measurer, type PageSetup, type ParaLayout } from '@quire/layout';
+import { Doc, History, MARK_KEYS, type MarkKey, type MarkSet, type Op, type Position, type Selection } from '@quire/model';
+import {
+  LayoutCache,
+  PagedLayout,
+  PLAIN_STYLE,
+  cpSlice,
+  docToDisplay,
+  pageTop,
+  type Measurer,
+  type PageSetup,
+  type ParaLayout,
+  type RunStyle,
+} from '@quire/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 
@@ -44,7 +55,49 @@ export interface FontSource {
    * 나오면 그 조각을 받아 다시 조판한다 (02 §4 부분 로드).
    */
   manifest?: string;
+  /** 같은 가족의 굵은 얼굴 (조각 목록, 같은 조각 이름). 없으면 굵게는 합성 굵게로 그린다 (10 §4) */
+  bold?: { manifest: string };
 }
+
+/** 선택 영역의 글자 서식: 키마다 값, 섞여 있으면 mixed에 */
+export interface SelectionMarks {
+  marks: MarkSet;
+  mixed: Set<MarkKey>;
+}
+
+/** 글꼴 치수 (em 비율): 기준선·밑줄·취소선 */
+interface Metrics {
+  ascent: number;
+  descent: number;
+  underlinePosition: number;
+  underlineThickness: number;
+  strikePosition: number;
+  strikeThickness: number;
+}
+
+/** 서식 번호 하나의 그리기 정보 (10 §4) */
+interface DrawStyle {
+  run: RunStyle;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  color: string | null;
+  highlight: string | null;
+  /** 기준선 이동 (px, 위가 음수): 위·아래 첨자 */
+  shift: number;
+}
+
+const PLAIN_DRAW: DrawStyle = {
+  run: PLAIN_STYLE, bold: false, italic: false, underline: false, strike: false, color: null, highlight: null, shift: 0,
+};
+/** 기울인 그리기의 기울기 (tan 약 12°) */
+const ITALIC_SKEW = 0.21;
+/** 위·아래 첨자: 크기 배율, 기준선 이동 (em) */
+const SCRIPT_SCALE = 0.65;
+const SUP_SHIFT = -0.33;
+const SUB_SHIFT = 0.2;
+const LINK_COLOR = '#1a5fb4';
 
 /** 다른 사용자의 선택 영역 (화면 오프셋). 협업 프레즌스에서 받아 그린다 */
 export interface RemoteCaret {
@@ -104,20 +157,35 @@ let editorSeq = 0;
 
 class CanvasMeasurer implements Measurer {
   private ctx: CanvasRenderingContext2D;
+  private bold: CanvasRenderingContext2D;
   private cache = new Map<string, number>();
   constructor(font: string) {
-    this.ctx = document.createElement('canvas').getContext('2d')!;
-    this.ctx.font = font;
-    // 렌더링과 같은 조건으로 측정 (커닝 없음 → 줄 단위로 그려도 위치가 맞음)
-    if ('fontKerning' in this.ctx) this.ctx.fontKerning = 'none';
+    const make = (f: string) => {
+      const ctx = document.createElement('canvas').getContext('2d')!;
+      ctx.font = f;
+      // 렌더링과 같은 조건으로 측정 (커닝 없음 → 줄 단위로 그려도 위치가 맞음)
+      if ('fontKerning' in ctx) ctx.fontKerning = 'none';
+      return ctx;
+    };
+    this.ctx = make(font);
+    this.bold = make(`bold ${font}`);
   }
-  width(g: string): number {
-    let w = this.cache.get(g);
+  width(g: string, face = 0): number {
+    const key = face === 0 ? g : `\u0001${g}`;
+    let w = this.cache.get(key);
     if (w === undefined) {
-      w = g === '\t' ? this.ctx.measureText('    ').width : this.ctx.measureText(g).width;
-      this.cache.set(g, w);
+      const ctx = face === 0 ? this.ctx : this.bold;
+      w = g === '\t' ? ctx.measureText('    ').width : ctx.measureText(g).width;
+      this.cache.set(key, w);
     }
     return w;
+  }
+  /** 글꼴 상자 (em 비율) */
+  metrics(size: number): { ascent: number; descent: number } {
+    const m = this.ctx.measureText('가');
+    const a = m.fontBoundingBoxAscent;
+    const d = m.fontBoundingBoxDescent;
+    return a > 0 && d >= 0 ? { ascent: a / size, descent: d / size } : { ascent: 0.8, descent: 0.2 };
   }
 }
 
@@ -143,9 +211,22 @@ export class Editor {
   private readonly mirror: HTMLDivElement;
   private readonly input: InputBackend;
   private readonly font: string;
+  /** 시스템 글꼴 가족 (CSS font-family) */
+  private readonly family: string;
   private measurer: Measurer;
-  /** 셰이핑 중이면 글꼴 번호별 CSS font (FontFace로 등록한 엔진 글꼴). null이면 시스템 글꼴 측정 */
+  /** 셰이핑 중이면 글꼴 번호별 FontFace 가족 이름 (엔진 글꼴). null이면 시스템 글꼴 측정 */
   private shapedFonts: string[] | null = null;
+  /** 글꼴 번호별 굵은 얼굴의 가족 이름 (불러온 것만). 없으면 합성 굵게 */
+  private boldFonts: Array<string | null> = [];
+  private metrics: Metrics = {
+    ascent: 0.8, descent: 0.2, underlinePosition: -0.1, underlineThickness: 0.06, strikePosition: 0.3, strikeThickness: 0.06,
+  };
+  /** 서식 번호별 그리기 정보 (문서마다) */
+  private drawStyles: Array<DrawStyle | undefined> = [];
+  private drawStylesDoc: Doc | null = null;
+  private readonly styleOf = (id: number): RunStyle => this.drawStyle(id).run;
+  /** 캐럿에서 다음 입력이 받을 서식 (Ctrl+B 등을 선택 없이 눌렀을 때). at: 그 캐럿 오프셋 */
+  private pending: { at: number; marks: MarkSet } | null = null;
   /** 상태 표시: 측정 방식 */
   textEngine = 'canvas';
   private readonly cache = new LayoutCache();
@@ -174,7 +255,11 @@ export class Editor {
     this.fontSize = opts.fontSize ?? 16;
     const family = opts.fontFamily ?? `'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`;
     this.font = `${this.fontSize}px ${family}`;
-    this.measurer = new CanvasMeasurer(this.font);
+    this.family = family;
+    const canvasMeasurer = new CanvasMeasurer(this.font);
+    this.measurer = canvasMeasurer;
+    const box = canvasMeasurer.metrics(this.fontSize);
+    this.metrics = { ...this.metrics, ...box };
     // A4 @96dpi
     this.setup = {
       width: 794,
@@ -183,6 +268,9 @@ export class Editor {
       gap: 24,
       lineHeight: Math.round(this.fontSize * 1.7),
       paraSpacing: Math.round(this.fontSize * 0.5),
+      fontSize: this.fontSize,
+      ascent: box.ascent,
+      descent: box.descent,
     };
 
     this.doc = opts.doc ?? Doc.fromText(opts.text ?? '');
@@ -261,7 +349,7 @@ export class Editor {
     this.resizeObserver = new ResizeObserver(() => this.refresh());
     this.resizeObserver.observe(scroller);
 
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.styleOf);
     this.relayout();
     this.render();
     if (opts.fonts?.length) {
@@ -286,12 +374,17 @@ export class Editor {
     // 글꼴 자리: 파일 하나는 바로 불러온 자리, 조각 목록은 조각마다 아직 안 불러온 자리
     const slots: Array<import('@quire/shaping').FontSlot & { url?: string; bytes?: number }> = [];
     const ready: Array<{ i: number; data: Uint8Array }> = [];
+    const readManifest = async (url: string) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`글꼴 목록을 불러오지 못함: ${url} (${r.status})`);
+      const m = (await r.json()) as import('@quire/shaping').FontManifest;
+      return shaping.slotsFromManifest(m, new URL(url, location.href));
+    };
     for (const src of sources) {
       if (src.manifest) {
-        const r = await fetch(src.manifest);
-        if (!r.ok) throw new Error(`글꼴 목록을 불러오지 못함: ${src.manifest} (${r.status})`);
-        const m = (await r.json()) as import('@quire/shaping').FontManifest;
-        slots.push(...shaping.slotsFromManifest(m, new URL(src.manifest, location.href)));
+        const regular = await readManifest(src.manifest);
+        if (src.bold) shaping.attachBold(regular, await readManifest(src.bold.manifest));
+        slots.push(...regular);
       } else {
         const data = src.data ? (src.data instanceof Uint8Array ? src.data : new Uint8Array(src.data)) : await fetchBytes(src.url!);
         ready.push({ i: slots.length, data });
@@ -300,10 +393,11 @@ export class Editor {
     }
     const seq = editorSeq++;
     const families = slots.map((_, i) => `quire-font-${seq}-${i}`);
-    const register = async (i: number, data: Uint8Array) => {
-      document.fonts.add(await new FontFace(families[i]!, data.slice().buffer).load());
+    const register = async (family: string, data: Uint8Array) => {
+      document.fonts.add(await new FontFace(family, data.slice().buffer).load());
     };
-    await Promise.all(ready.map(({ i, data }) => register(i, data)));
+    const boldFonts: Array<string | null> = slots.map(() => null);
+    await Promise.all(ready.map(({ i, data }) => register(families[i]!, data)));
 
     let loadedBytes = 0;
     const describe = () => {
@@ -311,16 +405,20 @@ export class Editor {
       const done = lazy.filter((s) => s.font).length;
       this.textEngine = `HarfBuzz (${sources.map((s) => s.name).join(', ')}${lazy.length ? ` · 조각 ${done}/${lazy.length}, ${(loadedBytes / 1e6).toFixed(2)} MB` : ''})`;
     };
-    /** 조각 i를 받아 셰이퍼와 캔버스에 등록 */
-    const loadChunk = async (i: number) => {
-      const slot = slots[i]!;
-      if (slot.font || !slot.url) return;
+    /** 조각 i(face 1이면 그 굵은 얼굴)를 받아 셰이퍼와 캔버스에 등록 */
+    const loadChunk = async (key: number) => {
+      const i = key % 256;
+      const face = key >= 256 ? 1 : 0;
+      const slot = face === 1 ? (slots[i]!.bold as (typeof slots)[number] | null | undefined) : slots[i]!;
+      if (!slot || slot.font || !slot.url) return;
       const data = await fetchBytes(slot.url);
-      await register(i, data);
+      const family = face === 1 ? `${families[i]!}-b` : families[i]!;
+      await register(family, data);
       loadedBytes += data.length;
-      shaper.loaded(i, shaping.loadShapingFont(data, slot.name));
+      shaper.loaded(i, shaping.loadShapingFont(data, slot.name), face);
+      if (face === 1) boldFonts[i] = family;
     };
-    // 편집 중 새 글자가 아직 안 받은 조각에 있으면: 모아서 받고 한 번에 다시 조판
+    // 편집 중 새 글자가 아직 안 받은 조각에 있으면: 모아서 받고 한 번에 다시 조판 (키 = 얼굴 × 256 + 자리)
     const queue = new Set<number>();
     let flushing = false;
     const flush = async () => {
@@ -338,9 +436,9 @@ export class Editor {
     const shaper = new shaping.HbShaper(slots, {
       size: this.fontSize,
       fallback: this.measurer,
-      onMissing: (i) => {
+      onMissing: (i, face) => {
         if (!switched) return; // 처음 조판 전 미리 받기는 아래에서
-        queue.add(i);
+        queue.add(face * 256 + i);
         if (!flushing) setTimeout(() => void flush(), 0);
       },
     });
@@ -356,6 +454,21 @@ export class Editor {
         const i = slots.findIndex((s) => s.covers(cp));
         if (i >= 0 && !slots[i]!.font) need.add(i);
       }
+      // 굵은 글자가 든 굵은 얼굴 조각도
+      const seenBold = new Set<number>();
+      for (const p of this.doc.paragraphs()) {
+        if (!p.fmt) continue;
+        let k = 0;
+        for (const ch of p.text) {
+          if (this.doc.markSet(p.fmt[k++]!).bold) {
+            const cp = ch.codePointAt(0)!;
+            if (seenBold.has(cp)) continue;
+            seenBold.add(cp);
+            const i = slots.findIndex((s) => s.covers(cp));
+            if (i >= 0 && slots[i]!.bold && !slots[i]!.bold!.font) need.add(256 + i);
+          }
+        }
+      }
       // 공백 폭을 정하는 조각도
       const sp = slots.findIndex((s) => s.covers(0x20));
       if (sp >= 0 && !slots[sp]!.font) need.add(sp);
@@ -363,7 +476,15 @@ export class Editor {
     }
     switched = true;
     this.measurer = shaper;
-    this.shapedFonts = families.map((f) => `${this.fontSize}px ${f}`);
+    this.shapedFonts = families;
+    this.boldFonts = boldFonts;
+    // 기준선·밑줄은 기본 글꼴(공백을 가진 자리)의 치수로
+    const base = slots.find((s) => s.covers(0x20) && s.font)?.font ?? slots.find((s) => s.font)?.font;
+    if (base) {
+      this.metrics = { ...base.metrics };
+      this.setup.ascent = base.metrics.ascent;
+      this.setup.descent = base.metrics.descent;
+    }
     describe();
     this.relayoutAll();
   }
@@ -371,7 +492,7 @@ export class Editor {
   /** 측정이 바뀌었다 (글꼴을 받음): 모든 문단을 다시 조판한다 */
   private relayoutAll(): void {
     this.cache.clear();
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.styleOf);
     this.refresh();
     this.opts.onChange?.(this);
   }
@@ -390,7 +511,7 @@ export class Editor {
   setText(text: string): void {
     this.doc = Doc.fromText(text);
     this.cache.clear();
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.styleOf);
     this.stats.backgroundMs = 0;
     this.scroller.scrollTop = 0;
     const start = this.doc.positionAt(0);
@@ -407,8 +528,9 @@ export class Editor {
   setDoc(doc: Doc): void {
     const { anchor, head } = this.selection();
     this.doc = doc;
+    this.pending = null;
     this.cache.clear();
-    this.layout = new PagedLayout(this.setup, this.measurer, this.cache);
+    this.layout = new PagedLayout(this.setup, this.measurer, this.cache, this.styleOf);
     this.history = new History();
     this.setSelection(anchor, head);
     this.refresh();
@@ -464,7 +586,7 @@ export class Editor {
   private relayout(): void {
     const t0 = performance.now();
     const paras = this.doc.paragraphs();
-    const pre = this.preedit ? { offset: this.headOffset(), text: this.preedit } : null;
+    const pre = this.preedit ? { offset: this.headOffset(), text: this.preedit, fmt: this.pendingFmt() } : null;
     // 화면 아래 한 화면 분량까지만 즉시 배치하고 나머지는 백그라운드로
     const syncUntil = this.scroller.scrollTop + this.scroller.clientHeight * 2;
     this.layout.update(paras, pre, syncUntil, this.doc.takeParagraphChanges());
@@ -564,7 +686,7 @@ export class Editor {
     const selTo = Math.max(anchor, head);
     const visibleParas = new Set<number>();
     ctx.font = this.font;
-    ctx.textBaseline = 'middle';
+    ctx.textBaseline = 'alphabetic';
     // 셰이핑 중이면 커닝을 켠다: 같은 글꼴 파일이면 캔버스가 HarfBuzz와 같은 폭으로 그린다 (ADR-0002)
     if (this.kerningOff) ctx.fontKerning = this.shapedFonts ? 'normal' : 'none';
     // 화면 영역이 아직 배치되지 않았으면 시간 예산 안에서만 배치한다 (스크롤바로 멀리 이동한 경우 등).
@@ -592,6 +714,10 @@ export class Editor {
         ctx.fillStyle = COLORS.dragSource;
         ctx.fillRect(px + ln.x - 6, y, setup.width - setup.margin * 2 + 12, ln.height);
       }
+
+      // 형광펜 (선택 영역 아래)
+      const baseY = ln.baseline - top;
+      if (para.layout.fmt) this.drawHighlights(para.layout, ln.start, ln.end, x0, baseY);
 
       // 선택 영역
       if (selFrom !== selTo) {
@@ -630,10 +756,12 @@ export class Editor {
 
       // 글자
       ctx.fillStyle = COLORS.text;
-      const midY = y + ln.height / 2;
-      if (this.shapedFonts) {
-        this.drawShapedLine(para.layout, ln.start, ln.end, x0, midY);
+      const midY = baseY;
+      if (this.shapedFonts || para.layout.fmt) {
+        this.drawRuns(para.layout, ln.start, ln.end, x0, baseY);
+        if (para.layout.fmt) this.drawDecorations(para.layout, ln.start, ln.end, x0, baseY);
         ctx.font = this.font;
+        ctx.fillStyle = COLORS.text;
       } else if (this.kerningOff) {
         // 커닝을 끄면 문자열 폭 = 글자 폭의 합이므로 탭 사이 구간을 한 번에 그린다 (그리기 호출 수 ↓)
         const text = cpSlice(para.layout, ln.start, ln.end);
@@ -679,6 +807,7 @@ export class Editor {
       }
     }
 
+    ctx.textBaseline = 'middle';
     this.drawParagraphDrag(px, top);
     this.drawRemoteCarets(px, top, w, visibleParas);
 
@@ -693,16 +822,65 @@ export class Editor {
     this.stats.renderMs = performance.now() - t0;
   }
 
+  // ── 서식 (10 §4) ──────────────────────────────────────
+
+  /** 서식 번호 → 그리기 정보 (문서의 서식 묶음에서, 문서마다 캐시) */
+  private drawStyle(id: number): DrawStyle {
+    if (this.drawStylesDoc !== this.doc) {
+      this.drawStyles = [];
+      this.drawStylesDoc = this.doc;
+    }
+    let d = this.drawStyles[id];
+    if (d) return d;
+    if (id === 0) d = PLAIN_DRAW;
+    else {
+      const m = this.doc.markSet(id);
+      // 크기는 1/1000pt → px (96dpi)
+      const sizePx = typeof m.size === 'number' && m.size > 0 ? (m.size / 1000) * (96 / 72) : this.fontSize;
+      const base = sizePx / this.fontSize;
+      const script = m.script === 'sup' || m.script === 'sub' ? m.script : null;
+      const scale = script ? base * SCRIPT_SCALE : base;
+      const face = m.bold ? 1 : 0;
+      d = {
+        run: face === 0 && scale === 1 && base === 1 ? PLAIN_STYLE : { face, scale, line: base },
+        bold: !!m.bold,
+        italic: !!m.italic,
+        underline: !!m.underline || !!m.link,
+        strike: !!m.strike,
+        color: m.color ?? (m.link ? LINK_COLOR : null),
+        highlight: m.highlight ?? null,
+        shift: script === 'sup' ? SUP_SHIFT * sizePx : script === 'sub' ? SUB_SHIFT * sizePx : 0,
+      };
+    }
+    this.drawStyles[id] = d;
+    return d;
+  }
+
+  /** 그리기용 CSS font: 글꼴 번호 f(셰이핑 중)와 서식 */
+  private cssFont(f: number, d: DrawStyle): string {
+    const size = this.fontSize * d.run.scale;
+    const families = this.shapedFonts;
+    if (families && f < families.length) {
+      // 굵은 얼굴을 불러왔으면 그것, 아니면 보통 굵기를 합성 굵게
+      const boldFamily = d.bold ? this.boldFonts[f] : null;
+      if (boldFamily) return `${size}px ${boldFamily}`;
+      return `${d.bold ? 'bold ' : ''}${size}px ${families[f]!}`;
+    }
+    return `${d.bold ? 'bold ' : ''}${size}px ${this.family}`;
+  }
+
   /**
-   * 셰이핑한 줄 그리기: 어절(공백·탭 사이)과 글꼴이 바뀌는 곳마다 나눠 셰이핑 위치에 fillText. 레이아웃이 어절마다
-   * 셰이핑했으므로 같은 단위로 그려야 어절 경계 커닝 차이가 생기지 않는다.
+   * 줄 글자 그리기: 어절(공백·탭 사이)과 글꼴·서식이 바뀌는 곳마다 나눠 레이아웃 위치에 fillText. 레이아웃이 같은 단위로
+   * 셰이핑했으므로 어절 경계 커닝 차이가 생기지 않는다. 기울임은 기준선 기준으로 기울여 그린다 (진행폭은 바로 선 글꼴).
    */
-  private drawShapedLine(pl: ParaLayout, start: number, end: number, x0: number, y: number): void {
+  private drawRuns(pl: ParaLayout, start: number, end: number, x0: number, baseY: number): void {
     const { ctx } = this;
     const fonts = pl.fonts;
-    const families = this.shapedFonts!;
+    const fmt = pl.fmt;
     const fontAt = (k: number) => (fonts ? fonts[k]! : 0);
+    const idAt = (k: number) => (fmt ? fmt[k]! : 0);
     const blank = (c: string) => c === ' ' || c === '\t' || c === '　';
+    let lastFont = '';
     let k = start;
     while (k < end) {
       if (blank(cpSlice(pl, k, k + 1))) {
@@ -710,12 +888,166 @@ export class Editor {
         continue;
       }
       const f = fontAt(k);
+      const id = idAt(k);
       let j = k + 1;
-      while (j < end && fontAt(j) === f && !blank(cpSlice(pl, j, j + 1))) j++;
-      ctx.font = f < families.length ? families[f]! : this.font;
-      ctx.fillText(cpSlice(pl, k, j), x0 + pl.xs[k]!, y);
+      while (j < end && fontAt(j) === f && idAt(j) === id && !blank(cpSlice(pl, j, j + 1))) j++;
+      const d = this.drawStyle(id);
+      const font = this.cssFont(f, d);
+      if (font !== lastFont) {
+        ctx.font = font;
+        lastFont = font;
+      }
+      ctx.fillStyle = d.color ?? COLORS.text;
+      const x = x0 + pl.xs[k]!;
+      const y = baseY + d.shift;
+      const t = cpSlice(pl, k, j);
+      if (d.italic) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.transform(1, 0, -ITALIC_SKEW, 1, 0, 0);
+        ctx.fillText(t, 0, 0);
+        ctx.restore();
+      } else ctx.fillText(t, x, y);
       k = j;
     }
+  }
+
+  /** 서식 번호가 같은 구간 [k, j)마다 fn (줄 [start, end) 안, 끝 공백 제외) */
+  private eachFormatRun(pl: ParaLayout, start: number, end: number, fn: (k: number, j: number, d: DrawStyle) => void): void {
+    const fmt = pl.fmt!;
+    while (end > start && /^[ \t　]$/.test(cpSlice(pl, end - 1, end))) end--;
+    let k = start;
+    while (k < end) {
+      let j = k + 1;
+      while (j < end && fmt[j] === fmt[k]) j++;
+      if (fmt[k] !== 0) fn(k, j, this.drawStyle(fmt[k]!));
+      k = j;
+    }
+  }
+
+  private drawHighlights(pl: ParaLayout, start: number, end: number, x0: number, baseY: number): void {
+    const { ctx } = this;
+    const { ascent, descent } = this.metrics;
+    this.eachFormatRun(pl, start, end, (k, j, d) => {
+      if (!d.highlight) return;
+      const em = this.fontSize * d.run.line;
+      ctx.fillStyle = d.highlight;
+      ctx.fillRect(x0 + pl.xs[k]!, baseY - ascent * em, pl.xs[j]! - pl.xs[k]!, (ascent + descent) * em);
+    });
+  }
+
+  /** 밑줄·취소선: 위치·두께는 기본 글꼴 치수 (post·OS/2), 글자 크기 비례 */
+  private drawDecorations(pl: ParaLayout, start: number, end: number, x0: number, baseY: number): void {
+    const { ctx } = this;
+    const m = this.metrics;
+    this.eachFormatRun(pl, start, end, (k, j, d) => {
+      if (!d.underline && !d.strike) return;
+      const em = this.fontSize * d.run.scale;
+      const x = x0 + pl.xs[k]!;
+      const w = pl.xs[j]! - pl.xs[k]!;
+      const y = baseY + d.shift;
+      ctx.fillStyle = d.color ?? COLORS.text;
+      if (d.underline) {
+        const th = Math.max(1, m.underlineThickness * em);
+        ctx.fillRect(x, y - m.underlinePosition * em - th / 2, w, th);
+      }
+      if (d.strike) {
+        const th = Math.max(1, m.strikeThickness * em);
+        ctx.fillRect(x, y - m.strikePosition * em - th / 2, w, th);
+      }
+    });
+  }
+
+  /** 보류 서식(캐럿에서 다음 입력이 받을 서식)의 번호. 지금 캐럿에 해당하지 않으면 undefined */
+  private pendingFmt(): number | undefined {
+    const pend = this.pending;
+    if (!pend) return undefined;
+    const { anchor, head } = this.selection();
+    if (anchor !== head || head !== pend.at) return undefined;
+    return this.doc.internMarks(pend.marks);
+  }
+
+  /** 선택 영역(없으면 캐럿에서 다음 입력)의 글자 서식. 툴바 상태용 (08 §2) */
+  selectionMarks(): SelectionMarks {
+    const [from, to] = this.range();
+    if (from === to) {
+      const marks = this.pending && this.pending.at === from ? this.pending.marks : this.doc.inheritedMarks(from);
+      return { marks, mixed: new Set() };
+    }
+    const text = Array.from(this.doc.slice(from, to));
+    const sets: MarkSet[] = [];
+    for (const r of this.doc.markRuns(from, to)) {
+      // ¶는 세지 않는다 (글자가 하나도 없으면 ¶라도)
+      let hasChar = false;
+      for (let o = r.from; o < r.to && !hasChar; o++) if (text[o - from] !== '\n') hasChar = true;
+      if (hasChar) sets.push(r.marks);
+    }
+    if (sets.length === 0) sets.push(this.doc.marksAt(from));
+    const marks: MarkSet = {};
+    const mixed = new Set<MarkKey>();
+    for (const k of MARK_KEYS) {
+      const v = sets[0]![k];
+      if (sets.every((m) => m[k] === v)) {
+        if (v !== undefined) (marks as Record<string, unknown>)[k] = v;
+      } else mixed.add(k);
+    }
+    return { marks, mixed };
+  }
+
+  /**
+   * 글자 서식 키 하나를 value로 (undefined = 해제). 선택이 없으면 캐럿에서 다음 입력의 서식(보류 서식)을 바꾼다.
+   * 실행 취소 한 단계 (연속 서식 변경은 묶지 않음, 10 §5).
+   */
+  setMark(key: MarkKey, value: unknown): void {
+    this.input.commitComposition();
+    const [from, to] = this.range();
+    if (from === to) {
+      const base = this.selectionMarks().marks;
+      const marks = { ...base } as Record<string, unknown>;
+      if (value === undefined) delete marks[key];
+      else marks[key] = value;
+      this.pending = { at: from, marks: marks as MarkSet };
+      this.render();
+      this.opts.onChange?.(this);
+      return;
+    }
+    const before: Selection = { ...this.sel };
+    const ops = this.doc.format(from, to, key, value);
+    if (ops.length === 0) return;
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
+  /** 켜고 끄는 서식 (굵게·기울임·밑줄·취소선): 선택이 모두 켜져 있으면 끄고, 아니면 켠다 */
+  toggleMark(key: 'bold' | 'italic' | 'underline' | 'strike'): void {
+    const { marks, mixed } = this.selectionMarks();
+    this.setMark(key, marks[key] && !mixed.has(key) ? undefined : true);
+  }
+
+  /** 위·아래 첨자 켜고 끄기 */
+  toggleScript(script: 'sup' | 'sub'): void {
+    const { marks, mixed } = this.selectionMarks();
+    this.setMark('script', marks.script === script && !mixed.has('script') ? undefined : script);
+  }
+
+  /** 서식 지우기 (Ctrl+\): 선택의 글자 서식을 모두 해제 */
+  clearMarks(): void {
+    this.input.commitComposition();
+    const [from, to] = this.range();
+    if (from === to) {
+      this.pending = { at: from, marks: {} };
+      this.render();
+      this.opts.onChange?.(this);
+      return;
+    }
+    const before: Selection = { ...this.sel };
+    const ops: Op[] = [];
+    for (const k of MARK_KEYS) ops.push(...this.doc.format(from, to, k, undefined));
+    if (ops.length === 0) return;
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
   }
 
   /** 문단 손잡이(⋮⋮)와 끌어서 놓을 자리 표시 */
@@ -833,14 +1165,38 @@ export class Editor {
   }
 
   private updateMirror(paras: Set<number>): void {
-    const texts = [...paras].sort((a, b) => a - b).map((p) => this.doc.paragraphs()[p]?.text ?? '');
-    const key = texts.join('\n');
+    const infos = [...paras].sort((a, b) => a - b).map((p) => this.doc.paragraphs()[p]).filter((p) => p !== undefined);
+    const key = infos.map((p) => (p.fmt ? `${p.text}\u0001${p.fmt.join(',')}` : p.text)).join('\n');
     if (this.mirror.dataset.key === key) return;
     this.mirror.dataset.key = key;
     this.mirror.replaceChildren(
-      ...texts.map((t) => {
+      ...infos.map((info) => {
         const p = document.createElement('p');
-        p.textContent = t;
+        if (!info.fmt) {
+          p.textContent = info.text;
+          return p;
+        }
+        // 굵게·기울임은 strong·em으로 (04 §3, 10 §4)
+        const cps = Array.from(info.text);
+        let k = 0;
+        while (k < cps.length) {
+          let j = k + 1;
+          while (j < cps.length && info.fmt[j] === info.fmt[k]) j++;
+          const m = this.doc.markSet(info.fmt[k]!);
+          let node: Node = document.createTextNode(cps.slice(k, j).join(''));
+          if (m.italic) {
+            const em = document.createElement('em');
+            em.append(node);
+            node = em;
+          }
+          if (m.bold) {
+            const strong = document.createElement('strong');
+            strong.append(node);
+            node = strong;
+          }
+          p.append(node);
+          k = j;
+        }
         return p;
       }),
     );
@@ -873,6 +1229,7 @@ export class Editor {
     head = Math.max(0, Math.min(max, head));
     this.sel = { anchor: this.doc.positionAt(anchor), head: this.doc.positionAt(head) };
     if (!keepGoal) this.goalX = null;
+    if (this.pending && (anchor !== head || head !== this.pending.at)) this.pending = null;
   }
 
   // ── 편집 ──────────────────────────────────────────────
@@ -886,7 +1243,9 @@ export class Editor {
       ops.push(...this.doc.deleteRange(from, to));
       mergeKey = undefined;
     }
-    if (text) ops.push({ type: 'insert', ids: this.doc.insertText(from, text) });
+    const marks = this.pending && this.pending.at === from ? this.pending.marks : undefined;
+    if (text) ops.push({ type: 'insert', ids: this.doc.insertText(from, text, marks) });
+    if (text) this.pending = null;
     const caret = from + Array.from(text.replace(/\r\n?/g, '\n')).length;
     this.setSelection(caret);
     this.commit(ops, before, mergeKey);
@@ -1040,6 +1399,28 @@ export class Editor {
       this.deleteParagraphs();
       e.preventDefault();
       return;
+    }
+
+    // 글자 서식 (10 §5)
+    if (mod && !e.altKey) {
+      const k = e.key.toLowerCase();
+      const fmtKey =
+        !shift && k === 'b' ? 'bold' : !shift && k === 'i' ? 'italic' : !shift && k === 'u' ? 'underline' : shift && k === 'x' ? 'strike' : null;
+      if (fmtKey) {
+        this.toggleMark(fmtKey);
+        e.preventDefault();
+        return;
+      }
+      if (!shift && (e.key === '.' || e.key === ',')) {
+        this.toggleScript(e.key === '.' ? 'sup' : 'sub');
+        e.preventDefault();
+        return;
+      }
+      if (!shift && e.key === '\\') {
+        this.clearMarks();
+        e.preventDefault();
+        return;
+      }
     }
 
     if (mod && !e.altKey) {

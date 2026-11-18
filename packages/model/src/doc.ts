@@ -154,6 +154,8 @@ export interface ParagraphInfo {
   attrs: ParaAttrs;
   /** 글자마다 서식 묶음 번호 (text의 코드포인트 순, Doc.markSet으로 푼다). 모두 0이면 null */
   fmt: Uint16Array | null;
+  /** 문단 ¶의 서식 묶음 번호 (빈 줄의 높이, 10 §2.1). 가상 ¶는 0 */
+  mark: number;
 }
 
 interface Seg {
@@ -299,6 +301,7 @@ export class Doc {
       text: t,
       attrs: NO_ATTRS,
       fmt: null,
+      mark: 0,
     }));
     doc._version++;
     return doc;
@@ -1996,7 +1999,7 @@ export class Doc {
     this.rawForEach(this.rawStartOf(seg), (code, ctr, chunk, i) => {
       lastCode = code;
       if (code === PARA_CODE) {
-        paras.push(this.paraInfo(ctr, pStart, off, acc));
+        paras.push(this.paraInfo(ctr, pStart, off, acc, chunk.fmt[i]!));
         pStart = off + 1;
       } else {
         acc.push(code, chunk.fmt[i]!);
@@ -2007,7 +2010,7 @@ export class Doc {
     if (lastCode === PARA_CODE) return paras;
     if (!this.isOpen(seg)) return null;
     // 가상 ¶로 끝나는 마지막 문단
-    paras.push(this.paraInfo(seg.brk, pStart, off, acc));
+    paras.push(this.paraInfo(seg.brk, pStart, off, acc, 0));
     return paras;
   }
 
@@ -2049,7 +2052,7 @@ export class Doc {
     let lastParaOffset = start;
     this.forEachFrom(start, (code, ctr, chunk, i) => {
       if (code === PARA_CODE) {
-        paras.push(this.paraInfo(ctr, pStart, off, acc));
+        paras.push(this.paraInfo(ctr, pStart, off, acc, chunk.fmt[i]!));
         lastParaOffset = off;
         if (off >= stopAfter) return true;
         pStart = off + 1;
@@ -2063,9 +2066,9 @@ export class Doc {
   }
 
   /** 문단 정보 하나 (acc를 비운다). ctr = ¶ 원소(가상 ¶면 구획 표식) */
-  private paraInfo(ctr: number, start: number, end: number, acc: ParaAccumulator): ParagraphInfo {
+  private paraInfo(ctr: number, start: number, end: number, acc: ParaAccumulator, mark: number): ParagraphInfo {
     const { text, fmt } = acc.take();
-    return { id: this.idOf(ctr), start, end, text, attrs: this.paraAttrsMap.get(ctr) ?? NO_ATTRS, fmt };
+    return { id: this.idOf(ctr), start, end, text, attrs: this.paraAttrsMap.get(ctr) ?? NO_ATTRS, fmt, mark };
   }
 }
 

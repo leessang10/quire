@@ -18,7 +18,7 @@
  * [validCount, staleFrom) 문단은 직전 레이아웃에서 정확했던 결과다 (수렴 판단에 쓸 수 있음).
  * [staleFrom, 끝) 문단은 줄 나눔만 믿을 수 있고 위치는 믿을 수 없다.
  */
-import { layoutParagraph, type Measurer, type ParaLayout, type Preedit } from './paragraph';
+import { layoutParagraph, type Measurer, type ParaFormat, type ParaLayout, type Preedit, type RunStyle } from './paragraph';
 
 export interface PageSetup {
   width: number;
@@ -28,6 +28,11 @@ export interface PageSetup {
   gap: number;
   lineHeight: number;
   paraSpacing: number;
+  /** 기본 글자 크기 (px, 기준선 계산). 없으면 lineHeight ÷ 1.7 */
+  fontSize?: number;
+  /** 글꼴 ascent·descent (em 비율, 기준선 계산). 없으면 0.8·0.2 */
+  ascent?: number;
+  descent?: number;
 }
 
 /** 모델의 문단 객체. 바뀌지 않은 문단은 같은 객체여야 하며, start는 제자리에서 갱신될 수 있다 */
@@ -35,6 +40,10 @@ export interface ParaInput {
   readonly id: string;
   readonly start: number;
   readonly text: string;
+  /** 글자마다 서식 번호 (없거나 null이면 모두 0, 10 §2.1) */
+  readonly fmt?: Uint16Array | null;
+  /** ¶의 서식 번호 */
+  readonly mark?: number;
 }
 
 export interface PlacedLine {
@@ -49,6 +58,8 @@ export interface PlacedLine {
   /** 문서 전체 기준 y (줄 위쪽) */
   y: number;
   height: number;
+  /** 문서 전체 기준 기준선 y */
+  baseline: number;
 }
 
 interface Geometry {
@@ -85,9 +96,10 @@ export class PlacedPara {
     this.first = first;
     this._lines = null;
     const { setup, contentHeight } = this.geo;
-    const lh = setup.lineHeight;
     if (!first && y > 0) y += setup.paraSpacing;
-    for (let k = this.layout.lines.length; k > 0; k--) {
+    const src = this.layout.lines;
+    for (let k = 0; k < src.length; k++) {
+      const lh = lineHeight(setup, src[k]!.scale);
       if (y + lh > contentHeight && y > 0) {
         page++;
         y = 0;
@@ -107,26 +119,28 @@ export class PlacedPara {
   get lines(): PlacedLine[] {
     if (this._lines) return this._lines;
     const { setup, contentHeight } = this.geo;
-    const lh = setup.lineHeight;
     let page = this.pageBefore;
     let y = this.yBefore;
     if (!this.first && y > 0) y += setup.paraSpacing;
     const src = this.layout.lines;
     const lines: PlacedLine[] = new Array(src.length);
     for (let k = 0; k < src.length; k++) {
+      const ln = src[k]!;
+      const lh = lineHeight(setup, ln.scale);
       if (y + lh > contentHeight && y > 0) {
         page++;
         y = 0;
       }
-      const ln = src[k]!;
+      const top = pageTop(setup, page) + setup.margin + y;
       lines[k] = {
         index: k,
         start: ln.start,
         end: ln.end,
         page,
         x: setup.margin,
-        y: pageTop(setup, page) + setup.margin + y,
+        y: top,
         height: lh,
+        baseline: top + baselineOffset(setup, lh, ln.scale),
       };
       y += lh;
     }
@@ -157,6 +171,22 @@ export interface LayoutCounts {
   reused: number;
 }
 
+/** 줄 높이 배율 → 줄 높이 (px). 배율 1이면 setup.lineHeight 그대로 */
+export function lineHeight(setup: PageSetup, scale: number): number {
+  return scale === 1 ? setup.lineHeight : Math.round(setup.lineHeight * scale);
+}
+
+/**
+ * 줄 위쪽에서 기준선까지 (10 §4): 줄 가운데에 그 줄 가장 큰 글자의 글꼴 상자(ascent + descent)를 세운다.
+ * 크기가 섞인 줄도 기준선 하나에 모든 글자를 놓는다.
+ */
+export function baselineOffset(setup: PageSetup, height: number, scale: number): number {
+  const em = (setup.fontSize ?? setup.lineHeight / 1.7) * scale;
+  const asc = setup.ascent ?? 0.8;
+  const desc = setup.descent ?? 0.2;
+  return height / 2 + ((asc - desc) / 2) * em;
+}
+
 export function pageTop(setup: PageSetup, page: number): number {
   return setup.gap + page * (setup.height + setup.gap);
 }
@@ -168,20 +198,21 @@ export class LayoutCache {
 
   constructor(private readonly maxEntries = 4000) {}
 
-  get(text: string, width: number, measurer: Measurer, preedit: Preedit | null): ParaLayout {
+  get(text: string, width: number, measurer: Measurer, preedit: Preedit | null, format: ParaFormat | null = null): ParaLayout {
     if (preedit) {
       // 조합 중 레이아웃은 일회성이므로 캐시하지 않는다
       this.misses++;
-      return layoutParagraph(text, width, measurer, preedit);
+      return layoutParagraph(text, width, measurer, preedit, format);
     }
-    const key = `${width}|${text}`;
+    // 서식이 있으면 키에 서식 번호 런을 넣는다 (번호의 뜻은 문서마다 다르므로 문서를 바꾸면 clear)
+    const key = format ? `${width}|${formatKey(format)}|${text}` : `${width}|${text}`;
     let hit = this.map.get(key);
     if (hit) {
       this.hits++;
       return hit;
     }
     this.misses++;
-    hit = layoutParagraph(text, width, measurer, null);
+    hit = layoutParagraph(text, width, measurer, null, format);
     if (this.map.size >= this.maxEntries) {
       const oldest = this.map.keys().next().value;
       if (oldest !== undefined) this.map.delete(oldest);
@@ -193,6 +224,22 @@ export class LayoutCache {
   clear(): void {
     this.map.clear();
   }
+}
+
+/** 서식 번호 열을 런으로 줄인 문자열 ("번호x길이," … "¶번호") */
+function formatKey(f: ParaFormat): string {
+  let out = '';
+  const fmt = f.fmt;
+  if (fmt) {
+    let k = 0;
+    while (k < fmt.length) {
+      let j = k + 1;
+      while (j < fmt.length && fmt[j] === fmt[k]) j++;
+      out += `${fmt[k]}x${j - k},`;
+      k = j;
+    }
+  }
+  return `${out}¶${f.mark}`;
 }
 
 interface Pending {
@@ -210,7 +257,7 @@ export class PagedLayout {
 
   private pending: Pending | null = null;
   private staleFrom = Infinity;
-  private preedit: { offset: number; text: string } | null = null;
+  private preedit: { offset: number; text: string; fmt?: number } | null = null;
   private preeditPara = -1;
   private readonly contentWidth: number;
   private readonly geo: Geometry;
@@ -219,6 +266,8 @@ export class PagedLayout {
     readonly setup: PageSetup,
     private readonly measurer: Measurer,
     private readonly cache: LayoutCache = new LayoutCache(),
+    /** 서식 번호 → 레이아웃 영향 (없으면 서식을 무시) */
+    private readonly style: ((id: number) => RunStyle) | null = null,
   ) {
     this.contentWidth = setup.width - setup.margin * 2;
     this.geo = { setup, contentHeight: setup.height - setup.margin * 2 };
@@ -253,7 +302,7 @@ export class PagedLayout {
    */
   update(
     model: readonly ParaInput[],
-    preedit: { offset: number; text: string } | null = null,
+    preedit: { offset: number; text: string; fmt?: number } | null = null,
     syncUntilY = Infinity,
     /** 모델이 알려 주는 바뀐 구간 (Doc.takeParagraphChanges). 없으면 문단 목록을 앞뒤에서 비교해 찾는다 */
     changes: { from: number; suffix: number } | null = null,
@@ -556,9 +605,11 @@ export class PagedLayout {
       } else {
         let pe: Preedit | null = null;
         if (m === this.preeditPara && this.preedit) {
-          pe = { at: this.preedit.offset - info.start, text: this.preedit.text };
+          pe = { at: this.preedit.offset - info.start, text: this.preedit.text, fmt: this.preedit.fmt };
         }
-        layout = this.cache.get(info.text, this.contentWidth, this.measurer, pe);
+        const format: ParaFormat | null =
+          this.style && (info.fmt || info.mark || pe?.fmt) ? { fmt: info.fmt ?? null, mark: info.mark ?? 0, style: this.style } : null;
+        layout = this.cache.get(info.text, this.contentWidth, this.measurer, pe, format);
         this.counts.reflowed++;
       }
 
