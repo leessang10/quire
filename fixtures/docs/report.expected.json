@@ -1,5 +1,9 @@
 {
   "pages": 2,
+  "paper": [
+    "794x1123",
+    "794x1123"
+  ],
   "pageStarts": [
     {
       "page": 0,

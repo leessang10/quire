@@ -7,6 +7,9 @@
  */
 import {
   DEFAULT_STYLES,
+  LAST_SECTION,
+  SECTION_KEYS,
+  fullSection,
   Doc,
   Document,
   MARK_KEYS,
@@ -21,6 +24,7 @@ import {
   type MarkSet,
   type ObjAttrs,
   type ParaAttrs,
+  type SectionProps,
   type Style,
   type TableRecord,
 } from '@quire/model';
@@ -116,7 +120,48 @@ export function textFromQuire(q: QuireDoc): string {
 }
 
 /** 지금 모델이 아는 문단 속성 키 (10 §2.2) */
-const PARA_KEYS = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore'];
+const PARA_KEYS = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore', 'section'];
+
+/**
+ * 구역 (12 §3.2): 문서 순서의 구역 배열, 마지막이 기본 구역. 구역 나눔 문단의 p.section이 앞 구역의 ID를 가리킨다.
+ * 구역 나눔도 마지막 구역 설정도 없으면 기본 구역 하나 (지금까지와 같은 바이트열)
+ */
+function sectionsOf(doc: Doc): Array<Record<string, unknown>> {
+  const last = doc.sectionDef(LAST_SECTION);
+  const ids = doc.sectionBreaks().map((i) => doc.paraAttrs(i).section!);
+  if (!ids.length && !last) return [structuredClone(DEFAULT_SECTION)];
+  const entry = (id: string, def: SectionProps | undefined) => ({ ...structuredClone(fullSection(def)), id });
+  return [...ids.map((id) => entry(id, doc.sectionDef(id))), entry(LAST_SECTION, last)];
+}
+
+/** 정본 구역 항목 → 구역 설정 (모르는 키는 버린다. 옛 columns: 1은 단 하나) */
+function sectionProps(e: Record<string, unknown>): SectionProps {
+  const out: Record<string, unknown> = {};
+  for (const k of SECTION_KEYS) if (e[k] !== undefined) out[k] = e[k];
+  if (typeof out.columns === 'number') {
+    if (out.columns > 1) out.columns = { count: out.columns, gap: 36000 };
+    else delete out.columns;
+  }
+  return fullSection(out as Partial<SectionProps>);
+}
+
+/** 정본의 구역 배열을 문서에 넣는다. 마지막 구역은 LAST_SECTION (기본 구역과 같으면 넣지 않는다) */
+function putSections(doc: Doc, q: QuireDoc): void {
+  const list = Array.isArray(q.sections) ? q.sections.filter((e) => e && typeof e === 'object') : [];
+  list.forEach((e, k) => {
+    const def = sectionProps(e);
+    if (k === list.length - 1) {
+      if (canonicalJson(def) !== canonicalJson(fullSection(undefined))) doc.setSection(LAST_SECTION, def);
+    } else if (typeof e.id === 'string') doc.setSection(e.id, def);
+  });
+}
+
+/** 정본에 기본이 아닌 구역이 있는가 (서식 없는 빠른 길을 쓸 수 없다) */
+function hasSections(q: QuireDoc): boolean {
+  const list = Array.isArray(q.sections) ? q.sections : [];
+  if (list.length > 1) return true;
+  return list.length === 1 && canonicalJson(sectionProps(list[0]!)) !== canonicalJson(fullSection(undefined));
+}
 
 /** 문서의 문단들 → 정본 문단 배열 */
 function paragraphsOf(doc: Doc): QuireParagraph[] {
@@ -262,6 +307,7 @@ export function quireFromDoc(doc: Doc): QuireDoc {
   // 목록 정의 (10 §2.4): 문서 설정의 lists (id → 정의). 번호는 저장하지 않는다 (파생 값)
   const lists = doc.lists();
   if (lists.length) q.settings.lists = Object.fromEntries(lists.map((l) => [l.id, structuredClone(l)]));
+  q.sections = sectionsOf(doc);
   return q;
 }
 
@@ -275,7 +321,7 @@ export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: str
   const text = textFromQuire({ ...q, stories: { ...q.stories, body: blocks } });
   // 서식 없는 문서: 빠른 길
   const plainBody = blocks.every((b) => Object.keys(b.p ?? {}).length === 0 && (b.c ?? []).every((r) => !r.img && (!r.m || Object.keys(r.m).length === 0)));
-  if (plainBody && Object.keys(q.styles ?? {}).length === 0 && !q.settings?.lists) return { doc: Doc.fromText(text.slice(0, -1), peer), notes: [] };
+  if (plainBody && Object.keys(q.styles ?? {}).length === 0 && !q.settings?.lists && !hasSections(q)) return { doc: Doc.fromText(text.slice(0, -1), peer), notes: [] };
   const notes = new Set<string>();
   const paras = blocks.map((block) => {
     const attrs: Record<string, unknown> = {};
@@ -310,6 +356,7 @@ export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: str
   const lists = q.settings?.lists;
   if (lists && typeof lists === 'object')
     for (const [id, def] of Object.entries(lists as Record<string, ListDef>)) if (def && typeof def === 'object') doc.setList(id, { ...def, id });
+  putSections(doc, q);
   doc.takeParagraphChanges();
   return { doc, notes: [...notes].map((n) => `${n}: 이 엔진이 모르는 값이라 버림`) };
 }

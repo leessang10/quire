@@ -162,6 +162,17 @@ export interface FrameSource {
   pageAt(y: number): number;
   /** 쪽 n개의 전체 높이 (마지막 쪽 아래 틈까지) */
   height(pages: number): number;
+  /**
+   * 구역 (12 §3.3): 문단 m을 놓기 전에 부른다. m이 구역의 첫 문단이면 런을 정하고 첫 배치 상태를 돌려준다 ((frame, y)는 앞 문단이
+   * 끝난 상태). 구역이 없는 열이면 없음
+   */
+  enter?(m: number, frame: number, y: number): { frame: number; y: number } | null;
+  /** 문단 m을 나눌 줄 폭 (구역마다 다르다). 없으면 프레임 0의 폭 */
+  widthOf?(m: number): number;
+  /** 수렴해도 되는가: 이번 배치에서 바뀐 구역 런 뒤로 아직 같은 런을 다시 만나지 않았으면 false */
+  stable?(): boolean;
+  /** 모두 배치했다 */
+  done?(): void;
 }
 
 /**
@@ -369,6 +380,8 @@ export class PlacedPara {
     readonly length: number,
     readonly layout: ParaLayout,
     private readonly geo: Geometry,
+    /** 줄을 나눈 폭 (구역이 바뀌면 다시 나눈다) */
+    readonly width = 0,
   ) {}
 
   /** 시작 상태를 정하고 끝 상태를 계산한다 (줄 객체는 만들지 않음) */
@@ -524,6 +537,11 @@ export class PlacedPara {
     } while (start < n && ++guard < 100_000);
     this.wrapped = lines;
     return [page, y];
+  }
+
+  /** 이 문단이 놓인 프레임의 왼쪽 (쪽 그리기 기준 x, 구역마다 여백이 다르다) */
+  get frameLeft(): number {
+    return this.geo.frames.frame(this.pageBefore).x;
   }
 
   /** 문서 기준 마지막 줄 아래쪽 y */
@@ -1172,21 +1190,33 @@ export class PagedLayout {
       if (m >= len) {
         this.pending = null;
         this.staleFrom = Infinity;
+        this.frames.done?.();
         break;
       }
       if (stop(m, this.geo.frames.frame(page).top + y)) break;
 
+      const fs = this.frames;
+      if (fs.enter) {
+        // 구역 첫 문단: 그 구역의 첫 프레임으로 (12 §3.3)
+        const e = fs.enter(m, page, y);
+        if (e) {
+          page = e.frame;
+          y = e.y;
+        }
+      }
+      const width = fs.widthOf ? fs.widthOf(m) : this.contentWidth;
       const info = model[m]!;
       const pp = paras[m] ?? null;
       let layout: ParaLayout;
-      if (pp && pp.info === info && pp.layout.preedit === null && m !== this.preeditPara) {
-        if (m < this.staleFrom && pp.pageBefore === page && pp.yBefore === y && this.sameExclusions(pp)) {
+      if (pp && pp.info === info && pp.layout.preedit === null && m !== this.preeditPara && pp.width === width) {
+        if (m < this.staleFrom && pp.pageBefore === page && pp.yBefore === y && this.sameExclusions(pp) && (fs.stable?.() ?? true)) {
           // 수렴: [m, staleFrom)은 이전 결과 그대로
           const until = Math.min(this.staleFrom, len);
           this.counts.reused += until - m;
           if (until >= len) {
             this.pending = null;
             this.staleFrom = Infinity;
+            fs.done?.();
             break;
           }
           const last = paras[until - 1]!;
@@ -1206,7 +1236,7 @@ export class PagedLayout {
           pe = { at: this.preedit.offset - info.start, text: this.preedit.text, fmt: this.preedit.fmt };
         }
         const format: ParaFormat | null = this.format ? this.format(info, pe?.fmt !== undefined) : null;
-        layout = this.cache.get(info.text, this.contentWidth, this.measurer, pe, format);
+        layout = this.cache.get(info.text, width, this.measurer, pe, format);
         this.counts.reflowed++;
       }
 
@@ -1215,7 +1245,7 @@ export class PagedLayout {
           ? pp.length
           : layout.n - (layout.preedit ? layout.preedit[1] - layout.preedit[0] : 0);
       if (pp) this.geo.floats.remove(pp);
-      const placed = new PlacedPara(info, length, layout, this.geo);
+      const placed = new PlacedPara(info, length, layout, this.geo, width);
       placed.placeAt(page, y, m === 0);
       paras[m] = placed;
       this.pending = { next: m + 1, page: placed.pageAfter, y: placed.yAfter };

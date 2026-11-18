@@ -6,6 +6,7 @@ import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector
 import { type RemoteOp, type LocalChange, deltaToOps, transform } from './ot';
 import {
   LISTS,
+  SECTIONS,
   LoroWriter,
   SEG_MARK,
   STYLES,
@@ -108,7 +109,7 @@ export class SyncCore {
     this.loro = loro;
     this.opts = opts;
     this.text = loro.getText(TEXT);
-    this.defIds = new Set([loro.getMap(STYLES).id, loro.getMap(LISTS).id]);
+    this.defIds = new Set([loro.getMap(STYLES).id, loro.getMap(LISTS).id, loro.getMap(SECTIONS).id]);
     this.writer = new LoroWriter(loro, () => displayOrderFromLoro(loro));
     this.store = new PresenceStore(loro.peerIdStr, opts.presenceTimeoutMs ?? 30000);
     this.exported = loro.oplogVersion();

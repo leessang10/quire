@@ -14,6 +14,7 @@ export function formatState(doc: Doc) {
     styles: [...doc.styles()].sort((a, b) => (a.name < b.name ? -1 : 1)),
     lists: [...doc.lists()].sort((a, b) => (a.id < b.id ? -1 : 1)),
     labels: doc.paragraphs().map((p) => doc.listLabel(p)?.text ?? null),
+    sections: [...doc.sectionDefs()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),
   };
 }
 

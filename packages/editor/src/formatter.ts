@@ -8,6 +8,7 @@
  */
 import {
   BODY_STYLE,
+  fullSection,
   mergeParaAttrs,
   normalizeTable,
   type Doc,
@@ -19,6 +20,7 @@ import {
   type ParagraphInfo,
   type Position,
   type ResolvedStyle,
+  type SectionProps,
   type TableGrid,
 } from '@quire/model';
 import {
@@ -26,6 +28,7 @@ import {
   LayoutCache,
   PLAIN_STYLE,
   TableLayouter,
+  geomKey,
   type FloatSpec,
   type FormatSource,
   type Measurer,
@@ -33,6 +36,8 @@ import {
   type ParaBox,
   type PreeditAt,
   type RunStyle,
+  type SectionGeom,
+  type SectionSource,
   type TableGridInput,
   type TableMeasure,
   type TableSpec,
@@ -85,6 +90,16 @@ export class Formatter {
   private readonly cellFormats = new WeakMap<Doc, FormatSource>();
   /** 본문 문단 → 레이아웃 서식 */
   readonly formatOf: FormatSource = (info, force) => this.formatWith(this.document().body, info, force);
+  /** 구역 설정 → 쪽 모양 (설정 객체가 바뀌면 다시) */
+  private readonly geoms = new Map<string, { def: SectionProps | undefined; geom: SectionGeom }>();
+  /** 본문 문단 → 구역 차례·쪽 모양 (12 §3.3, SectionFrames) */
+  readonly sections: SectionSource = {
+    sectionOf: (m) => {
+      const s = this.body.sectionOf(m);
+      return { index: s.index, geom: this.sectionGeom(s.id) };
+    },
+    count: () => this.body.sectionBreaks().length + 1,
+  };
 
   constructor(
     /** 지금 문서 (편집기가 문서를 바꿀 수 있다) */
@@ -108,6 +123,28 @@ export class Formatter {
 
   private get body(): Doc {
     return this.document().body;
+  }
+
+  /** 구역 ID → 쪽 모양 (px, 정수로 반올림: 기본 구역 = defaultPageSetup) */
+  sectionGeom(id: string): SectionGeom {
+    const def = this.body.sectionDef(id);
+    const hit = this.geoms.get(id);
+    if (hit && hit.def === def) return hit.geom;
+    const f = fullSection(def);
+    const px = (v: number) => Math.round(pt(v));
+    const [t, r, b, l] = f.page.margin;
+    const g = { width: px(f.page.width), height: px(f.page.height), top: px(t), right: px(r), bottom: px(b), left: px(l), start: f.start };
+    const geom = { ...g, key: geomKey(g) };
+    this.geoms.set(id, { def, geom });
+    return geom;
+  }
+
+  /** 가장 넓은 쪽 폭 (px): 화면 가로 스크롤 폭 */
+  maxPageWidth(): number {
+    let w = this.setup.width;
+    const b = this.body;
+    for (const i of b.sectionBreaks()) w = Math.max(w, this.sectionGeom(b.paraAttrs(i).section!).width);
+    return Math.max(w, this.sectionGeom('last').width);
   }
 
   /** 문단 → 레이아웃 서식: 글자 서식, 스타일의 기본 글자 서식, 문단 상자. 본문의 표 문단은 행 (11 §4.3) */

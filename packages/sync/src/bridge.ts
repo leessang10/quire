@@ -17,6 +17,7 @@ import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector
 import { Document, type Doc, type RawChange, type TableChange, type TextDelta } from '@quire/model';
 import {
   LISTS,
+  SECTIONS,
   LoroWriter,
   SEG_MARK,
   STYLES,
@@ -71,6 +72,7 @@ export class SyncBridge {
   private readonly opts: SyncOptions;
   private readonly stylesId: string;
   private readonly listsId: string;
+  private readonly sectionsId: string;
   /** 마지막으로 내보낸 시점의 버전 (그 사이 가져온 원격 연산 포함) */
   private exported: VersionVector;
   private inbox: Uint8Array[] = [];
@@ -124,6 +126,7 @@ export class SyncBridge {
     this.text = loro.getText(TEXT);
     this.stylesId = loro.getMap(STYLES).id;
     this.listsId = loro.getMap(LISTS).id;
+    this.sectionsId = loro.getMap(SECTIONS).id;
     this.writer = new LoroWriter(loro, () => doc.segmentOrder());
     this.exported = loro.oplogVersion();
     this.document.observe((story, c) => this.onLocal(story, c));
@@ -235,7 +238,7 @@ export class SyncBridge {
         tables.add(tm[1]!);
         continue;
       }
-      if (ev.target === this.stylesId || ev.target === this.listsId) {
+      if (ev.target === this.stylesId || ev.target === this.listsId || ev.target === this.sectionsId) {
         defsDirty = true;
         continue;
       }
@@ -270,7 +273,7 @@ export class SyncBridge {
     for (const id of tables) this.document.applyRemoteTable(readTable(this.loro, id));
     if (defsDirty) {
       const d = readDefs(this.loro);
-      this.doc.applyRemoteDefs(d.styles ?? {}, d.lists ?? {});
+      this.doc.applyRemoteDefs(d.styles ?? {}, d.lists ?? {}, d.sections ?? {});
     }
   }
 

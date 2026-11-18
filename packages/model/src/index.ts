@@ -12,3 +12,5 @@ export type { StoryId } from './document';
 export { DEFAULT_COL_WIDTH, cellKey, cellStoryId, emptyTable, newTableId, normalizeTable, tableMap } from './tables';
 export type { CellAttrs, GridCell, RowAttrs, TableAttrs, TableChange, TableGrid, TableMapName, TableRecord, TableSpan } from './tables';
 export type { DocumentListener } from './document';
+export { DEFAULT_SECTION, LAST_SECTION, PAPER_SIZES, SECTION_KEYS, fullSection } from './sections';
+export type { SectionKey, SectionProps, SectionStart } from './sections';

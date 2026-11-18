@@ -53,6 +53,8 @@ export function invertOp(op: Op): Op {
       return { type: 'style', name: op.name, before: op.after, after: op.before };
     case 'list':
       return { type: 'list', id: op.id, before: op.after, after: op.before };
+    case 'section':
+      return { type: 'section', id: op.id, before: op.after, after: op.before };
     case 'obj':
       return { type: 'obj', ctr: op.ctr, key: op.key, before: op.after, after: op.before };
     case 'story':

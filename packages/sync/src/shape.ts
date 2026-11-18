@@ -29,6 +29,8 @@ import {
   type TableChange,
   type TableRecord,
   type TextDelta,
+  type SectionProps,
+  SECTION_KEYS,
 } from '@quire/model';
 
 export const TEXT = 'body';
@@ -37,6 +39,23 @@ export const END = '$end';
 export const SEG_MARK = 'seg';
 export const STYLES = 'styles';
 export const LISTS = 'lists';
+/** 구역 설정 (12 §3.2): 키 '<구역 ID>|<설정 키>' → 값 (null = 없음). 키마다 LWW라 두 사람이 다른 키를 바꾸면 둘 다 남는다 */
+export const SECTIONS = 'sections';
+
+/** 맵 sections의 평평한 항목 → 구역 ID → 설정 (모든 키가 null이면 null: 지운 구역) */
+export function sectionsFromMap(flat: Record<string, unknown>): Record<string, SectionProps | null> | null {
+  const out: Record<string, Record<string, unknown> | null> = {};
+  for (const [k, v] of Object.entries(flat)) {
+    const bar = k.lastIndexOf('|');
+    if (bar < 0) continue;
+    const id = k.slice(0, bar);
+    const key = k.slice(bar + 1);
+    if (!(id in out)) out[id] = null;
+    if (v === null || v === undefined) continue;
+    out[id] = { ...(out[id] ?? {}), [key]: v };
+  }
+  return Object.keys(out).length ? (out as Record<string, SectionProps | null>) : null;
+}
 
 /** 스토리 하나의 Loro 컨테이너 이름 (11 §3.1). 본문은 옛 이름 그대로, 다른 스토리는 접두사 + 스토리 ID */
 export interface Names {
@@ -203,10 +222,15 @@ export function formatDelta(loro: LoroDoc, names: Names = BODY_NAMES): TextDelta
 }
 
 /** 맵 'styles'·'lists'의 내용 (비었으면 null) */
-export function readDefs(loro: LoroDoc): { styles: Record<string, Style | null> | null; lists: Record<string, ListDef | null> | null } {
+export function readDefs(loro: LoroDoc): {
+  styles: Record<string, Style | null> | null;
+  lists: Record<string, ListDef | null> | null;
+  sections: Record<string, SectionProps | null> | null;
+} {
   const st = loro.getMap(STYLES).toJSON() as Record<string, Style | null>;
   const li = loro.getMap(LISTS).toJSON() as Record<string, ListDef | null>;
-  return { styles: Object.keys(st).length ? st : null, lists: Object.keys(li).length ? li : null };
+  const se = sectionsFromMap(loro.getMap(SECTIONS).toJSON() as Record<string, unknown>);
+  return { styles: Object.keys(st).length ? st : null, lists: Object.keys(li).length ? li : null, sections: se };
 }
 
 /** 서식까지 담은 처음 상태 (Worker → 메인의 init·reset에 싣는다) */
@@ -214,6 +238,7 @@ export interface FormatState {
   fmt: TextDelta;
   styles: Record<string, Style | null> | null;
   lists: Record<string, ListDef | null> | null;
+  sections?: Record<string, SectionProps | null> | null;
 }
 
 export function readFormats(loro: LoroDoc, names: Names = BODY_NAMES): FormatState {
@@ -228,7 +253,7 @@ export function readTail(loro: LoroDoc, names: Names): Record<string, unknown> {
 /** Doc.fromRaw로 만든 문서에 서식·정의를 입힌다 (기록 없음) */
 export function applyFormats(doc: Doc, f: FormatState): void {
   if (f.fmt.length) doc.applyDelta(f.fmt);
-  if (f.styles || f.lists) doc.applyRemoteDefs(f.styles, f.lists);
+  if (f.styles || f.lists || f.sections) doc.applyRemoteDefs(f.styles, f.lists, f.sections ?? null);
   doc.takeParagraphChanges();
 }
 
@@ -323,6 +348,9 @@ export function writeFormats(loro: LoroDoc, doc: Doc, names: Names = BODY_NAMES)
   for (const name of defaults.keys()) if (!doc.style(name)) sm.set(name, null);
   const lm = loro.getMap(LISTS);
   for (const l of doc.lists()) lm.set(l.id, structuredClone(l));
+  const secs = loro.getMap(SECTIONS);
+  for (const [id, def] of doc.sectionDefs())
+    for (const key of SECTION_KEYS) if (def[key] !== undefined) secs.set(`${id}|${key}`, structuredClone(def[key]) as never);
 }
 
 function keysOf(map: LoroMap): SegId[] {
@@ -376,6 +404,7 @@ export class LoroWriter {
   private readonly maps: Record<'hidden' | 'placeholder' | 'used', LoroMap>;
   private readonly styles: LoroMap;
   private readonly lists: LoroMap;
+  private readonly sections: LoroMap;
   private readonly tail: LoroMap | null;
 
   constructor(
@@ -389,6 +418,7 @@ export class LoroWriter {
     this.tail = names.tail ? loro.getMap(names.tail) : null;
     this.styles = loro.getMap(STYLES);
     this.lists = loro.getMap(LISTS);
+    this.sections = loro.getMap(SECTIONS);
   }
 
   /**
@@ -473,6 +503,9 @@ export class LoroWriter {
         break;
       case 'listDef':
         this.lists.set(c.id, c.def);
+        break;
+      case 'sectionDef':
+        this.sections.set(`${c.id}|${c.key}`, (c.value ?? null) as never);
         break;
     }
   }

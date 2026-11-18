@@ -92,6 +92,8 @@ export type Op =
   | { type: 'style'; name: string; before: Style | undefined; after: Style | undefined }
   /** 목록 정의 하나 (undefined = 없음, 10 §2.4) */
   | { type: 'list'; id: string; before: ListDef | undefined; after: ListDef | undefined }
+  /** 구역 설정 하나 (undefined = 없음, 12 §3.1) */
+  | { type: 'section'; id: string; before: SectionProps | undefined; after: SectionProps | undefined }
   /** 개체 원소(카운터) 하나의 속성 키 하나 (11 §2.1) */
   | { type: 'obj'; ctr: number; key: ObjKey; before: unknown; after: unknown }
   /** 다른 스토리의 연산 (11 §2.5: 여러 스토리 트랜잭션). Document가 그 스토리에 적용한다 */
@@ -128,6 +130,8 @@ export interface ParaAttrs {
   keepWithNext?: true;
   keepTogether?: true;
   pageBreakBefore?: true;
+  /** 이 문단이 구역의 마지막 문단이다: 그 구역의 ID (12 §3.1). 구역 설정은 문서의 구역 맵 */
+  section?: string;
 }
 export type ParaKey = keyof ParaAttrs;
 
@@ -166,7 +170,7 @@ export const OBJ_MARK_PREFIX = 'o_';
 /** Loro에서 문단 속성 마크 키의 접두사 (마크 키에는 ':'를 쓸 수 없다, 10 §3) */
 export const PARA_MARK_PREFIX = 'p_';
 /** 모델이 아는 문단 속성 키 */
-export const PARA_KEYS: readonly ParaKey[] = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore'];
+export const PARA_KEYS: readonly ParaKey[] = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore', 'section'];
 const NO_ATTRS: ParaAttrs = Object.freeze({});
 
 /**
@@ -191,6 +195,8 @@ export type RawChange =
   | { kind: 'style'; name: string; def: Style | null }
   /** 목록 정의 하나 (null = 없음, Loro 맵 lists) */
   | { kind: 'listDef'; id: string; def: ListDef | null }
+  /** 구역 설정의 키 하나 (null = 없음, Loro 맵 sections의 <id>|<키>: 키마다 LWW, 12 §3.2) */
+  | { kind: 'sectionDef'; id: string; key: SectionKey; value: unknown }
   /** 개체 속성 키 하나 (at = 개체 글자의 UTF-16 위치, Loro 마크 o_<키>) */
   | { kind: 'obj'; at: number; key: ObjKey; value: unknown }
   /**
@@ -337,6 +343,12 @@ export class Doc {
   /** 목록 구조(목록 문단의 화면 순서·수준·정의)가 바뀔 때마다 오른다. 번호 캐시 키 */
   private _listEpoch = 0;
   private labels: { epoch: number; map: Map<ElementId, ListLabel> } | null = null;
+  /** 구역 설정 (12 §3.1): 구역 ID → 설정. LAST_SECTION은 마지막 구역 */
+  private sectionMap = new Map<string, SectionProps>();
+  /** 구역 나눔 문단의 번호가 바뀔 수 있는 변경(구역 속성, 문단 수)마다 오른다 */
+  private _sectionEpoch = 0;
+  private breaks: { epoch: number; list: number[] } | null = null;
+  private sectionSeq = 0;
   private listSeq = 0;
 
   constructor(readonly peer = 'local') {}
@@ -552,7 +564,12 @@ export class Doc {
     // 서식: 주어지면 그것 (편집기의 보류 서식), 아니면 앞 글자에서 이어받는다 (10 §2.6)
     const fmt = this.internMarks(marks ?? this.inheritedMarks(offset));
     // 새 ¶는 지금 문단의 속성을 복사한다 (Enter, 10 §2.2)
-    const paraAttrs = codes.includes(PARA_CODE) ? (this.paras[this.paragraphIndexAt(offset)]?.attrs ?? NO_ATTRS) : NO_ATTRS;
+    // 새 ¶는 문단 속성을 이어받는다. 구역 나눔은 빼고 (새 ¶는 앞쪽 문단을 끝내고, 구역 나눔은 원래 ¶와 함께 뒤쪽에 남는다)
+    let paraAttrs = codes.includes(PARA_CODE) ? (this.paras[this.paragraphIndexAt(offset)]?.attrs ?? NO_ATTRS) : NO_ATTRS;
+    if (paraAttrs.section !== undefined) {
+      const { section: _s, ...rest } = paraAttrs;
+      paraAttrs = Object.keys(rest).length ? Object.freeze(rest) : NO_ATTRS;
+    }
     const { seg, raw } = this.toRaw(offset);
     // 자리표시로 보이던 빈 문단에 입력: 사용됨으로 표시 (화면은 그대로)
     const claimed = seg.placeholder && !seg.used;
@@ -716,7 +733,7 @@ export class Doc {
    * 묶음이 남아 있으면 false. 저장·재기반의 빠른 길에 쓴다.
    */
   get plain(): boolean {
-    if (this.markSets.length > 1 || this.paraAttrsMap.size > 0 || this.listMap.size > 0 || this.objAttrsMap.size > 0) return false;
+    if (this.markSets.length > 1 || this.paraAttrsMap.size > 0 || this.listMap.size > 0 || this.objAttrsMap.size > 0 || this.sectionMap.size > 0) return false;
     if (this.styleMap.size !== DEFAULT_STYLES.length) return false;
     return DEFAULT_STYLES.every((st) => this.styleMap.get(st.name) === st);
   }
@@ -849,6 +866,92 @@ export class Doc {
     const { off, hidden } = this.elementDisplay(chunk, i);
     if (!hidden) this.updateParagraphs(off, off + 1, 0);
     if (this.listener && !this.muted) this.emit({ kind: 'obj', at: this.u16At(chunk, i), key, value: value ?? undefined });
+  }
+
+  // ── 구역 (12 §3) ───────────────────────────────
+
+  /** 구역 설정 (없으면 undefined: 기본 구역) */
+  sectionDef(id: string): SectionProps | undefined {
+    return this.sectionMap.get(id);
+  }
+
+  /** 모든 구역 설정 (쓰이지 않는 것 포함) */
+  sectionDefs(): Array<[string, SectionProps]> {
+    return [...this.sectionMap];
+  }
+
+  /** 구역 나눔 판: 구역 나눔 문단 번호가 바뀔 수 있는 변경마다 오른다 */
+  get sectionEpoch(): number {
+    return this._sectionEpoch;
+  }
+
+  /** 구역 나눔 문단(¶에 section 속성)의 번호, 문서 순서 */
+  sectionBreaks(): readonly number[] {
+    if (this.breaks?.epoch === this._sectionEpoch) return this.breaks.list;
+    const list: number[] = [];
+    const ps = this.paras;
+    for (let i = 0; i < ps.length; i++) if (ps[i]!.attrs.section !== undefined) list.push(i);
+    this.breaks = { epoch: this._sectionEpoch, list };
+    return list;
+  }
+
+  /** 문단 i가 든 구역: 구역 차례(0부터)와 ID (마지막 구역은 LAST_SECTION) */
+  sectionOf(i: number): { index: number; id: string } {
+    const b = this.sectionBreaks();
+    let lo = 0;
+    let hi = b.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (b[mid]! < i) lo = mid + 1;
+      else hi = mid;
+    }
+    return { index: lo, id: lo < b.length ? this.paras[b[lo]!]!.attrs.section! : LAST_SECTION };
+  }
+
+  /** 새 구역 ID (피어 이름과 차례) */
+  newSectionId(): string {
+    let id: string;
+    do id = `${this.peer}-s${++this.sectionSeq}`;
+    while (this.sectionMap.has(id) || id === LAST_SECTION);
+    return id;
+  }
+
+  /** 구역 설정을 바꾼다 (undefined = 지움). 그 구역의 문단이 다시 조판된다 */
+  setSection(id: string, def: SectionProps | undefined): Op[] {
+    const before = this.sectionMap.get(id);
+    if (sameValue(before, def)) return [];
+    this.writeSection(id, def);
+    return [{ type: 'section', id, before, after: def }];
+  }
+
+  private writeSection(id: string, def: SectionProps | undefined): void {
+    const before = this.sectionMap.get(id);
+    if (def) this.sectionMap.set(id, Object.freeze(structuredClone(def)));
+    else this.sectionMap.delete(id);
+    if (this.listener && !this.muted)
+      for (const key of SECTION_KEYS) {
+        const a = before?.[key];
+        const b = def?.[key];
+        if (!sameValue(a, b)) this.emit({ kind: 'sectionDef', id, key, value: b === undefined ? null : structuredClone(b) });
+      }
+    this._sectionEpoch++;
+    // 그 구역의 문단을 다시 조판한다 (줄 폭이 바뀐다)
+    const b = this.sectionBreaks();
+    const at = id === LAST_SECTION ? b.length : b.findIndex((k) => this.paras[k]!.attrs.section === id);
+    if (at >= 0 && this.paras.length > 0) {
+      const lo = at > 0 ? b[at - 1]! + 1 : 0;
+      const hi = at < b.length ? b[at]! : this.paras.length - 1;
+      this.changeFrom = Math.min(this.changeFrom, lo);
+      this.changeSuffix = Math.min(this.changeSuffix, Math.max(0, this.paras.length - 1 - hi));
+    }
+    this._version++;
+  }
+
+  /** 문단 i가 든 구역의 첫 문단 */
+  private sectionStart(i: number): number {
+    let k = Math.min(i, this.paras.length) - 1;
+    while (k >= 0 && this.paras[k]!.attrs.section === undefined) k--;
+    return k + 1;
   }
 
   // ── 목록 (10 §2.4) ───────────────────────────────
@@ -1059,6 +1162,11 @@ export class Doc {
 
   private writeParaAttr(ctr: number, i: number, key: ParaKey, value: unknown): void {
     if (key === 'list') this._listEpoch++;
+    if (key === 'section') {
+      // 구역 나눔이 생기거나 사라지면 그 구역의 앞 문단들도 구역 설정(줄 폭)이 바뀐다
+      this._sectionEpoch++;
+      if (i >= 0) this.changeFrom = Math.min(this.changeFrom, this.sectionStart(i));
+    }
     const cur = this.paraAttrsMap.get(ctr) ?? NO_ATTRS;
     const next: Record<string, unknown> = { ...cur };
     if (value === undefined || value === null) delete next[key];
@@ -1352,6 +1460,7 @@ export class Doc {
     else if (op.type === 'format') this.applyFormat(op);
     else if (op.type === 'style') this.writeStyle(op.name, op.after);
     else if (op.type === 'list') this.writeList(op.id, op.after);
+    else if (op.type === 'section') this.writeSection(op.id, op.after);
     else if (op.type === 'obj') this.writeObjAttr(op.ctr, op.key, op.after);
     else if (op.type === 'story' || op.type === 'tableMap') throw new Error(`Doc.apply: ${op.type} op needs a Document`);
     else {
@@ -1411,7 +1520,11 @@ export class Doc {
    * 원격 스타일·목록 정의 (Loro 맵 styles·lists의 내용, 10 §3). null 값은 그 이름을 지운 것이고, 맵에 없는 기본 스타일은
    * 기본 정의다. 변경 기록·실행 취소 기록은 남기지 않는다.
    */
-  applyRemoteDefs(styles: Record<string, Style | null> | null, lists: Record<string, ListDef | null> | null): void {
+  applyRemoteDefs(
+    styles: Record<string, Style | null> | null,
+    lists: Record<string, ListDef | null> | null,
+    sections: Record<string, SectionProps | null> | null = null,
+  ): void {
     this.muted = true;
     try {
       if (styles) {
@@ -1423,6 +1536,10 @@ export class Doc {
       if (lists) for (const [id, def] of Object.entries(lists)) {
         const d = def ? { ...def, id } : undefined;
         if (!sameValue(this.listMap.get(id), d)) this.writeList(id, d);
+      }
+      if (sections) for (const [id, def] of Object.entries(sections)) {
+        const d = def ?? undefined;
+        if (!sameValue(this.sectionMap.get(id), d)) this.writeSection(id, d);
       }
     } finally {
       this.muted = false;
@@ -2530,12 +2647,14 @@ export class Doc {
     this.changeSuffix = Math.min(this.changeSuffix, suffix);
     this.paras = next;
     this._listEpoch++; // 문단 순서가 바뀌었다 (구획 이동·숨김): 목록 번호를 다시 센다
+    this._sectionEpoch++;
     this._version++;
   }
 
   /** 문단 목록을 처음부터 다시 만든다 (드문 경우: 동시 편집으로 구획·문단 경계가 어긋났거나 대체 자리표시가 바뀜) */
   private rebuildParagraphs(): void {
     this._listEpoch++;
+    this._sectionEpoch++;
     this.paras = this.scanParagraphs(0, Infinity).paras;
     this.changeFrom = 0;
     this.changeSuffix = 0;
@@ -2592,6 +2711,12 @@ export class Doc {
     // 목록 번호: 바뀐 문단들 가운데 목록 문단의 (ID, 목록, 수준) 열이 그대로면 번호도 그대로다 (글자 입력, 목록 아닌 문단의
     // Enter·합치기). 번호는 ¶ ID로 찾으므로 보통 문단이 늘거나 줄어도 다시 셀 필요가 없다
     if (this.listMap.size > 0 && !sameListSeq(old, i, j + 1, rebuilt)) this._listEpoch++;
+    // 구역 나눔: 문단 수가 바뀌면 나눔 번호가 밀린다. 나눔 열이 바뀌면(¶를 지워 합침) 그 구역 앞 문단들도 다시 조판한다
+    if (rebuilt.length !== j - i + 1) this._sectionEpoch++;
+    if (!sameSectionSeq(old, i, j + 1, rebuilt)) {
+      this._sectionEpoch++;
+      this.changeFrom = Math.min(this.changeFrom, this.sectionStart(i));
+    }
     old.splice(i, j - i + 1, ...rebuilt);
     if (this.deferredShift) {
       const grow = rebuilt.length - (j - i + 1);
@@ -2696,6 +2821,20 @@ function sameValue(a: unknown, b: unknown): boolean {
   return typeof a === 'object' && typeof b === 'object' && JSON.stringify(a) === JSON.stringify(b);
 }
 
+/** old[a, b)와 rebuilt의 구역 나눔 열이 같은가 */
+function sameSectionSeq(old: ParagraphInfo[], a: number, b: number, rebuilt: ParagraphInfo[]): boolean {
+  let m = 0;
+  for (let k = a; k < b; k++) {
+    const s = old[k]!.attrs.section;
+    if (s === undefined) continue;
+    while (m < rebuilt.length && rebuilt[m]!.attrs.section === undefined) m++;
+    if (m >= rebuilt.length || rebuilt[m]!.attrs.section !== s) return false;
+    m++;
+  }
+  while (m < rebuilt.length && rebuilt[m]!.attrs.section === undefined) m++;
+  return m >= rebuilt.length;
+}
+
 /** old[a, b)와 rebuilt의 목록 문단 열이 같은가 (ID·목록·수준) */
 function sameListSeq(old: ParagraphInfo[], a: number, b: number, rebuilt: ParagraphInfo[]): boolean {
   // 목록이 아닌 문단은 "끊김" 하나로 본다: 끊김이 생기거나 사라지면 붙은 목록의 번호(numberLists)가 바뀐다
@@ -2782,5 +2921,6 @@ function normalizeNewlines(s: string): string {
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }import { defaultListDef, numberLists, type ListDef, type ListLabel } from './lists';
+import { LAST_SECTION, SECTION_KEYS, type SectionKey, type SectionProps } from './sections';
 import { BODY_STYLE, DEFAULT_STYLES, mergeParaAttrs, resolveStyle, type ResolvedStyle, type Style } from './styles';
 
