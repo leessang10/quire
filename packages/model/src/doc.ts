@@ -127,9 +127,10 @@ export interface ParaAttrs {
   space?: { before?: number; after?: number };
   line?: { rule: 'multiple' | 'exact' | 'atLeast'; value: number };
   list?: { id: string; level: number };
-  keepWithNext?: true;
-  keepTogether?: true;
-  pageBreakBefore?: true;
+  /** 쪽 나눔 제어 (12 §4). false는 스타일이 켠 것을 끈다 */
+  keepWithNext?: boolean;
+  keepTogether?: boolean;
+  pageBreakBefore?: boolean;
   /** 이 문단이 구역의 마지막 문단이다: 그 구역의 ID (12 §3.1). 구역 설정은 문서의 구역 맵 */
   section?: string;
 }

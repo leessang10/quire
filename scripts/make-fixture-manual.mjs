@@ -1,0 +1,80 @@
+/**
+ * 기준 문서 세트 (12 §1): 설명서 만들기. 쪽 나눔 제어(12 §4)를 쓴다.
+ *   - 장 제목(제목 1)은 앞에서 쪽 나눔: 장마다 새 쪽
+ *   - 절 제목(제목 2·3)은 스타일의 다음 문단과 함께: 쪽 끝에 홀로 남지 않는다
+ *   - 주의 문단은 문단 나누지 않음
+ *   - 긴 문단이 쪽을 넘을 때 과부·고아 줄 막기
+ * 네 규칙이 모두 실제로 걸리도록 문단 길이를 맞췄다 (규칙을 하나씩 끄면 쪽 나눔이 바뀐다): 주의 문단(10)이 통째로 3쪽,
+ * 제목 2.1(18)·2.3(23)이 다음 쪽, 마지막 문단(32)이 4+1줄 대신 3+2줄.
+ *   node scripts/make-fixture-manual.mjs  → fixtures/docs/manual.json
+ * 글은 이 저장소를 위해 쓴 것이다. 한 번 만들어 고정하고, 고치면 기대값(manual.expected.json)도 사람이 다시 본다.
+ */
+import { mkdirSync, writeFileSync } from 'node:fs';
+
+const p = (text, attrs = {}) => ({ p: attrs, c: text ? [{ t: text }] : [] });
+const chapter = (t) => p(t, { style: 'h1', pageBreakBefore: true });
+const h2 = (t) => p(t, { style: 'h2' });
+const h3 = (t) => p(t, { style: 'h3' });
+const body = (t) => p(t, { align: 'justify' });
+const note = (t) => p(t, { style: 'quote', keepTogether: true });
+
+const S = [
+  '이 설명서는 문서 편집기를 처음 쓰는 사람을 위해 만들었다. 메뉴의 이름보다는 하려는 일을 기준으로 장을 나누었으므로, 하려는 일이 있는 장부터 읽어도 된다.',
+  '편집기는 글을 쓰는 화면과 쪽을 보여 주는 화면이 따로 없다. 글을 쓰는 그대로 쪽이 나뉘고, 인쇄하면 화면에서 본 쪽과 같은 자리에서 쪽이 바뀐다.',
+  '문단은 글자를 입력하다가 Enter를 누르면 끝난다. 줄은 편집기가 쪽의 폭에 맞춰 알아서 바꾸므로, 줄을 바꾸려고 Enter를 누르지 않는다.',
+  '서식은 글자 서식과 문단 서식으로 나뉜다. 글자 서식은 고른 글자에만, 문단 서식은 캐럿이 든 문단 전체에 걸린다. 같은 모양을 여러 문단에 쓰려면 스타일을 쓴다.',
+  '스타일을 바꾸면 그 스타일을 쓰는 문단이 모두 함께 바뀐다. 제목 스타일은 다음 문단과 같은 쪽에 놓이도록 정해져 있어서 쪽 끝에 제목만 남는 일이 없다.',
+  '표는 행과 열로 된 격자이고, 칸마다 문단을 여러 개 넣을 수 있다. 칸을 합치거나 나눌 수 있고, 칸의 글이 길어지면 행 높이가 알아서 늘어난다.',
+];
+const long = (k) => Array.from({ length: k }, (_, i) => S[i % S.length]).join(' ');
+
+const doc = {
+  format: 'quire',
+  version: 1,
+  settings: {},
+  styles: {},
+  sections: [{ id: 's1', page: { width: 595276, height: 841890, margin: [72000, 72000, 72000, 72000] }, columns: 1 }],
+  stories: {
+    body: [
+      p('문서 편집기 설명서', { style: 'h1', align: 'center' }),
+      p('처음 쓰는 사람을 위한 안내', { align: 'center' }),
+      body(S[0]),
+      chapter('1장. 글 쓰기'),
+      body(S[1]),
+      h2('1.1 문단과 줄'),
+      body(long(5)),
+      body(long(1)),
+      h2('1.2 고치기와 되돌리기'),
+      body(long(6)),
+      note('주의: 되돌리기는 편집기를 닫으면 사라진다. 닫기 전에 저장했는지 확인하라. 저장한 문서는 다시 열어도 고친 내용이 그대로 남지만, 되돌리기 기록은 남지 않는다. 여러 사람이 함께 고친 문서에서 되돌리기는 내가 고친 것만 되돌린다. 다른 사람이 고친 글은 그대로 두므로, 남이 고친 글을 되돌리려면 그 글을 직접 고쳐야 한다. 오래 쓰지 않은 문서를 열었을 때도 되돌리기 기록은 비어 있다.'),
+      body(long(3)),
+      h2('1.3 찾기와 바꾸기'),
+      body(long(4)),
+      h3('바꾸기 범위'),
+      body(long(2)),
+      chapter('2장. 서식'),
+      body(long(18)),
+      h2('2.1 글자 서식'),
+      body(long(9)),
+      h2('2.2 문단 서식'),
+      body(long(5)),
+      note('주의: 문단 서식은 문단 끝 표시에 붙어 있다. 두 문단을 합치면 앞 문단의 서식이 남는다. 서식이 사라진 것처럼 보이면 합친 문단을 확인하라. 붙여 넣은 문단은 원래 문서의 서식을 가져오지만, 빈 문단에 붙여 넣으면 붙여 넣은 문단의 서식이 남는다. 서식 없이 글자만 붙이려면 Ctrl+Shift+V를 누른다. 다른 프로그램에서 가져온 표는 칸 너비가 바뀔 수 있다.'),
+      h2('2.3 스타일'),
+      body(long(7)),
+      h3('스타일 바꾸기'),
+      body(long(3)),
+      chapter('3장. 표'),
+      body(long(1)),
+      h2('3.1 표 만들기'),
+      body(long(12)),
+      h2('3.2 칸 합치기'),
+      body(long(3)),
+    ],
+  },
+  annotations: [],
+};
+
+const sort = (v) => (Array.isArray(v) ? v.map(sort) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])])) : v);
+mkdirSync('fixtures/docs', { recursive: true });
+writeFileSync('fixtures/docs/manual.json', JSON.stringify(sort(doc), null, 2) + '\n');
+console.log('fixtures/docs/manual.json');

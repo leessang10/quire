@@ -170,6 +170,10 @@ export class SectionFrames implements FrameSource {
     return this.topOf(pages);
   }
 
+  startsSection(m: number): boolean {
+    return m > 0 && this.source.sectionOf(m - 1).index !== this.source.sectionOf(m).index;
+  }
+
   widthOf(m: number): number {
     const g = this.source.sectionOf(m).geom;
     return g.width - g.left - g.right;

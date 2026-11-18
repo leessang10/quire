@@ -975,19 +975,30 @@ export class Editor {
         }
       }
 
-      // 구역 나눔 표시 (12 §3.1): 구역 끝 문단의 마지막 줄 뒤에 점선과 다음 구역의 시작 방식
-      if (isBody && ln.index === para.lines.length - 1 && (para.info as ParagraphInfo).attrs.section !== undefined)
-        this.drawSectionMark(para, ln, ref.para, X(ln.end) + this.fontSize * 0.6, px + para.frameLeft + para.width, y + ln.height / 2);
+      // 구역 나눔 표시 (12 §3.1): 구역 끝 문단의 마지막 줄 뒤에 점선과 다음 구역의 시작 방식. 쪽 나눔(다음 문단이 앞에서 쪽 나눔)도
+      if (isBody && ln.index === para.lines.length - 1) {
+        const mark = this.breakLabel(ref.para);
+        if (mark) this.drawBreakMark(mark, X(ln.end) + this.fontSize * 0.6, px + para.frameLeft + para.width, y + ln.height / 2);
+      }
     }
     return ready;
   }
 
-  /** 구역 나눔 점선: x0..x1 (화면), 가운데 y */
-  private drawSectionMark(_para: PlacedPara, _ln: PlacedLine, i: number, x0: number, x1: number, y: number): void {
+  /** 본문 문단 i 뒤의 나눔 표시: 구역 나눔, 다음 문단의 앞에서 쪽 나눔 (없으면 null) */
+  private breakLabel(i: number): string | null {
+    const b = this.body;
+    if (b.paraAttrs(i).section !== undefined) {
+      const start = fullSection(b.sectionDef(b.sectionOf(i + 1).id)).start;
+      return `구역 나눔 (${SECTION_LABELS[start]})`;
+    }
+    const next = this.bodyLayout.paras[i + 1];
+    if (next?.layout.box?.keep?.breakBefore) return '쪽 나눔';
+    return null;
+  }
+
+  /** 나눔 점선과 이름: x0..x1 (화면), 가운데 y */
+  private drawBreakMark(label: string, x0: number, x1: number, y: number): void {
     const { ctx } = this;
-    const next = this.body.sectionOf(i + 1).id;
-    const start = fullSection(this.body.sectionDef(next)).start;
-    const label = `구역 나눔 (${SECTION_LABELS[start]})`;
     ctx.save();
     ctx.font = `11px ${this.family}`;
     const tw = ctx.measureText(label).width;
@@ -1600,7 +1611,7 @@ export class Editor {
     for (let k = i + 1; k <= last; k++) {
       if (styleOf(k) !== styleOf(i)) mixed.add('style');
       const a = this.doc.effectiveParaAttrs(k);
-      for (const key of ['align', 'indent', 'space', 'line'] as const)
+      for (const key of ['align', 'indent', 'space', 'line', 'pageBreakBefore', 'keepWithNext', 'keepTogether'] as const)
         if (JSON.stringify(a[key]) !== JSON.stringify(first[key])) mixed.add(key);
     }
     return { style: styleOf(i), attrs: first, mixed };
@@ -1621,6 +1632,42 @@ export class Editor {
   /** 선택한 문단들에 문단 스타일 (본문이면 style 키를 지운다) */
   setParagraphStyle(name: string): void {
     this.setParagraphAttr('style', name === BODY_STYLE ? undefined : name);
+  }
+
+  // ── 쪽 나눔 (12 §4) ───────────────────────────────
+
+  /**
+   * 쪽 나누기 (Ctrl+Enter): 캐럿에서 문단을 나누고 뒤쪽 문단을 앞에서 쪽 나눔으로. 캐럿이 문단 처음이면 그 문단을 (나누지 않음).
+   * 쪽 나눔은 글자가 아니라 다음 문단의 속성이다. 본문에서만. 실행 취소 한 단계
+   */
+  insertPageBreak(): void {
+    this.input.commitComposition();
+    if (this.active || this.extras.length) return;
+    const [from, to] = this.range();
+    const pi = this.doc.paragraphIndexAt(from);
+    const p = this.doc.paragraphs()[pi]!;
+    if (p.objs?.get(0)?.kind === 'table') return;
+    this.history.seal();
+    if (from === to && from === p.start && pi > 0) {
+      const before: Selection = { ...this.sel };
+      const ops = this.doc.setParaAttr(pi, 'pageBreakBefore', true);
+      if (ops.length) this.commit(ops, before);
+    } else this.replaceSelection('\n', undefined, () => this.doc.setParaAttr(pi + 1, 'pageBreakBefore', true));
+    this.history.seal();
+  }
+
+  /** 선택한 문단들의 쪽 나눔 제어 키를 켜거나 끈다 (모두 켜져 있으면 끈다). 스타일 값(제목의 다음 문단과 함께)도 본다 */
+  toggleParagraphKeep(key: 'pageBreakBefore' | 'keepWithNext' | 'keepTogether'): void {
+    const on = this.paragraphState().attrs[key] === true && !this.paragraphState().mixed.has(key);
+    const styled = this.styleHas(key);
+    // 스타일이 켜는 키는 직접 속성 false로 끄고, 다시 켜면 직접 속성을 지워 스타일을 따른다
+    this.setParagraphAttr(key, on ? (styled ? false : undefined) : styled ? undefined : true);
+  }
+
+  /** 캐럿 문단의 스타일이 이 키를 켜는가 (끄려면 직접 속성 false) */
+  private styleHas(key: 'pageBreakBefore' | 'keepWithNext' | 'keepTogether'): boolean {
+    const [i] = this.selectedParagraphs();
+    return this.doc.paraStyle(i).para[key] === true;
   }
 
   // ── 구역 (12 §3) ───────────────────────────────
@@ -1734,7 +1781,13 @@ export class Editor {
     const p = this.doc.paragraphs()[pi]!;
     const name = p.attrs.style;
     const next = from === to && from === p.end && name ? this.doc.style(name)?.next : undefined;
-    this.replaceSelection('\n', undefined, next !== undefined && next !== name ? () => this.doc.setParaAttr(pi + 1, 'style', next === BODY_STYLE ? undefined : next) : undefined);
+    const restyle = next !== undefined && next !== name;
+    // 앞에서 쪽 나눔은 나뉜 앞쪽 문단에만 (뒤쪽이 또 새 쪽에서 시작하지 않게, 12 §4)
+    const pbb = p.attrs.pageBreakBefore === true;
+    this.replaceSelection('\n', undefined, restyle || pbb ? () => [
+      ...(restyle ? this.doc.setParaAttr(pi + 1, 'style', next === BODY_STYLE ? undefined : next) : []),
+      ...(pbb ? this.doc.setParaAttr(pi + 1, 'pageBreakBefore', undefined) : []),
+    ] : undefined);
   }
 
   /** 보류 서식(캐럿에서 다음 입력이 받을 서식)의 번호. 지금 캐럿에 해당하지 않으면 undefined */
@@ -3188,6 +3241,12 @@ export class Editor {
       e.preventDefault();
       return;
     }
+    // 쪽 나누기 (12 §4): Ctrl+Enter
+    if (mod && !e.altKey && !shift && e.key === 'Enter') {
+      this.insertPageBreak();
+      e.preventDefault();
+      return;
+    }
     // 구역 나누기 (12 §3.1): Ctrl+Alt+Enter
     if (mod && e.altKey && !shift && e.key === 'Enter') {
       this.insertSectionBreak('nextPage');
@@ -3299,6 +3358,7 @@ export class Editor {
           if (this.caretAtListStart()) this.outdentListItem(this.caretAtListStart()!.i, true); // 목록 첫머리: 번호부터 지운다
           else if (from !== to) this.deleteRange(from, to);
           else if (!this.active && head > 0 && this.tableAtOffset(head - 1)) this.moveTo(head - 1, false); // 표 뒤 문단 처음: 표와 합치지 않고 표로
+          else if (!this.active && this.pageBreakAtCaret(head)) this.setParagraphAttr('pageBreakBefore', undefined); // 쪽 나눔부터 지운다
           else if (head > 0) this.deleteRange(this.layout.prevStop(head), head, 'delete');
           break;
         case 'Delete':
@@ -3543,6 +3603,12 @@ export class Editor {
     const ref = this.bodyLayout.firstLineBelow(y, false);
     const m = ref ? this.bodyLayout.paras[ref.para]!.frameLeft : this.setup.margin;
     return x >= m - GRIP_LEFT && x < m - GRIP_RIGHT;
+  }
+
+  /** 캐럿이 앞에서 쪽 나눔(직접 속성) 문단의 처음인가 (첫 문단 제외) */
+  private pageBreakAtCaret(head: number): boolean {
+    const i = this.doc.paragraphIndexAt(head);
+    return i > 0 && this.doc.paragraphs()[i]!.start === head && this.doc.paraAttrs(i).pageBreakBefore === true;
   }
 
   /** 오프셋 자리의 본문 폭 (px): 구역 여백, 셀이면 셀 폭 */

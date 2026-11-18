@@ -62,6 +62,8 @@ export interface PageSetup {
    */
   originX?: number;
   originY?: number;
+  /** 과부·고아 줄 막기 (12 §4): 문단을 나눌 때 프레임 끝·처음에 한 줄만 남기지 않는다 */
+  widowControl?: boolean;
 }
 
 /** 모델의 문단 객체. 바뀌지 않은 문단은 같은 객체여야 하며, start는 제자리에서 갱신될 수 있다 */
@@ -167,6 +169,8 @@ export interface FrameSource {
    * 끝난 상태). 구역이 없는 열이면 없음
    */
   enter?(m: number, frame: number, y: number): { frame: number; y: number } | null;
+  /** 문단 m이 구역을 시작하는가 (다음 문단과 함께: 구역 앞에서 사슬을 끊는다) */
+  startsSection?(m: number): boolean;
   /** 문단 m을 나눌 줄 폭 (구역마다 다르다). 없으면 프레임 0의 폭 */
   widthOf?(m: number): number;
   /** 수렴해도 되는가: 이번 배치에서 바뀐 구역 런 뒤로 아직 같은 런을 다시 만나지 않았으면 false */
@@ -366,6 +370,11 @@ export class PlacedPara {
   pageAfter = 0;
   yAfter = 0;
   private first = false;
+  /** 첫 줄을 놓기 시작한 상태 (앞에서 쪽 나눔·함께·나누지 않음·고아 줄로 다음 프레임에 옮겼으면 그 프레임 맨 위) */
+  private p0 = 0;
+  private y0 = 0;
+  /** 과부 줄 막기로 다음 프레임에 넘긴 줄 (그 줄부터 새 프레임) */
+  private push: number[] | null = null;
   private _lines: PlacedLine[] | null = null;
   /** 이 문단의 떠 있는 개체 (놓인 자리) */
   floats: PlacedFloat[] = NO_FLOATS;
@@ -384,22 +393,43 @@ export class PlacedPara {
     readonly width = 0,
   ) {}
 
-  /** 시작 상태를 정하고 끝 상태를 계산한다 (줄 객체는 만들지 않음) */
-  placeAt(page: number, y: number, first: boolean): void {
+  /**
+   * 시작 상태를 정하고 끝 상태를 계산한다 (줄 객체는 만들지 않음).
+   * toNext: 다음 문단과 함께(keepWithNext) 사슬이 이 프레임에 들어가지 않는다 (PagedLayout이 미리 보고 정한다)
+   */
+  placeAt(page: number, y: number, first: boolean, toNext = false): void {
     this.pageBefore = page;
     this.yBefore = y;
     this.first = first;
     this._lines = null;
     this.wrapped = null;
+    this.push = null;
     const { setup, floats: reg } = this.geo;
     const H = this.geo.h;
     reg.remove(this);
     this.floats = NO_FLOATS;
     const box = this.layout.box;
-    if (!first && y > 0) y += box ? box.before : setup.paraSpacing;
+    const keep = box?.keep;
+    // 앞에서 쪽 나눔·다음 문단과 함께: 새 프레임 맨 위로 (이미 맨 위면 그대로, 12 §4)
+    if ((keep?.breakBefore || toNext) && y > 0) {
+      page++;
+      y = 0;
+    }
+    // 문단 나누지 않음: 지금 프레임에 다 들어가지 않으면 다음 프레임으로 (빈 프레임보다 크면 무시)
+    if (keep?.together && y > 0) {
+      const h = this.contentHeight();
+      const sp = first ? 0 : box!.before;
+      if (y + sp + h > H(page) && h <= H(page + 1)) {
+        page++;
+        y = 0;
+      }
+    }
+    this.p0 = page;
+    this.y0 = y;
     const src = this.layout.lines;
     const tbl = this.layout.table;
     if (tbl) {
+      if (!first && y > 0) y += box ? box.before : setup.paraSpacing;
       // 표: 행마다 (쪽은 행 사이에서만 나눈다)
       for (const rh of tbl.rows) {
         if (y + rh > H(page) && y > 0) {
@@ -419,30 +449,106 @@ export class PlacedPara {
       const lh0 = src.length ? lineHeight(setup, src[0]!.scale, box?.line) + objExtra(setup, src[0]!, box?.line) : setup.lineHeight;
       let pg = page;
       let top = y;
+      if (!first && top > 0) top += box ? box.before : setup.paraSpacing;
       if (top + lh0 > H(pg) && top > 0) {
         pg++;
         top = 0;
       }
       this.placeFloats(pg, top);
     }
-    for (let k = 0; k < src.length; k++) {
-      const lh = lineHeight(setup, src[k]!.scale, box?.line) + objExtra(setup, src[k]!, box?.line);
-      if (y + lh > H(page) && y > 0) {
-        page++;
-        y = 0;
+    let f = this.flow(page, y, null);
+    // 과부·고아 줄 (12 §4): 앞에서 뒤로 한 번 놓는 규칙. 떠 있는 개체가 있는 문단은 쓰지 않는다 (개체 자리가 첫 줄에 매인다)
+    if (setup.widowControl && f.wrapK < 0 && !this.layout.floats && src.length >= 2) {
+      const n = src.length;
+      for (let t = 0; t < 3 && f.splits.length; t++) {
+        const s = f.splits;
+        const last = s[s.length - 1]!;
+        const prev = s.length > 1 ? s[s.length - 2]! : 0;
+        if (s[0] === 1 && this.y0 > 0) {
+          // 고아 줄: 첫 줄만 프레임 끝에 남는다 → 문단 전체를 다음 프레임으로
+          this.p0++;
+          this.y0 = 0;
+          this.push = null;
+        } else if (n - last === 1 && last - prev >= 3) {
+          // 과부 줄: 마지막 줄만 넘어간다 → 앞 프레임에서 한 줄 더 넘긴다 (앞에 두 줄 이상 남음)
+          this.push = [...(this.push ?? []), last - 1];
+        } else if (n - last === 1 && prev === 0 && this.y0 > 0) {
+          // 두 줄 남기고 한 줄 넘어가는 세 줄 문단: 둘 다 지킬 수 없으니 문단 전체를 다음 프레임으로 (Word와 같다)
+          this.p0++;
+          this.y0 = 0;
+          this.push = null;
+        } else break;
+        f = this.flow(this.p0, this.y0, null);
       }
-      const ex = reg.forPage(page, this);
-      if (ex.length && ex.some((e) => e.y0 < y + lh && e.y1 > y)) {
-        // 여기서부터 어울림 줄바꿈
-        [page, y] = this.wrapFrom(k, page, y);
-        break;
-      }
-      y += lh;
+    }
+    page = f.page;
+    y = f.y;
+    if (f.wrapK >= 0) {
+      // 여기서부터 어울림 줄바꿈
+      [page, y] = this.wrapFrom(f.wrapK, f.page, f.y);
     }
     if (box && box.after > 0) y += box.after;
     this.exclSig = reg.sig(this, this.pageBefore, page);
     this.pageAfter = page;
     this.yAfter = y;
+  }
+
+  /** 문단 내용 높이 (앞뒤 간격 빼고): 줄 높이 합, 표면 행 높이 합 */
+  contentHeight(): number {
+    const tbl = this.layout.table;
+    if (tbl) return tbl.rows.reduce((a, b) => a + b, 0);
+    const { setup } = this.geo;
+    const box = this.layout.box;
+    let h = 0;
+    for (const ln of this.layout.lines) h += lineHeight(setup, ln.scale, box?.line) + objExtra(setup, ln, box?.line);
+    return h;
+  }
+
+  /**
+   * 줄을 (page, y)부터 프레임에 흘린다: 넘치거나 과부 줄 막기로 넘긴 줄(push)에서 새 프레임. out을 주면 줄 위치를 채우고, 없으면
+   * 배제 영역(어울림)에 닿는 첫 줄에서 멈춘다 (wrapK). placeAt과 lines가 같은 흐름을 쓴다
+   */
+  private flow(page: number, y: number, out: PlacedLine[] | null): { page: number; y: number; splits: number[]; wrapK: number } {
+    const { setup, floats: reg, frames } = this.geo;
+    const H = this.geo.h;
+    const pl = this.layout;
+    const box = pl.box;
+    const src = pl.lines;
+    const push = this.push;
+    if (!this.first && y > 0) y += box ? box.before : setup.paraSpacing;
+    const splits: number[] = [];
+    for (let k = 0; k < src.length; k++) {
+      const ln = src[k]!;
+      const extra = objExtra(setup, ln, box?.line);
+      const lh = lineHeight(setup, ln.scale, box?.line) + extra;
+      if (y > 0 && (y + lh > H(page) || (push !== null && push.includes(k)))) {
+        page++;
+        y = 0;
+        splits.push(k);
+      }
+      if (out) {
+        const fr = frames.frame(page);
+        const top = fr.top + y;
+        out[k] = {
+          index: k,
+          start: ln.start,
+          end: ln.end,
+          page: fr.page,
+          x: fr.x,
+          y: top,
+          height: lh,
+          baseline: top + baselineOffset(setup, lh - extra, ln.scale) + extra,
+          adj: null,
+          adjChars: false,
+        };
+        if (box) this.alignLine(out[k]!, k === src.length - 1);
+      } else {
+        const ex = reg.forPage(page, this);
+        if (ex.length && ex.some((e) => e.y0 < y + lh && e.y1 > y)) return { page, y, splits, wrapK: k };
+      }
+      y += lh;
+    }
+    return { page, y, splits, wrapK: -1 };
   }
 
   /** 떠 있는 개체의 자리 (11 §2.3): 문단 위쪽 (pg, top) 기준. 배제 영역을 등록한다 */
@@ -484,17 +590,17 @@ export class PlacedPara {
     const pl = this.layout;
     const box = pl.box;
     const src = pl.lines;
-    const cw = this.geo.frames.frame(this.pageBefore).width;
+    const cw = this.geo.frames.frame(this.p0).width;
     const lines: WrapLine[] = [];
     // 앞 줄들은 캐시한 줄 나눔 그대로 (쪽·y를 다시 계산)
     {
-      let pg = this.pageBefore;
-      let yy = this.yBefore;
+      let pg = this.p0;
+      let yy = this.y0;
       if (!this.first && yy > 0) yy += box ? box.before : setup.paraSpacing;
       for (let k = 0; k < k0; k++) {
         const ln = src[k]!;
         const lh = lineHeight(setup, ln.scale, box?.line) + objExtra(setup, ln, box?.line);
-        if (yy + lh > H(pg) && yy > 0) {
+        if (yy > 0 && (yy + lh > H(pg) || (this.push !== null && this.push.includes(k)))) {
           pg++;
           yy = 0;
         }
@@ -541,7 +647,7 @@ export class PlacedPara {
 
   /** 이 문단이 놓인 프레임의 왼쪽 (쪽 그리기 기준 x, 구역마다 여백이 다르다) */
   get frameLeft(): number {
-    return this.geo.frames.frame(this.pageBefore).x;
+    return this.geo.frames.frame(this.p0).x;
   }
 
   /** 문서 기준 마지막 줄 아래쪽 y */
@@ -560,8 +666,8 @@ export class PlacedPara {
     const H = this.geo.h;
     const tbl = this.layout.table!;
     const box = this.layout.box;
-    let page = this.pageBefore;
-    let y = this.yBefore;
+    let page = this.p0;
+    let y = this.y0;
     if (!this.first && y > 0) y += box ? box.before : setup.paraSpacing;
     return tbl.rows.map((rh, k) => {
       if (y + rh > H(page) && y > 0) {
@@ -581,40 +687,8 @@ export class PlacedPara {
     if (this._lines) return this._lines;
     if (this.layout.table) return (this._lines = this.tableLines());
     if (this.wrapped) return (this._lines = this.wrappedLines(this.wrapped));
-    const { setup, frames } = this.geo;
-    const H = this.geo.h;
-    let page = this.pageBefore;
-    let y = this.yBefore;
-    const pl = this.layout;
-    const box = pl.box;
-    if (!this.first && y > 0) y += box ? box.before : setup.paraSpacing;
-    const src = pl.lines;
-    const lines: PlacedLine[] = new Array(src.length);
-    for (let k = 0; k < src.length; k++) {
-      const ln = src[k]!;
-      const extra = objExtra(setup, ln, box?.line);
-      const lh = lineHeight(setup, ln.scale, box?.line) + extra;
-      if (y + lh > H(page) && y > 0) {
-        page++;
-        y = 0;
-      }
-      const fr = frames.frame(page);
-      const top = fr.top + y;
-      lines[k] = {
-        index: k,
-        start: ln.start,
-        end: ln.end,
-        page: fr.page,
-        x: fr.x,
-        y: top,
-        height: lh,
-        baseline: top + baselineOffset(setup, lh - extra, ln.scale) + extra,
-        adj: null,
-        adjChars: false,
-      };
-      if (box) this.alignLine(lines[k]!, k === src.length - 1);
-      y += lh;
-    }
+    const lines: PlacedLine[] = new Array(this.layout.lines.length);
+    this.flow(this.p0, this.y0, lines);
     this._lines = lines;
     return lines;
   }
@@ -973,6 +1047,8 @@ export class PagedLayout {
       this.staleFrom = Math.max(hi, oldStale >= oldHi ? oldStale + delta : hi);
     }
 
+    // 다음 문단과 함께 (12 §4): 앞 문단들의 자리가 바뀐 문단의 첫 줄들에 기대므로 사슬 첫 문단부터 다시 놓는다
+    while (lo > 0 && old[lo - 1]?.layout.box?.keep?.next) lo--;
     // 바뀐 구간을 비우고 lo부터 다시 배치 (지우는 문단의 배제 영역도 뺀다)
     for (let k = lo; k < oldHi; k++) {
       const o = old[k];
@@ -1181,6 +1257,49 @@ export class PagedLayout {
 
   // ── 내부 ──────────────────────────────────────────────
 
+  /**
+   * 다음 문단과 함께 (12 §4): 문단 m부터 keepWithNext 사슬 전체와 사슬 다음 문단의 첫 두 줄(표면 두 행)이 지금 프레임에 들어가지
+   * 않으면 true (m을 다음 프레임 맨 위로). 사슬이 빈 프레임보다 크면 무시. 사슬은 앞에서 쪽 나눔·구역 시작에서 끊긴다
+   */
+  private keepNext(m: number, layout: ParaLayout, page: number, y: number): boolean {
+    if (y <= 0 || !layout.box?.keep?.next) return false;
+    const { setup } = this.geo;
+    const H = this.geo.h;
+    const sp = (L: ParaLayout) => (L.box ? L.box.before : setup.paraSpacing);
+    const lines = (L: ParaLayout, n: number) => {
+      if (L.table) return L.table.rows.slice(0, n).reduce((a, b) => a + b, 0);
+      let h = 0;
+      const box = L.box;
+      for (let k = 0; k < Math.min(n, L.lines.length); k++) h += lineHeight(setup, L.lines[k]!.scale, box?.line) + objExtra(setup, L.lines[k]!, box?.line);
+      return h;
+    };
+    let need = 0;
+    let L = layout;
+    let j = m;
+    for (let guard = 0; guard < 64; guard++) {
+      need += (j === m && m === 0 ? 0 : sp(L)) + lines(L, Infinity) + (L.box?.after ?? 0);
+      if (j + 1 >= this.model.length || this.frames.startsSection?.(j + 1)) break;
+      const N = this.layoutFor(j + 1);
+      if (N.box?.keep?.breakBefore) break;
+      if (!N.box?.keep?.next) {
+        need += sp(N) + lines(N, 2);
+        break;
+      }
+      L = N;
+      j++;
+    }
+    return y + need > H(page) && need <= H(page + 1);
+  }
+
+  /** 문단 j의 줄 나눔 (미리 보기용: 배치된 것이 맞으면 그것, 아니면 캐시) */
+  private layoutFor(j: number): ParaLayout {
+    const info = this.model[j]!;
+    const pp = this.paras[j];
+    const w = this.frames.widthOf ? this.frames.widthOf(j) : this.contentWidth;
+    if (pp && pp.info === info && pp.layout.preedit === null && pp.width === w) return pp.layout;
+    return this.cache.get(info.text, w, this.measurer, null, this.format ? this.format(info, false) : null);
+  }
+
   /** pending에서 시작해 stop이 true가 될 때까지(또는 끝까지) 배치한다 */
   private run(stop: (m: number, nextTopY: number) => boolean): void {
     const { model, paras } = this;
@@ -1226,7 +1345,7 @@ export class PagedLayout {
           continue;
         }
         // 줄 나눔은 그대로, 위치만 다시 (할당 없음)
-        pp.placeAt(page, y, m === 0);
+        pp.placeAt(page, y, m === 0, this.keepNext(m, pp.layout, page, y));
         this.counts.repositioned++;
         this.pending = { next: m + 1, page: pp.pageAfter, y: pp.yAfter };
         continue;
@@ -1246,7 +1365,7 @@ export class PagedLayout {
           : layout.n - (layout.preedit ? layout.preedit[1] - layout.preedit[0] : 0);
       if (pp) this.geo.floats.remove(pp);
       const placed = new PlacedPara(info, length, layout, this.geo, width);
-      placed.placeAt(page, y, m === 0);
+      placed.placeAt(page, y, m === 0, this.keepNext(m, layout, page, y));
       paras[m] = placed;
       this.pending = { next: m + 1, page: placed.pageAfter, y: placed.yAfter };
     }

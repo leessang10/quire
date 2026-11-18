@@ -358,6 +358,18 @@ document.querySelectorAll<HTMLButtonElement>('[data-tbl]').forEach((b) =>
 );
 let fillOn = false;
 
+// 쪽 나눔 제어 (3-3)
+document.getElementById('page-break')!.addEventListener('click', () => {
+  editor.insertPageBreak();
+  editor.focus();
+});
+document.querySelectorAll<HTMLButtonElement>('[data-keep]').forEach((btn) =>
+  btn.addEventListener('click', () => {
+    editor.toggleParagraphKeep(btn.dataset.keep as 'pageBreakBefore' | 'keepWithNext' | 'keepTogether');
+    editor.focus();
+  }),
+);
+
 // 구역 (3-2): 구역 나누기, 쪽 설정 대화상자
 document.getElementById('sec-break')!.addEventListener('click', () => {
   editor.insertSectionBreak('nextPage');
@@ -515,6 +527,10 @@ function showMarks(): void {
   const li = ps.attrs.list ? editor.doc.listDef(ps.attrs.list.id)?.kind : undefined;
   document.querySelectorAll<HTMLButtonElement>('[data-list]').forEach((b) => b.setAttribute('aria-pressed', String(li === b.dataset.list)));
   lineSel.value = ps.mixed.has('line') || ps.attrs.line?.rule !== 'multiple' ? '' : String(ps.attrs.line.value);
+  document.querySelectorAll<HTMLButtonElement>('[data-keep]').forEach((b) => {
+    const k = b.dataset.keep as 'pageBreakBefore' | 'keepWithNext' | 'keepTogether';
+    b.setAttribute('aria-pressed', ps.mixed.has(k) ? 'mixed' : String(ps.attrs[k] === true));
+  });
 
   const { marks, mixed } = editor.selectionMarks();
   const state = (on: boolean, mix: boolean) => (mix ? 'mixed' : on ? 'true' : 'false');
