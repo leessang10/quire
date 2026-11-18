@@ -8,27 +8,42 @@
  * 위치는 UTF-16 단위의 살아 있는 원소 열(= Loro 텍스트) 기준이다. 구획 표식도 한 글자다.
  * 같은 자리에 양쪽이 넣으면 원격(Worker 쪽에 먼저 있던 것)이 앞, 로컬이 뒤다.
  */
-import type { RawChange } from '@quire/model';
+import { PARA_MARK_PREFIX, type RawChange } from '@quire/model';
 
 /** 원격 텍스트 연산 (Loro 이벤트 델타를 차례로 적용할 단위로 편 것) */
 export type RemoteOp =
   | { kind: 'insert'; at: number; text: string; attributes?: Record<string, unknown> }
-  | { kind: 'delete'; at: number; len: number };
+  | { kind: 'delete'; at: number; len: number }
+  /** 서식만 바꿈 (Loro 델타의 retain + attributes, 10 §3). 값 null = 해제. 위치·길이는 바뀌지 않는다 */
+  | { kind: 'format'; at: number; len: number; attributes: Record<string, unknown> };
+
+type Fmt = Extract<RemoteOp, { kind: 'format' }>;
 
 /** 로컬 변경: Doc의 변경 기록 + 선택 영역(프레즌스) */
 export type LocalChange = RawChange | { kind: 'sel'; anchor: number; head: number };
 
 type Del = { kind: 'delete'; at: number; len: number };
 
-/** 원격 델타(retain/insert/delete) → 차례로 적용할 연산 목록. 속성만 바꾸는 retain은 무시 */
+/** 원격 델타(retain/insert/delete) → 차례로 적용할 연산 목록. 속성을 바꾸는 retain은 format (구획 키는 뺀다) */
 export function deltaToOps(
   delta: Array<{ retain?: number; insert?: string; delete?: number; attributes?: Record<string, unknown> }>,
   out: RemoteOp[] = [],
 ): RemoteOp[] {
   let pos = 0;
   for (const d of delta) {
-    if (d.retain !== undefined) pos += d.retain;
-    else if (d.insert !== undefined) {
+    if (d.retain !== undefined) {
+      if (d.attributes && d.retain > 0) {
+        const attributes: Record<string, unknown> = {};
+        let any = false;
+        for (const [k, v] of Object.entries(d.attributes)) {
+          if (k === 'seg') continue;
+          attributes[k] = v ?? null;
+          any = true;
+        }
+        if (any) out.push({ kind: 'format', at: pos, len: d.retain, attributes });
+      }
+      pos += d.retain;
+    } else if (d.insert !== undefined) {
       if (d.insert.length === 0) continue;
       out.push(d.attributes ? { kind: 'insert', at: pos, text: d.insert, attributes: d.attributes } : { kind: 'insert', at: pos, text: d.insert });
       pos += d.insert.length;
@@ -42,6 +57,7 @@ export function deltaToOps(
 /** 연산 하나 → Doc.applyDelta 입력 */
 export function opToDelta(op: RemoteOp): Array<{ retain?: number; insert?: string; delete?: number; attributes?: Record<string, unknown> }> {
   const head = op.at > 0 ? [{ retain: op.at }] : [];
+  if (op.kind === 'format') return [...head, { retain: op.len, attributes: op.attributes }];
   return op.kind === 'insert'
     ? [...head, op.attributes ? { insert: op.text, attributes: op.attributes } : { insert: op.text }]
     : [...head, { delete: op.len }];
@@ -73,8 +89,49 @@ export function mapPos(pos: number, op: RemoteOp | LocalChange): number {
 /**
  * 로컬 변경 a와 원격 연산 b(같은 상태 기준) → [b 뒤의 a, a 뒤의 b]. 삭제는 둘로 나뉠 수 있다.
  */
+/** 서식 연산 하나를 [x, y) 구간으로 자른 조각 (attrs를 바꿀 수 있음, 빈 것은 없음) */
+function fmtPiece(b: Fmt, x: number, y: number, attributes = b.attributes): Fmt[] {
+  return y > x && Object.keys(attributes).length > 0 ? [{ kind: 'format', at: x, len: y - x, attributes }] : [];
+}
+
+/** b의 [x, y) 구간에서 키 하나를 뺀다 (그 구간은 로컬 변경이 이긴다) */
+function withoutKey(b: Fmt, key: string, x: number, y: number): Fmt[] {
+  if (!(key in b.attributes)) return [b];
+  const lo = Math.max(b.at, x);
+  const hi = Math.min(b.at + b.len, y);
+  if (lo >= hi) return [b];
+  const rest = { ...b.attributes };
+  delete rest[key];
+  return [...fmtPiece(b, b.at, lo), ...fmtPiece(b, lo, hi, rest), ...fmtPiece(b, hi, b.at + b.len)];
+}
+
+/**
+ * 로컬 변경 a와 원격 서식 b. 서식은 위치를 옮기지 않으므로 a는 그대로이고 b만 바뀐다.
+ * - 로컬 삽입이 b 안에 들어오면 b를 둘로 나눈다: 넣은 글자의 서식은 로컬이 정한다 (Worker의 쓰기가 넣은 글자의 마크를
+ *   Doc과 같게 고치므로 Loro에서도 그렇다).
+ * - 로컬 삭제는 b를 줄인다.
+ * - 로컬 서식·문단 속성이 같은 키를 겹쳐 바꾸면 그 구간에서 b의 그 키를 뺀다: Worker는 로컬 변경을 원격 뒤에 적용하므로
+ *   Loro에서 로컬이 이긴다.
+ */
+function pairFormat(a: LocalChange, b: Fmt): [LocalChange[], RemoteOp[]] {
+  if (a.kind === 'insert') {
+    const la = len16(a);
+    if (a.at <= b.at) return [[a], [{ ...b, at: b.at + la }]];
+    if (a.at >= b.at + b.len) return [[a], [b]];
+    return [[a], [...fmtPiece(b, b.at, a.at), ...fmtPiece(b, a.at + la, b.at + b.len + la)]];
+  }
+  if (a.kind === 'delete') {
+    const d = delAfterDel({ kind: 'delete', at: b.at, len: b.len }, a.at, a.len);
+    return [[a], d ? [{ ...b, at: d.at, len: d.len }] : []];
+  }
+  if (a.kind === 'mark') return [[a], withoutKey(b, a.key, a.at, a.at + a.len)];
+  if (a.kind === 'para') return [[a], withoutKey(b, PARA_MARK_PREFIX + a.key, a.at, a.at + 1)];
+  return [[a], [b]];
+}
+
 function pair(a: LocalChange, b: RemoteOp): [LocalChange[], RemoteOp[]] {
   if (a.kind === 'sel') return [[{ kind: 'sel', anchor: mapPos(a.anchor, b), head: mapPos(a.head, b) }], [b]];
+  if (b.kind === 'format') return pairFormat(a, b);
   if (a.kind === 'mark') {
     // 서식 범위: 원격 삽입이 안에 들어오면 둘로 나눈다 (넣은 글자는 이 서식 대상이 아니다). 원격 삭제는 범위를 줄인다
     if (b.kind === 'insert') {

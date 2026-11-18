@@ -121,6 +121,10 @@ export interface ParaAttrs {
   pageBreakBefore?: true;
 }
 export type ParaKey = keyof ParaAttrs;
+/** Loro에서 문단 속성 마크 키의 접두사 (마크 키에는 ':'를 쓸 수 없다, 10 §3) */
+export const PARA_MARK_PREFIX = 'p_';
+/** 모델이 아는 문단 속성 키 */
+export const PARA_KEYS: readonly ParaKey[] = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore'];
 const NO_ATTRS: ParaAttrs = Object.freeze({});
 
 /**
@@ -140,7 +144,11 @@ export type RawChange =
   /** 새 구획을 순서 목록에서 before 바로 앞에 넣는다 */
   | { kind: 'list'; seg: SegId; before: SegId }
   | { kind: 'hidden'; segs: SegId[]; value: boolean }
-  | { kind: 'flag'; seg: SegId; flag: 'placeholder' | 'used' };
+  | { kind: 'flag'; seg: SegId; flag: 'placeholder' | 'used' }
+  /** 스타일 정의 하나 (null = 없음, 10 §3: Loro 맵 styles) */
+  | { kind: 'style'; name: string; def: Style | null }
+  /** 목록 정의 하나 (null = 없음, Loro 맵 lists) */
+  | { kind: 'listDef'; id: string; def: ListDef | null };
 
 /** 원격 텍스트 델타 (UTF-16 단위). 구획 표식은 attributes.seg에 키를 가진다 */
 export type TextDelta = Array<{ retain?: number; insert?: string; delete?: number; attributes?: Record<string, unknown> }>;
@@ -184,6 +192,9 @@ interface Run {
   at: number;
   len: number;
   codes: number[];
+  /** 원소마다 서식 묶음 번호와 카운터 (되살릴 때 서식·문단 속성을 함께 보낸다) */
+  fmts: number[];
+  ctrs: number[];
 }
 
 const CHUNK = 512;
@@ -634,6 +645,16 @@ export class Doc {
 
   // ── 스타일 (10 §2.3) ─────────────────────────────
 
+  /**
+   * 서식이 전혀 없는 문서인가 (글자 서식 묶음이 빈 것뿐, 문단 속성 없음, 스타일 기본, 목록 없음). 보수적이다: 쓰지 않는
+   * 묶음이 남아 있으면 false. 저장·재기반의 빠른 길에 쓴다.
+   */
+  get plain(): boolean {
+    if (this.markSets.length > 1 || this.paraAttrsMap.size > 0 || this.listMap.size > 0) return false;
+    if (this.styleMap.size !== DEFAULT_STYLES.length) return false;
+    return DEFAULT_STYLES.every((st) => this.styleMap.get(st.name) === st);
+  }
+
   /** 스타일 정의가 바뀔 때마다 오른다 (풀이 캐시 키) */
   get stylesVersion(): number {
     return this._stylesVersion;
@@ -686,6 +707,7 @@ export class Doc {
   private writeStyle(name: string, def: Style | undefined): void {
     if (def) this.styleMap.set(name, Object.freeze(structuredClone(def)));
     else this.styleMap.delete(name);
+    this.emit({ kind: 'style', name, def: def ? structuredClone(def) : null });
     this.resolvedStyles.clear();
     this._stylesVersion++;
     let lo = -1;
@@ -744,6 +766,7 @@ export class Doc {
   private writeList(id: string, def: ListDef | undefined): void {
     if (def) this.listMap.set(id, Object.freeze(structuredClone(def)));
     else this.listMap.delete(id);
+    this.emit({ kind: 'listDef', id, def: def ? structuredClone(def) : null });
     this._listEpoch++;
     let lo = -1;
     let hi = -1;
@@ -1158,6 +1181,8 @@ export class Doc {
       let pos = 0;
       for (const op of delta) {
         if (op.retain !== undefined) {
+          // 속성만 바꾸는 retain = 원격 서식 변경 (10 §3)
+          if (op.attributes && op.retain > 0) this.remoteFormat(pos, op.retain, op.attributes);
           pos += op.retain;
         } else if (op.insert !== undefined) {
           if (op.insert.length === 0) continue;
@@ -1174,6 +1199,28 @@ export class Doc {
         } else if (op.delete !== undefined && op.delete > 0) {
           this.remoteDelete(pos, op.delete);
         }
+      }
+    } finally {
+      this.muted = false;
+    }
+  }
+
+  /**
+   * 원격 스타일·목록 정의 (Loro 맵 styles·lists의 내용, 10 §3). null 값은 그 이름을 지운 것이고, 맵에 없는 기본 스타일은
+   * 기본 정의다. 변경 기록·실행 취소 기록은 남기지 않는다.
+   */
+  applyRemoteDefs(styles: Record<string, Style | null> | null, lists: Record<string, ListDef | null> | null): void {
+    this.muted = true;
+    try {
+      if (styles) {
+        const want = new Map<string, Style | undefined>(DEFAULT_STYLES.map((st) => [st.name, st]));
+        for (const [name, def] of Object.entries(styles)) want.set(name, def ? { ...def, name } : undefined);
+        for (const name of this.styleMap.keys()) if (!want.has(name)) want.set(name, undefined);
+        for (const [name, def] of want) if (!sameValue(this.styleMap.get(name), def)) this.writeStyle(name, def);
+      }
+      if (lists) for (const [id, def] of Object.entries(lists)) {
+        const d = def ? { ...def, id } : undefined;
+        if (!sameValue(this.listMap.get(id), d)) this.writeList(id, d);
       }
     } finally {
       this.muted = false;
@@ -1687,11 +1734,13 @@ export class Doc {
         const item = sorted[k]!;
         if (item.chunk === ch && item.i === e) {
           if (!cur) {
-            cur = { chunk: ch, i: e, at: dead ? this.u16At(ch, e) : 0, len: 0, codes: [] };
+            cur = { chunk: ch, i: e, at: dead ? this.u16At(ch, e) : 0, len: 0, codes: [], fmts: [], ctrs: [] };
             runs.push(cur);
           }
           cur.len += width16(ch.codes[e]!);
           cur.codes.push(ch.codes[e]!);
+          cur.fmts.push(ch.fmt[e]!);
+          cur.ctrs.push(ch.ctrs[e]!);
           if (++k >= sorted.length) break sweep;
         } else if (ch.dead[e] !== TOMB) {
           cur = null;
@@ -1706,7 +1755,28 @@ export class Doc {
     if (dead) {
       for (let r = runs.length - 1; r >= 0; r--) this.emit({ kind: 'delete', at: runs[r]!.at, len: runs[r]!.len });
     } else {
-      for (const run of runs) this.emit({ kind: 'insert', at: this.u16At(run.chunk, run.i), text: fromCodes(run.codes) });
+      // 되살린 글자는 지우기 전 서식을 갖고 있다: 같은 서식끼리 넣고, ¶의 문단 속성도 다시 보낸다 (10 §3)
+      for (const run of runs) {
+        let at = this.u16At(run.chunk, run.i);
+        let k = 0;
+        const paras: Array<{ at: number; attrs: ParaAttrs }> = [];
+        while (k < run.codes.length) {
+          let j = k + 1;
+          while (j < run.codes.length && run.fmts[j] === run.fmts[k]) j++;
+          const codes = run.codes.slice(k, j);
+          const f = run.fmts[k]!;
+          this.emit(f ? { kind: 'insert', at, text: fromCodes(codes), marks: this.markSets[f]! } : { kind: 'insert', at, text: fromCodes(codes) });
+          for (let q = k; q < j; q++) {
+            if (run.codes[q] === PARA_CODE) {
+              const attrs = this.paraAttrsMap.get(run.ctrs[q]!);
+              if (attrs) paras.push({ at, attrs });
+            }
+            at += width16(run.codes[q]!);
+          }
+          k = j;
+        }
+        for (const p of paras) for (const key of Object.keys(p.attrs) as ParaKey[]) this.emit({ kind: 'para', at: p.at, key, value: p.attrs[key] });
+      }
     }
   }
 
@@ -1733,13 +1803,78 @@ export class Doc {
     const fb = this.fallback();
     const d = shown ? this.dispStartOf(seg) + raw - this.rawStartOf(seg) : 0;
     const wasOpen = this.isOpen(seg);
-    this.insertIntoChunk(chunk, index, codes, 0, fmt);
+    const first = this.insertIntoChunk(chunk, index, codes, 0, fmt);
+    // 넣은 ¶의 문단 속성 (p_* 마크, ¶에 붙은 것만)
+    if (attributes) {
+      const paraKeys = Object.keys(attributes).filter((k) => k.startsWith(PARA_MARK_PREFIX) && attributes[k] !== null && attributes[k] !== undefined);
+      if (paraKeys.length)
+        for (let k = 0; k < codes.length; k++)
+          if (codes[k] === PARA_CODE) for (const pk of paraKeys) this.writeParaAttr(first + k, -1, pk.slice(PARA_MARK_PREFIX.length) as ParaKey, attributes[pk]);
+    }
     this.visible += codes.length;
     seg.len += codes.length;
     seg.openCache = null;
     void snap;
     if (this.fallback() !== fb || this.isOpen(seg) !== wasOpen) this.rebuildParagraphs();
     else if (shown) this.updateParagraphs(d, d + codes.length, codes.length);
+    this._version++;
+  }
+
+  /**
+   * 원격 서식 변경 [pos, pos+len16) (UTF-16, 구획 표식 포함 위치). 글자 서식 키는 그 글자들에, 문단 속성 키(p_*)는
+   * 그 안의 ¶에만 건다 (¶ 옆으로 번진 마크는 읽지 않는다, 2-1 발견 3). 값 null = 해제.
+   */
+  private remoteFormat(pos: number, len16: number, attributes: Record<string, unknown>): void {
+    const marks: Array<[MarkKey, unknown]> = [];
+    const paraKeys: Array<[ParaKey, unknown]> = [];
+    for (const [k, v] of Object.entries(attributes)) {
+      if ((MARK_KEYS as readonly string[]).includes(k)) marks.push([k as MarkKey, v ?? undefined]);
+      else if (k.startsWith(PARA_MARK_PREFIX)) paraKeys.push([k.slice(PARA_MARK_PREFIX.length) as ParaKey, v ?? undefined]);
+    }
+    if (marks.length === 0 && paraKeys.length === 0) return;
+    const { chunk, index } = this.locateU16(pos);
+    let left = len16;
+    let lo = Infinity;
+    let hi = -1;
+    let n = 0;
+    outer: for (let c = chunk.index; c < this.chunks.length; c++) {
+      const ch = this.chunks[c]!;
+      for (let i = c === chunk.index ? index : 0; i < ch.len; i++) {
+        const st = ch.dead[i];
+        if (st === TOMB) continue;
+        let changed = false;
+        if (st !== STRUCT) {
+          let f = ch.fmt[i]!;
+          for (const [k, v] of marks) f = this.withMark(f, k, v);
+          if (f !== ch.fmt[i]) {
+            ch.fmt[i] = f;
+            changed = true;
+          }
+          if (paraKeys.length && ch.codes[i] === PARA_CODE) {
+            const ctr = ch.ctrs[i]!;
+            const cur = this.paraAttrsMap.get(ctr) ?? NO_ATTRS;
+            for (const [k, v] of paraKeys) {
+              if (sameValue(cur[k], v)) continue;
+              this.writeParaAttr(ctr, -1, k, v);
+              changed = true;
+            }
+          }
+        }
+        if (changed) {
+          n++;
+          const { off, hidden } = this.elementDisplay(ch, i);
+          if (!hidden) {
+            lo = Math.min(lo, off);
+            hi = Math.max(hi, off);
+          }
+        }
+        left -= width16(ch.codes[i]!);
+        if (left <= 0) break outer;
+      }
+    }
+    if (n === 0) return;
+    if (n > 2000) this.rebuildParagraphs();
+    else if (hi >= 0) this.updateParagraphs(lo, hi + 1, 0);
     this._version++;
   }
 

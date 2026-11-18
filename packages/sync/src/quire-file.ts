@@ -8,8 +8,9 @@
  *    다르면(외부 도구가 JSON만 고친 경우) crdt.bin을 버리고 document.json에서 새로 만든다.
  */
 import type { LoroDoc } from 'loro-crdt';
-import { canonicalJson, displayText, migrateQuire, quireFromText, sha256Hex, stateHash, textFromQuire, type QuireDoc } from './canonical';
-import { newLoro } from './shape';
+import type { Doc } from '@quire/model';
+import { canonicalJson, docFromQuire, migrateQuire, quireFromDoc, quireFromText, sha256Hex, stateHash, textFromQuire, type QuireDoc } from './canonical';
+import { docFromLoro, newLoro } from './shape';
 import { readZip, writeZip, type ZipEntry } from './zip';
 
 export const MIMETYPE = 'application/vnd.quire';
@@ -31,9 +32,9 @@ export interface Manifest {
  * 저장: 화면 텍스트로 document.json을 만들고, loro를 주면 그 스냅샷을 history/crdt.bin으로 넣는다.
  * loro를 주면 text는 loro의 화면 텍스트를 쓴다.
  */
-export async function packQuire(src: { text: string } | { loro: LoroDoc }): Promise<Uint8Array<ArrayBuffer>> {
-  const text = 'loro' in src ? displayText(src.loro) : src.text;
-  const doc = quireFromText(text);
+export async function packQuire(src: { text: string } | { loro: LoroDoc } | { doc: Doc }): Promise<Uint8Array<ArrayBuffer>> {
+  // 서식이 있으면 함께 (10, 07 §4)
+  const doc = 'loro' in src ? quireFromDoc(docFromLoro(src.loro)) : 'doc' in src ? quireFromDoc(src.doc) : quireFromText(src.text);
   const json = encoder.encode(canonicalJson(doc));
   const files: Manifest['files'] = { 'document.json': { sha256: await sha256Hex(json) } };
   const entries: ZipEntry[] = [
@@ -83,12 +84,12 @@ export async function openQuire(bytes: Uint8Array): Promise<OpenedQuire> {
   let crdt: Uint8Array | null = get('history/crdt.bin') ?? null;
   if (crdt) {
     // 정본을 다시 정규화해 비교한다 (손으로 고친 JSON의 공백·키 순서 차이는 무시)
-    const want = await stateHash(quireFromText(text));
+    const want = await stateHash(quireFromDoc(docFromQuire(doc).doc));
     let have: string | null = null;
     try {
       const loro = newLoro(1);
       loro.import(crdt);
-      have = await stateHash(quireFromText(displayText(loro)));
+      have = await stateHash(quireFromDoc(docFromLoro(loro)));
     } catch (e) {
       notes.push(`history/crdt.bin: cannot be read (${String(e)})`);
     }

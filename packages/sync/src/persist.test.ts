@@ -172,4 +172,29 @@ describe('server storage', () => {
     const a = await peer(`ws://localhost:${s.port}/${name}`, 41, '무시됨');
     expect(a.client.doc.text()).toBe('올린\n파일\n');
   });
+
+  it('keeps formats of an uploaded .quire file in the room, its JSON and a joining client (2-6)', async () => {
+    const s = await serve({});
+    const name = room();
+    const { packQuire } = await import('./quire-file');
+    const { Doc } = await import('@quire/model');
+    const doc = Doc.fromText('제목\n굵은 본문');
+    doc.setParaAttr(0, 'style', 'h1');
+    doc.setParaAttr(1, 'align', 'center');
+    doc.format(3, 5, 'bold', true);
+    doc.setStyle('h1', { ...doc.style('h1')!, marks: { bold: true, size: 30000 } });
+    const put = await fetch(`http://localhost:${s.port}/${name}.quire`, { method: 'PUT', body: await packQuire({ doc }) });
+    expect(put.status).toBe(201);
+    const json = (await (await fetch(`http://localhost:${s.port}/${name}.json`)).json()) as {
+      stories: { body: Array<{ p: unknown; c: unknown }> };
+      styles: Record<string, { marks: unknown }>;
+    };
+    expect(json.stories.body[0]!.p).toEqual({ style: 'h1' });
+    expect(json.stories.body[1]).toEqual({ p: { align: 'center' }, c: [{ t: '굵은', m: { bold: true } }, { t: ' 본문' }] });
+    expect(json.styles['h1']!.marks).toEqual({ bold: true, size: 30000 });
+    const a = await peer(`ws://localhost:${s.port}/${name}`, 42, '무시됨');
+    expect(a.client.doc.marksAt(3)).toEqual({ bold: true });
+    expect(a.client.doc.paraAttrs(1)).toEqual({ align: 'center' });
+    expect(a.client.doc.style('h1')!.marks).toEqual({ bold: true, size: 30000 });
+  });
 });

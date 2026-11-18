@@ -14,7 +14,10 @@ export { canonicalJson, displayText, docFromQuire, migrateQuire, quireFromDoc, q
 export type { QuireDoc, QuireParagraph, QuireRun } from './canonical';
 export { openQuire, packQuire, MIMETYPE, FORMAT_VERSION } from './quire-file';
 export type { OpenedQuire, Manifest } from './quire-file';
-export { applyHunks, compactLoro, diffText, readEpoch, rebaseHunks, rebaseOnto, META } from './epoch';
+export { applyHunks, compactDoc, compactLoro, diffText, readEpoch, rebaseHunks, rebaseOnto, syncFormats, META } from './epoch';
 export type { Hunk, RebaseInfo } from './epoch';
 export { parseRebase } from './ws';
 export { LoroWriter, initLoro, newLoro, readRaw, readState, displayOrderFromLoro, SEG_MARK, TEXT, ORDER, END } from './shape';
+export { applyFormats, docFromLoro, formatDelta, readDefs, readFormats, writeFormats, STYLES, LISTS } from './shape';
+export type { FormatState } from './shape';
+export type { Defs } from './protocol';

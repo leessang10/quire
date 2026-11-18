@@ -9,10 +9,9 @@
  *   새 판 = 새 판 처음 상태 + diff(F → M)
  * diff는 화면 텍스트의 문단·글자 차이라서, 오프라인 동안의 문단 이동은 "지우고 다시 넣기"가 된다.
  */
-import { Doc } from '@quire/model';
+import { DEFAULT_STYLES, MARK_KEYS, PARA_KEYS, type Doc, type MarkKey } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
-import { displayText } from './canonical';
-import { LoroWriter, initLoro, newLoro, readRaw, readState, type PeerId } from './shape';
+import { LoroWriter, docFromLoro, initLoro, newLoro, writeFormats, type PeerId } from './shape';
 
 export const META = 'meta';
 
@@ -21,13 +20,19 @@ export function readEpoch(loro: LoroDoc): string {
   return typeof v === 'string' ? v : '';
 }
 
-/** 화면 텍스트(끝 ¶ 포함)로 새 판의 Loro 문서를 만든다 */
-export function compactLoro(text: string, epoch: string, peer: PeerId): LoroDoc {
+/** 화면 텍스트(끝 ¶ 포함)로 새 판의 Loro 문서를 만든다. doc을 주면 그 서식·문단 속성·정의도 옮긴다 (10 §3) */
+export function compactLoro(text: string, epoch: string, peer: PeerId, doc?: Doc): LoroDoc {
   const loro = newLoro(peer);
   initLoro(loro, text.endsWith('\n') ? text.slice(0, -1) : text, peer);
+  if (doc) writeFormats(loro, doc);
   loro.getMap(META).set('epoch', epoch);
   loro.commit();
   return loro;
+}
+
+/** 서식 있는 문서로 새 판을 만든다 (서버 압축·파일 열기) */
+export function compactDoc(doc: Doc, epoch: string, peer: PeerId): LoroDoc {
+  return compactLoro(doc.text(), epoch, peer, doc);
 }
 
 /** a를 b로 바꾸는 변경 (a 기준 코드포인트 위치, 앞에서부터, 겹치지 않음) */
@@ -231,18 +236,63 @@ export function rebaseOnto(old: LoroDoc, info: RebaseInfo, peer: PeerId): { loro
   fresh.import(info.base);
   if (info.oldVV.length === 0) return { loro: fresh, lost: true };
   if (info.update.length) old.import(info.update);
-  // F의 화면 텍스트 = 새 판 처음 상태의 화면 텍스트 (서버가 F의 화면 텍스트로 새 판을 만든다). 옛 문서를 F 시점으로
+  // F의 화면 = 새 판 처음 상태의 화면 (서버가 F의 화면·서식으로 새 판을 만든다). 옛 문서를 F 시점으로
   // 갈라 읽는 것(forkAt)보다 훨씬 싸다: 10만 문단에서 13초 → 새 판은 어차피 읽어야 한다
-  const { raw, keys } = readRaw(fresh);
-  const doc = Doc.fromRaw(raw, keys, readState(fresh), fresh.peerIdStr);
-  const hunks = diffText(doc.text(), displayText(old));
-  if (hunks.length === 0) return { loro: fresh, lost: false };
+  const doc = docFromLoro(fresh);
+  const target = docFromLoro(old);
+  const hunks = diffText(doc.text(), target.text());
   const writer = new LoroWriter(fresh, () => doc.segmentOrder());
   doc.observe((c) => writer.apply(c));
   applyHunks(doc, hunks);
+  // 텍스트를 맞춘 뒤 서식 차이 (글자·¶ 서식, 문단 속성, 스타일·목록 정의)
+  syncFormats(doc, target);
   doc.observe(null);
   fresh.commit();
   return { loro: fresh, lost: false };
+}
+
+/**
+ * 화면 텍스트가 같은 두 문서에서 doc의 서식을 target과 같게 한다 (doc의 연산으로: 변경 기록이 나간다).
+ * 글자 서식은 키마다 값이 같은 구간으로 묶어 format 한 번씩, 문단 속성은 문단 순서대로 짝지어, 정의는 이름·id로.
+ */
+export function syncFormats(doc: Doc, target: Doc): void {
+  if (doc.text() !== target.text()) throw new Error('syncFormats: texts differ');
+  if (doc.plain && target.plain) return;
+  const same = (x: unknown, y: unknown) => x === y || (x !== undefined && y !== undefined && JSON.stringify(x) === JSON.stringify(y));
+  const n = target.paragraphs().length;
+  for (let i = 0; i < n; i++) {
+    const pa = doc.paragraphs()[i]!;
+    const pb = target.paragraphs()[i]!;
+    // 양쪽 다 서식·속성이 없는 문단은 건너뛴다 (큰 문서 재기반의 대부분)
+    if (!pa.fmt && !pb.fmt && pa.mark === 0 && pb.mark === 0 && !hasKeys(pa.attrs) && !hasKeys(pb.attrs)) continue;
+    const len = pb.end - pb.start + 1; // ¶ 포함
+    const want = (k: number) => (k < len - 1 ? (pb.fmt ? pb.fmt[k]! : 0) : pb.mark);
+    const have = (k: number) => {
+      const p = doc.paragraphs()[i]!;
+      return k < len - 1 ? (p.fmt ? p.fmt[k]! : 0) : p.mark;
+    };
+    for (const key of MARK_KEYS as readonly MarkKey[]) {
+      let k = 0;
+      while (k < len) {
+        const v = target.markSet(want(k))[key];
+        if (same(doc.markSet(have(k))[key], v)) {
+          k++;
+          continue;
+        }
+        let j = k + 1;
+        while (j < len && same(target.markSet(want(j))[key], v) && !same(doc.markSet(have(j))[key], v)) j++;
+        doc.format(pa.start + k, pa.start + j, key, v);
+        k = j;
+      }
+    }
+    const aa = doc.paraAttrs(i);
+    const ab = target.paraAttrs(i);
+    for (const key of PARA_KEYS) if (!same(aa[key], ab[key])) doc.setParaAttr(i, key, ab[key]);
+  }
+  const names = new Set([...doc.styles().map((st) => st.name), ...target.styles().map((st) => st.name), ...DEFAULT_STYLES.map((st) => st.name)]);
+  for (const name of names) if (!same(doc.style(name), target.style(name))) doc.setStyle(name, target.style(name));
+  const ids = new Set([...doc.lists().map((l) => l.id), ...target.lists().map((l) => l.id)]);
+  for (const id of ids) if (!same(doc.listDef(id), target.listDef(id))) doc.setList(id, target.listDef(id));
 }
 
 /**
@@ -307,4 +357,9 @@ export function rebaseHunks(ours: Hunk[], theirs: Hunk[]): Hunk[] {
     }
   }
   return out;
+}
+
+function hasKeys(o: object): boolean {
+  for (const _ in o) return true;
+  return false;
 }
