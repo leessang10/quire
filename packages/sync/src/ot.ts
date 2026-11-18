@@ -11,16 +11,20 @@
 import { OBJ_MARK_PREFIX, PARA_MARK_PREFIX, type RawChange } from '@quire/model';
 
 /** 원격 텍스트 연산 (Loro 이벤트 델타를 차례로 적용할 단위로 편 것) */
-export type RemoteOp =
+export type RemoteOp = (
   | { kind: 'insert'; at: number; text: string; attributes?: Record<string, unknown> }
   | { kind: 'delete'; at: number; len: number }
   /** 서식만 바꿈 (Loro 델타의 retain + attributes, 10 §3). 값 null = 해제. 위치·길이는 바뀌지 않는다 */
-  | { kind: 'format'; at: number; len: number; attributes: Record<string, unknown> };
+  | { kind: 'format'; at: number; len: number; attributes: Record<string, unknown> }
+) & {
+  /** 본문이 아닌 스토리의 연산 (11 §2.5). 위치는 그 스토리 텍스트 기준 */
+  story?: string;
+};
 
 type Fmt = Extract<RemoteOp, { kind: 'format' }>;
 
 /** 로컬 변경: Doc의 변경 기록 + 선택 영역(프레즌스) */
-export type LocalChange = RawChange | { kind: 'sel'; anchor: number; head: number };
+export type LocalChange = (RawChange | { kind: 'sel'; anchor: number; head: number }) & { story?: string };
 
 type Del = { kind: 'delete'; at: number; len: number };
 
@@ -28,7 +32,9 @@ type Del = { kind: 'delete'; at: number; len: number };
 export function deltaToOps(
   delta: Array<{ retain?: number; insert?: string; delete?: number; attributes?: Record<string, unknown> }>,
   out: RemoteOp[] = [],
+  story?: string,
 ): RemoteOp[] {
+  const start = out.length;
   let pos = 0;
   for (const d of delta) {
     if (d.retain !== undefined) {
@@ -51,6 +57,7 @@ export function deltaToOps(
       out.push({ kind: 'delete', at: pos, len: d.delete });
     }
   }
+  if (story !== undefined) for (let k = start; k < out.length; k++) out[k] = { ...out[k]!, story };
   return out;
 }
 
@@ -130,7 +137,16 @@ function pairFormat(a: LocalChange, b: Fmt): [LocalChange[], RemoteOp[]] {
   return [[a], [b]];
 }
 
+/** 스토리가 다르면 서로 영향이 없다. 같으면 같은 스토리 표시를 결과에 다시 붙인다 (조각낸 연산도) */
 function pair(a: LocalChange, b: RemoteOp): [LocalChange[], RemoteOp[]] {
+  if ((a.story ?? null) !== (b.story ?? null)) return [[a], [b]];
+  const st = a.story;
+  const [x, y] = pairSame(a, b);
+  if (st === undefined) return [x, y];
+  return [x.map((c) => (c.story === st ? c : { ...c, story: st })), y.map((o) => (o.story === st ? o : { ...o, story: st }))];
+}
+
+function pairSame(a: LocalChange, b: RemoteOp): [LocalChange[], RemoteOp[]] {
   if (a.kind === 'sel') return [[{ kind: 'sel', anchor: mapPos(a.anchor, b), head: mapPos(a.head, b) }], [b]];
   if (b.kind === 'format') return pairFormat(a, b);
   if (a.kind === 'mark') {
@@ -198,6 +214,6 @@ export function transform(A: readonly LocalChange[], B: readonly RemoteOp[]): [L
 
 /** 위치 하나를 로컬 변경 목록 뒤의 좌표로 (원격 캐럿을 메인 Doc 좌표로 옮길 때) */
 export function mapPosThrough(pos: number, changes: readonly LocalChange[]): number {
-  for (const c of changes) pos = mapPos(pos, c);
+  for (const c of changes) if (c.story === undefined) pos = mapPos(pos, c);
   return pos;
 }

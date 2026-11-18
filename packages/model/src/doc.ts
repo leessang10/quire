@@ -93,7 +93,9 @@ export type Op =
   /** 목록 정의 하나 (undefined = 없음, 10 §2.4) */
   | { type: 'list'; id: string; before: ListDef | undefined; after: ListDef | undefined }
   /** 개체 원소(카운터) 하나의 속성 키 하나 (11 §2.1) */
-  | { type: 'obj'; ctr: number; key: ObjKey; before: unknown; after: unknown };
+  | { type: 'obj'; ctr: number; key: ObjKey; before: unknown; after: unknown }
+  /** 다른 스토리의 연산 (11 §2.5: 여러 스토리 트랜잭션). Document가 그 스토리에 적용한다 */
+  | { type: 'story'; story: string; op: Op };
 
 /** 글자 서식 묶음 (10 §2.1). 값이 없는 키는 서식 없음. 크기는 1/1000pt */
 export interface MarkSet {
@@ -186,7 +188,12 @@ export type RawChange =
   /** 목록 정의 하나 (null = 없음, Loro 맵 lists) */
   | { kind: 'listDef'; id: string; def: ListDef | null }
   /** 개체 속성 키 하나 (at = 개체 글자의 UTF-16 위치, Loro 마크 o_<키>) */
-  | { kind: 'obj'; at: number; key: ObjKey; value: unknown };
+  | { kind: 'obj'; at: number; key: ObjKey; value: unknown }
+  /**
+   * 가벼운 스토리(11 §2.5)의 끝 ¶ 속성 하나: 끝 ¶는 Loro 텍스트에 없으므로(유령 ¶) 맵에 둔다.
+   * key는 글자 서식 키(¶의 서식) 또는 p_<문단 속성 키>
+   */
+  | { kind: 'tail'; key: string; value: unknown };
 
 /** 원격 텍스트 델타 (UTF-16 단위). 구획 표식은 attributes.seg에 키를 가진다 */
 export type TextDelta = Array<{ retain?: number; insert?: string; delete?: number; attributes?: Record<string, unknown> }>;
@@ -293,6 +300,11 @@ export class Doc {
   private segByBrk = new Map<number, Seg>();
   /** 동기화 문서: 마지막 구획(tail)은 보이지 않는 보초 */
   private sentinel = false;
+  /**
+   * 가벼운 스토리의 유령 ¶ (11 §2.5): 끝 ¶가 Loro 텍스트에 없는 스토리. 그 원소 카운터, 아니면 -1.
+   * 표 셀처럼 두 피어가 동시에 처음 만들 수 있는 스토리는 보초·자리표시를 넣으면 둘이 되므로, 빈 텍스트 = 빈 문단 하나로 본다.
+   */
+  private ghost = -1;
   private listener: ((c: RawChange) => void) | null = null;
   /** 원격 변경 적용 중 (변경 기록을 보내지 않음) */
   private muted = false;
@@ -379,9 +391,10 @@ export class Doc {
    * CRDT 텍스트에서 동기화 문서를 만든다. raw는 구획 표식을 U+E000으로 담은 전체 텍스트(보초 ¶로 끝남),
    * keys는 표식마다 구획 키(순서대로), state는 순서·숨김·자리표시 상태.
    */
-  static fromRaw(raw: string, keys: SegId[], state: SegState, peer?: string): Doc {
+  static fromRaw(raw: string, keys: SegId[], state: SegState, peer?: string, story = false): Doc {
     const doc = new Doc(peer);
-    doc.sentinel = true;
+    doc.sentinel = !story;
+    if (story) raw += PARA; // 유령 ¶ (Loro 텍스트에는 없음)
     doc.chunkIdOf = new Int32Array(raw.length + 1024);
     const chunks: Chunk[] = [doc.newChunk()];
     let chunk = chunks[0]!;
@@ -414,7 +427,8 @@ export class Doc {
       }
     });
     segs.push(newSeg('tail', -1, len));
-    if (len !== 1) throw new Error('fromRaw: the last segment must be a single paragraph mark (sentinel)');
+    if (story) doc.ghost = doc.counter - 1;
+    else if (len !== 1) throw new Error('fromRaw: the last segment must be a single paragraph mark (sentinel)');
     doc.chunks = chunks;
     doc.segs = segs;
     doc.segMap = new Map(segs.map((s) => [s.id, s]));
@@ -948,8 +962,14 @@ export class Doc {
   }
 
   /** paragraphRuns의 반대: 서식·속성이 있는 문서를 만든다 (실행 취소 기록 없음) */
-  static fromParagraphRuns(paras: Array<{ attrs?: ParaAttrs; runs: Array<{ text: string; marks?: MarkSet; obj?: ObjAttrs }> }>, peer?: string): Doc {
-    const doc = Doc.fromText(paras.map((p) => p.runs.map((r) => r.text).join('')).join('\n'), peer);
+  static fromParagraphRuns(
+    paras: Array<{ attrs?: ParaAttrs; runs: Array<{ text: string; marks?: MarkSet; obj?: ObjAttrs }> }>,
+    peer?: string,
+    /** 가벼운 스토리로 (끝 ¶는 유령 ¶, 11 §2.5) */
+    story = false,
+  ): Doc {
+    const text = paras.map((p) => p.runs.map((r) => r.text).join('')).join('\n');
+    const doc = story ? Doc.fromRaw(text, [], { order: [], hidden: [], placeholder: [], used: [] }, peer, true) : Doc.fromText(text, peer);
     let off = 0;
     paras.forEach((p, i) => {
       for (const r of p.runs) {
@@ -982,6 +1002,15 @@ export class Doc {
   /** 바뀐 원소들(문서 순서)을 저장 위치가 이어진 구간마다 mark 변경 기록으로 */
   private emitMarks(changed: Array<{ chunk: Chunk; i: number }>, key: MarkKey, value: unknown): void {
     if (!this.listener || this.muted || changed.length === 0) return;
+    if (this.ghost >= 0) {
+      // 유령 ¶의 서식은 맵으로 (Loro 텍스트에 없는 글자)
+      const g = changed.findIndex((e) => e.chunk.ctrs[e.i] === this.ghost);
+      if (g >= 0) {
+        this.emit({ kind: 'tail', key, value: value ?? undefined });
+        changed = changed.filter((_, k) => k !== g);
+        if (changed.length === 0) return;
+      }
+    }
     let start = this.u16At(changed[0]!.chunk, changed[0]!.i);
     let len = 0;
     let prev: { chunk: Chunk; i: number } | null = null;
@@ -1027,8 +1056,50 @@ export class Doc {
     }
     this._version++;
     if (this.listener && !this.muted) {
-      const chunk = this.chunkOfCtr(ctr);
-      this.emit({ kind: 'para', at: this.u16At(chunk, chunk.find(ctr)), key, value: value ?? undefined });
+      if (ctr === this.ghost) this.emit({ kind: 'tail', key: PARA_MARK_PREFIX + key, value: value ?? undefined });
+      else {
+        const chunk = this.chunkOfCtr(ctr);
+        this.emit({ kind: 'para', at: this.u16At(chunk, chunk.find(ctr)), key, value: value ?? undefined });
+      }
+    }
+  }
+
+  /** 원격: 유령 ¶의 속성을 맵 전체(tail)와 같게 한다 (맵에 없는 키는 지운다) */
+  applyTailAll(tail: Record<string, unknown>): void {
+    if (this.ghost < 0) return;
+    const chunk = this.chunkOfCtr(this.ghost);
+    const keys = new Set(Object.keys(tail));
+    for (const k of Object.keys(this.paraAttrsMap.get(this.ghost) ?? NO_ATTRS)) keys.add(PARA_MARK_PREFIX + k);
+    for (const k of Object.keys(this.markSets[chunk.fmt[chunk.find(this.ghost)]!]!)) keys.add(k);
+    for (const k of keys) this.applyTail(k, tail[k]);
+  }
+
+  /** 가벼운 스토리인가 (끝 ¶가 Loro에 없음) */
+  get isStory(): boolean {
+    return this.ghost >= 0;
+  }
+
+  /**
+   * 원격: 유령 ¶의 속성 하나 (맵 tp:<스토리>의 항목). 글자 서식 키면 ¶의 서식, p_<키>면 문단 속성. 기록하지 않는다
+   */
+  applyTail(key: string, value: unknown): void {
+    if (this.ghost < 0) return;
+    this.muted = true;
+    try {
+      const chunk = this.chunkOfCtr(this.ghost);
+      const i = chunk.find(this.ghost);
+      if (key.startsWith(PARA_MARK_PREFIX)) {
+        const k = key.slice(PARA_MARK_PREFIX.length) as ParaKey;
+        const cur = this.paraAttrsMap.get(this.ghost) ?? NO_ATTRS;
+        if (!sameValue(cur[k], value ?? undefined)) this.writeParaAttr(this.ghost, -1, k, value ?? undefined);
+      } else if ((MARK_KEYS as readonly string[]).includes(key)) {
+        const next = this.withMark(chunk.fmt[i]!, key as MarkKey, value ?? undefined);
+        if (next === chunk.fmt[i]) return;
+        chunk.fmt[i] = next;
+      } else return;
+      this.rebuildParagraphs();
+    } finally {
+      this.muted = false;
     }
   }
 
@@ -1193,6 +1264,8 @@ export class Doc {
     const n = this.paras.length;
     if (!this.segmentsEnabled) return [];
     if (i < 0 || j < i || j >= n || to < 0 || to > n || (to >= i && to <= j + 1)) return [];
+    // 가벼운 스토리: 유령 ¶를 가진 끝 문단은 옮기지 않고, 끝 뒤로도 옮기지 않는다
+    if (this.ghost >= 0 && (j === n - 1 || to === n)) return [];
     const targetOffset = to < n ? this.paras[to]!.start : -1;
     const run = this.isolateRun(i, j);
     let target: Seg | null = null;
@@ -1243,6 +1316,7 @@ export class Doc {
     if (!this.segmentsEnabled) return [];
     if (i < 0 || j < i || j >= n) return [];
     if (i === 0 && j === n - 1 && !this.sentinel) return [];
+    if (this.ghost >= 0 && j === n - 1) return [];
     if (this.sentinel && this.fallback() !== null) return [];
     const run = this.isolateRun(i, j).filter((s) => !s.hidden);
     if (this.sentinel && i === 0 && j === n - 1 && !this.segs.some((s) => s.placeholder && !s.used && !s.hidden && !run.includes(s)))
@@ -1262,6 +1336,7 @@ export class Doc {
     else if (op.type === 'style') this.writeStyle(op.name, op.after);
     else if (op.type === 'list') this.writeList(op.id, op.after);
     else if (op.type === 'obj') this.writeObjAttr(op.ctr, op.key, op.after);
+    else if (op.type === 'story') throw new Error('Doc.apply: story op needs a Document');
     else {
       // 문단 속성: 그사이 다른 사용자가 같은 키를 바꿨으면 두지 않고 덮는다 (¶ 속성은 키 하나의 LWW)
       const i = this.paras.findIndex((p) => p.id === this.idOf(op.ctr));

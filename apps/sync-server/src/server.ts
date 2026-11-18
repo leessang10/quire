@@ -31,7 +31,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { LoroDoc, VersionVector } from 'loro-crdt';
-import { assetIdOf, assetIdsOf, canonicalJson, compactDoc, docFromLoro, docFromQuire, openQuire, packQuire, quireFromDoc, quireFromText, readEpoch, type QuireAsset } from '@quire/sync';
+import { assetIdOf, assetIdsOf, canonicalJson, compactDocument, documentFromLoro, documentFromQuire, openQuire, packQuire, quireFromDocument, quireFromText, readEpoch, type QuireAsset } from '@quire/sync';
 import { fileStorage, memoryStorage, type RoomStore, type Storage } from './store';
 
 export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6 } as const;
@@ -97,7 +97,7 @@ const randomPeer = () => randomBytes(6).readUIntBE(0, 6);
 /** 문서의 정본 JSON */
 export function documentJson(doc: LoroDoc): string {
   // 서식·문단 속성·스타일·목록까지 (10)
-  return canonicalJson(doc.oplogVersion().length() > 0 ? quireFromDoc(docFromLoro(doc)) : quireFromText('\n'));
+  return canonicalJson(doc.oplogVersion().length() > 0 ? quireFromDocument(documentFromLoro(doc)) : quireFromText('\n'));
 }
 
 export function startServer(port = 8787, log: (s: string) => void = () => {}, opts: ServerOptions = {}): Promise<SyncServer> {
@@ -144,7 +144,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     checkpoint(room);
     const old = room.doc.export({ mode: 'snapshot' });
     const next = randomEpoch();
-    const fresh = compactDoc(docFromLoro(room.doc), next, randomPeer());
+    const fresh = compactDocument(documentFromLoro(room.doc), next, randomPeer());
     const base = fresh.export({ mode: 'snapshot' });
     room.store.saveEpoch(room.epoch, old, next, base, documentJson(fresh));
     log(`* ${room.name}: 판 '${room.epoch}' → '${next}' (${old.length} → ${base.length} 바이트)`);
@@ -277,7 +277,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       return;
     }
     const assets: QuireAsset[] = [];
-    for (const id of assetIdsOf(docFromLoro(room.doc))) {
+    for (const id of assetIdsOf(documentFromLoro(room.doc))) {
       const a = room.store.getAsset(id);
       if (a) assets.push({ id, ...a });
     }
@@ -297,7 +297,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     if (opened.crdt) {
       update = opened.crdt;
     } else {
-      update = compactDoc(docFromQuire(opened.doc).doc, randomEpoch(), randomPeer()).export({ mode: 'snapshot' });
+      update = compactDocument(documentFromQuire(opened.doc).document, randomEpoch(), randomPeer()).export({ mode: 'snapshot' });
     }
     room.doc.import(update);
     for (const a of opened.assets) room.store.putAsset(a.id, a.mime, a.bytes);

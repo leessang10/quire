@@ -11,7 +11,8 @@
  */
 import { DEFAULT_STYLES, MARK_KEYS, OBJ_KEYS, PARA_KEYS, type Doc, type MarkKey } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
-import { LoroWriter, docFromLoro, initLoro, newLoro, writeFormats, type PeerId } from './shape';
+import { LoroWriter, documentFromLoro, initLoro, newLoro, storyIdsOf, storyNames, writeFormats, type PeerId } from './shape';
+import type { Document } from '@quire/model';
 
 export const META = 'meta';
 
@@ -33,6 +34,21 @@ export function compactLoro(text: string, epoch: string, peer: PeerId, doc?: Doc
 /** 서식 있는 문서로 새 판을 만든다 (서버 압축·파일 열기) */
 export function compactDoc(doc: Doc, epoch: string, peer: PeerId): LoroDoc {
   return compactLoro(doc.text(), epoch, peer, doc);
+}
+
+/** 여러 스토리 문서로 새 판을 만든다 (11 §2.5): 본문은 compactDoc과 같고, 스토리는 가벼운 모양 (구획 표식 없이) */
+export function compactDocument(document: Document, epoch: string, peer: PeerId): LoroDoc {
+  const loro = compactDoc(document.body, epoch, peer);
+  for (const id of document.storyIds()) {
+    const d = document.story(id);
+    const text = d.text().slice(0, -1); // 유령 ¶ 빼고
+    const names = storyNames(id);
+    if (text === '' && d.plain && Object.keys(d.paraAttrs(0)).length === 0) continue; // 빈 스토리는 쓰지 않는다
+    loro.getText(names.text).insert(0, text);
+    writeFormats(loro, d, names);
+  }
+  loro.commit();
+  return loro;
 }
 
 /** a를 b로 바꾸는 변경 (a 기준 코드포인트 위치, 앞에서부터, 겹치지 않음) */
@@ -238,15 +254,19 @@ export function rebaseOnto(old: LoroDoc, info: RebaseInfo, peer: PeerId): { loro
   if (info.update.length) old.import(info.update);
   // F의 화면 = 새 판 처음 상태의 화면 (서버가 F의 화면·서식으로 새 판을 만든다). 옛 문서를 F 시점으로
   // 갈라 읽는 것(forkAt)보다 훨씬 싸다: 10만 문단에서 13초 → 새 판은 어차피 읽어야 한다
-  const doc = docFromLoro(fresh);
-  const target = docFromLoro(old);
-  const hunks = diffText(doc.text(), target.text());
-  const writer = new LoroWriter(fresh, () => doc.segmentOrder());
-  doc.observe((c) => writer.apply(c));
-  applyHunks(doc, hunks);
-  // 텍스트를 맞춘 뒤 서식 차이 (글자·¶ 서식, 문단 속성, 스타일·목록 정의)
-  syncFormats(doc, target);
-  doc.observe(null);
+  const document = documentFromLoro(fresh);
+  const target = documentFromLoro(old);
+  // 본문과 스토리마다: 텍스트 차이를 적용하고 서식 차이를 맞춘다 (옛 판에만 있는 스토리도 새 판에서 빈 스토리로 시작)
+  const ids = [null, ...new Set([...storyIdsOf(fresh), ...storyIdsOf(old)])];
+  for (const id of ids) {
+    const doc = id === null ? document.body : document.story(id);
+    const want = id === null ? target.body : target.story(id);
+    const writer = new LoroWriter(fresh, () => doc.segmentOrder(), id === null ? undefined : storyNames(id));
+    doc.observe((c) => writer.apply(c));
+    applyHunks(doc, diffText(doc.text(), want.text()));
+    syncFormats(doc, want);
+    doc.observe(null);
+  }
   fresh.commit();
   return { loro: fresh, lost: false };
 }
@@ -295,6 +315,7 @@ export function syncFormats(doc: Doc, target: Doc): void {
     const ab = target.paraAttrs(i);
     for (const key of PARA_KEYS) if (!same(aa[key], ab[key])) doc.setParaAttr(i, key, ab[key]);
   }
+  if (doc.isStory) return; // 스타일·목록 정의는 문서에 하나 (본문에서 맞춘다)
   const names = new Set([...doc.styles().map((st) => st.name), ...target.styles().map((st) => st.name), ...DEFAULT_STYLES.map((st) => st.name)]);
   for (const name of names) if (!same(doc.style(name), target.style(name))) doc.setStyle(name, target.style(name));
   const ids = new Set([...doc.lists().map((l) => l.id), ...target.lists().map((l) => l.id)]);

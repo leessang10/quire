@@ -8,9 +8,9 @@
  *    다르면(외부 도구가 JSON만 고친 경우) crdt.bin을 버리고 document.json에서 새로 만든다.
  */
 import type { LoroDoc } from 'loro-crdt';
-import type { Doc } from '@quire/model';
-import { canonicalJson, docFromQuire, migrateQuire, quireFromDoc, quireFromText, sha256Hex, stateHash, textFromQuire, type QuireDoc } from './canonical';
-import { docFromLoro, newLoro } from './shape';
+import type { Doc, Document } from '@quire/model';
+import { canonicalJson, documentFromQuire, migrateQuire, quireFromDoc, quireFromDocument, quireFromText, sha256Hex, stateHash, textFromQuire, type QuireDoc } from './canonical';
+import { documentFromLoro, newLoro } from './shape';
 import { readZip, writeZip, type ZipEntry } from './zip';
 
 export const MIMETYPE = 'application/vnd.quire';
@@ -47,18 +47,23 @@ export async function assetIdOf(bytes: Uint8Array): Promise<string> {
   return (await sha256Hex(bytes)).slice(0, 32);
 }
 
-/** 문서가 가리키는 자산 ID들 */
-export function assetIdsOf(doc: Doc): string[] {
+/** 문서가 가리키는 자산 ID들 (Document면 모든 스토리) */
+export function assetIdsOf(doc: Doc | Document): string[] {
   const ids = new Set<string>();
-  for (const p of doc.paragraphs()) if (p.objs) for (const o of p.objs.values()) if (o.asset) ids.add(o.asset);
+  const docs = 'body' in doc ? [doc.body, ...doc.storyIds().map((id) => doc.story(id))] : [doc];
+  for (const d of docs) for (const p of d.paragraphs()) if (p.objs) for (const o of p.objs.values()) if (o.asset) ids.add(o.asset);
   return [...ids].sort();
 }
 
 export async function packQuire(
-  src: ({ text: string } | { loro: LoroDoc } | { doc: Doc }) & { assets?: readonly QuireAsset[] },
+  src: ({ text: string } | { loro: LoroDoc } | { doc: Doc } | { document: Document }) & { assets?: readonly QuireAsset[] },
 ): Promise<Uint8Array<ArrayBuffer>> {
   // 서식이 있으면 함께 (10, 07 §4)
-  const doc = 'loro' in src ? quireFromDoc(docFromLoro(src.loro)) : 'doc' in src ? quireFromDoc(src.doc) : quireFromText(src.text);
+  const doc =
+    'loro' in src ? quireFromDocument(documentFromLoro(src.loro))
+    : 'document' in src ? quireFromDocument(src.document)
+    : 'doc' in src ? quireFromDoc(src.doc)
+    : quireFromText(src.text);
   const json = encoder.encode(canonicalJson(doc));
   const files: Manifest['files'] = { 'document.json': { sha256: await sha256Hex(json) } };
   const entries: ZipEntry[] = [
@@ -116,12 +121,12 @@ export async function openQuire(bytes: Uint8Array): Promise<OpenedQuire> {
   let crdt: Uint8Array | null = get('history/crdt.bin') ?? null;
   if (crdt) {
     // 정본을 다시 정규화해 비교한다 (손으로 고친 JSON의 공백·키 순서 차이는 무시)
-    const want = await stateHash(quireFromDoc(docFromQuire(doc).doc));
+    const want = await stateHash(quireFromDocument(documentFromQuire(doc).document));
     let have: string | null = null;
     try {
       const loro = newLoro(1);
       loro.import(crdt);
-      have = await stateHash(quireFromDoc(docFromLoro(loro)));
+      have = await stateHash(quireFromDocument(documentFromLoro(loro)));
     } catch (e) {
       notes.push(`history/crdt.bin: cannot be read (${String(e)})`);
     }

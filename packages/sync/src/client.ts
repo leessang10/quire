@@ -11,10 +11,10 @@
  * - 새 판 (09 §9): Worker가 hold를 보내면 보낸 묶음이 끝난 뒤 held로 답하고 그 뒤로는 보내지 않는다. 그때의 화면 텍스트를
  *   기억해 두었다가 reset을 받으면 새 Doc을 만들고, held 뒤에 한 로컬 변경(텍스트 차이)을 새 Doc에 다시 적용한다.
  */
-import { Doc, type Position, type RawChange, type SegState } from '@quire/model';
+import { Doc, Document, type Position, type RawChange, type SegState } from '@quire/model';
 import { applyHunks, diffText, rebaseHunks } from './epoch';
 import { mapPosThrough, opToDelta, transform, type LocalChange } from './ot';
-import type { Defs, RemoteSel, ToMain, ToWorker } from './protocol';
+import type { Defs, RemoteSel, StoryDelta, StoryInit, ToMain, ToWorker } from './protocol';
 import { applyFormats, type FormatState } from './shape';
 import type { RemoteSelection } from './presence';
 
@@ -34,9 +34,16 @@ export interface ClientOptions {
 const isSeg = (c: LocalChange) => c.kind === 'order' || c.kind === 'list' || c.kind === 'hidden' || c.kind === 'flag';
 /** 스타일·목록 정의 변경 (Worker의 정의 상태는 통째로 오므로 구획 상태처럼 다룬다) */
 const isDef = (c: LocalChange) => c.kind === 'style' || c.kind === 'listDef';
+/** 가벼운 스토리 끝 ¶ 속성 변경 (Worker의 끝 ¶ 맵 상태는 통째로 오므로 구획 상태처럼 다룬다) */
+const isTail = (c: LocalChange) => c.kind === 'tail';
 
 export class SyncClient {
   private current: Doc;
+  /** 본문 + 스토리들 (11 §2.5). 처음 상태에 있던 스토리와, 그 뒤 연산이 오거나 로컬에서 연 스토리 */
+  private currentDocument!: Document;
+  /** 로컬 구획 변경이 아직 가는 중이라 미룬 스토리 구획 상태 */
+  private deferredStories = new Map<string, SegState>();
+  private deferredTails = new Map<string, Record<string, unknown>>();
   private readonly opts: ClientOptions;
   /** 받은 H 항목 수 */
   private rev = 0;
@@ -64,13 +71,37 @@ export class SyncClient {
     return this.current;
   }
 
-  private attach(init: { raw: string; keys: string[]; state: SegState; peer: string; formats: FormatState }): Doc {
+  get document(): Document {
+    return this.currentDocument;
+  }
+
+  /** 스토리 (없으면 빈 가벼운 스토리) */
+  story(id: string): Doc {
+    return this.currentDocument.story(id);
+  }
+
+  private attach(init: { raw: string; keys: string[]; state: SegState; peer: string; formats: FormatState; stories?: Record<string, StoryInit> }): Doc {
     const doc = Doc.fromRaw(init.raw, init.keys, init.state, init.peer);
     applyFormats(doc, init.formats);
-    doc.observe((c: RawChange) => {
-      this.buffer.push(c);
+    const stories = init.stories ?? {};
+    const make = (id: string): Doc => {
+      const si = stories[id];
+      const empty: SegState = { order: [], hidden: [], placeholder: [], used: [] };
+      const d = Doc.fromRaw(si?.raw ?? '', si?.keys ?? [], si?.state ?? empty, init.peer, true);
+      if (si) {
+        applyFormats(d, si.formats);
+        for (const [k, v] of Object.entries(si.tail)) d.applyTail(k, v);
+        d.takeParagraphChanges();
+      }
+      return d;
+    };
+    const document = new Document(doc, make);
+    for (const id of Object.keys(stories)) document.story(id);
+    document.observe((story: string | null, c: RawChange) => {
+      this.buffer.push(story === null ? c : { ...c, story });
       this.send();
     });
+    this.currentDocument = document;
     return doc;
   }
 
@@ -96,6 +127,7 @@ export class SyncClient {
         this.outstanding = null;
         this.takeState(msg.state ?? null);
         this.takeDefs(msg.defs ?? null);
+        this.takeStories(msg.stories ?? {});
         this.send();
         break;
       case 'remote': {
@@ -103,9 +135,10 @@ export class SyncClient {
         let ops = msg.ops;
         if (this.outstanding) [this.outstanding, ops] = transform(this.outstanding, ops);
         [this.buffer, ops] = transform(this.buffer, ops);
-        for (const op of ops) this.current.applyDelta(opToDelta(op));
+        for (const op of ops) (op.story !== undefined ? this.currentDocument.story(op.story) : this.current).applyDelta(opToDelta(op));
         if (msg.state) this.takeState(msg.state);
         if (msg.defs) this.takeDefs(msg.defs);
+        if (msg.stories) this.takeStories(msg.stories);
         this.opts.onRemoteChange?.();
         break;
       }
@@ -153,7 +186,8 @@ export class SyncClient {
     const changes = this.buffer;
     this.buffer = [];
     this.outstanding = changes;
-    const wantState = this.deferredState !== null || this.deferredDefs !== null || changes.some(isSeg) || changes.some(isDef);
+    const wantState =
+      this.deferredState !== null || this.deferredDefs !== null || this.deferredStories.size > 0 || this.deferredTails.size > 0 || changes.some(isSeg) || changes.some(isDef) || changes.some(isTail);
     this.opts.post({ t: 'ops', rev: this.rev, changes, wantState });
   }
 
@@ -161,12 +195,14 @@ export class SyncClient {
   private reset(msg: Extract<ToMain, { t: 'reset' }>): void {
     const base = this.heldText;
     const ours = base !== null ? diffText(base, this.current.text()) : [];
-    this.current.observe(null);
+    this.currentDocument.observe(null);
     this.rev = 0;
     this.outstanding = null;
     this.buffer = [];
     this.deferredState = null;
     this.deferredDefs = null;
+    this.deferredStories.clear();
+    this.deferredTails.clear();
     this.remotePos.clear();
     this.cache = null;
     this.presenceVersion++;
@@ -183,7 +219,8 @@ export class SyncClient {
   private takeState(state: SegState | null): void {
     const candidate = state ?? this.deferredState;
     if (!candidate) return;
-    const segPending = (this.outstanding?.some(isSeg) ?? false) || this.buffer.some(isSeg);
+    const bodySeg = (c: LocalChange) => c.story === undefined && isSeg(c);
+    const segPending = (this.outstanding?.some(bodySeg) ?? false) || this.buffer.some(bodySeg);
     if (segPending) {
       this.deferredState = candidate;
       return;
@@ -191,6 +228,34 @@ export class SyncClient {
     this.deferredState = null;
     this.current.applySegState(candidate);
     this.opts.onRemoteChange?.();
+  }
+
+  /** 스토리 상태 (구획·끝 ¶ 속성). 그 스토리의 로컬 구획 변경이 아직 가는 중이면 구획 상태는 미룬다 */
+  private takeStories(stories: Record<string, StoryDelta>): void {
+    const pending = (id: string, f: (c: LocalChange) => boolean) =>
+      (this.outstanding?.some((c) => c.story === id && f(c)) ?? false) || this.buffer.some((c) => c.story === id && f(c));
+    const segPending = (id: string) => pending(id, isSeg);
+    const ids = new Set([...Object.keys(stories), ...this.deferredStories.keys(), ...this.deferredTails.keys()]);
+    for (const id of ids) {
+      const d = stories[id];
+      const doc = this.currentDocument.story(id);
+      const tail = d?.tail ?? this.deferredTails.get(id);
+      if (tail) {
+        if (pending(id, isTail)) this.deferredTails.set(id, tail);
+        else {
+          this.deferredTails.delete(id);
+          doc.applyTailAll(tail);
+        }
+      }
+      const state = d?.state ?? this.deferredStories.get(id);
+      if (!state) continue;
+      if (segPending(id)) {
+        this.deferredStories.set(id, state);
+        continue;
+      }
+      this.deferredStories.delete(id);
+      doc.applySegState(state);
+    }
   }
 
   /** Worker의 정의 상태: 로컬 정의 변경이 아직 가는 중이면 미룬다 */

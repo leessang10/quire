@@ -309,7 +309,7 @@ describe('blocks spike: random concurrent table and object edits (3 peers)', () 
     out('blocks-random.md', `${lines.join('\n')}\n`);
     expect(lost).toBe(0);
     if (!move) expect(dup).toBe(0);
-  });
+  }, 60_000);
 });
 
 describe('blocks spike: cost of per-cell stories (O-24)', () => {

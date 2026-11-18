@@ -14,10 +14,12 @@
  * - 처음 문서: [사용자 문단들 BRK(t)][¶ BRK(p)][¶ 보초]. t는 순서 목록에, p는 자리표시.
  */
 import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector } from 'loro-crdt';
-import { Doc, type RawChange, type TextDelta } from '@quire/model';
-import { LISTS, LoroWriter, SEG_MARK, STYLES, TEXT, docFromLoro, initLoro, newLoro, readDefs, readState, type PeerId } from './shape';
+import { Document, type Doc, type RawChange, type TextDelta } from '@quire/model';
+import { LISTS, LoroWriter, SEG_MARK, STYLES, TEXT, docFromLoro, initLoro, newLoro, readDefs, readState, readTail, storyNames, type Names, type PeerId } from './shape';
 
 const LOCAL_ORIGIN = 'quire-local';
+/** 스토리 컨테이너의 ID (storyNames의 접두사) */
+const STORY_CONTAINER = /^cid:root-(s|so|sh|sp|su|tp):/;
 
 export interface SyncOptions {
   /** 이 피어의 ID (피어마다 달라야 한다) */
@@ -30,9 +32,21 @@ export interface SyncOptions {
   batchMs?: number | null;
 }
 
+/** 스토리 하나의 동기화 상태: 컨테이너 ID별 역할 */
+interface StoryLink {
+  doc: Doc;
+  names: Names;
+  writer: LoroWriter;
+}
+
 export class SyncBridge {
   readonly doc: Doc;
+  /** 본문 + 스토리들 (11 §2.5). 스토리는 처음 열 때 Loro 상태에서 만든다 */
+  readonly document: Document;
   readonly loro: LoroDoc;
+  private readonly stories = new Map<string, StoryLink>();
+  /** 컨테이너 ID → (스토리, 역할) */
+  private readonly routes = new Map<string, { story: string; role: 'text' | 'seg' | 'tail' }>();
   private readonly text: LoroText;
   private readonly writer: LoroWriter;
   private readonly opts: SyncOptions;
@@ -64,16 +78,34 @@ export class SyncBridge {
     return new SyncBridge(docFromLoro(loro, String(opts.peer)), loro, opts);
   }
 
+  /** 스토리 (없으면 Loro 상태에서 만든다: 가벼운 모양) */
+  story(id: string): Doc {
+    return this.document.story(id);
+  }
+
+  private openStory(id: string): Doc {
+    const names = storyNames(id);
+    const doc = docFromLoro(this.loro, String(this.opts.peer), id);
+    const writer = new LoroWriter(this.loro, () => doc.segmentOrder(), names);
+    this.stories.set(id, { doc, names, writer });
+    this.routes.set(this.loro.getText(names.text).id, { story: id, role: 'text' });
+    for (const n of [names.order]) this.routes.set(this.loro.getMovableList(n).id, { story: id, role: 'seg' });
+    for (const n of [names.hidden, names.placeholder, names.used]) this.routes.set(this.loro.getMap(n).id, { story: id, role: 'seg' });
+    this.routes.set(this.loro.getMap(names.tail!).id, { story: id, role: 'tail' });
+    return doc;
+  }
+
   private constructor(doc: Doc, loro: LoroDoc, opts: SyncOptions) {
     this.doc = doc;
     this.loro = loro;
     this.opts = opts;
+    this.document = new Document(doc, (id) => this.openStory(id));
     this.text = loro.getText(TEXT);
     this.stylesId = loro.getMap(STYLES).id;
     this.listsId = loro.getMap(LISTS).id;
     this.writer = new LoroWriter(loro, () => doc.segmentOrder());
     this.exported = loro.oplogVersion();
-    doc.observe((c) => this.onLocal(c));
+    this.document.observe((story, c) => this.onLocal(story, c));
     this.unsubscribe = loro.subscribe((e) => this.onEvent(e));
   }
 
@@ -154,13 +186,13 @@ export class SyncBridge {
     this.destroyed = true;
     if (this.timer !== null) clearTimeout(this.timer);
     this.unsubscribe();
-    this.doc.observe(null);
+    this.document.observe(null);
   }
 
   // ── 로컬 → Loro ───────────────────────────────────────
 
-  private onLocal(c: RawChange): void {
-    this.writer.apply(c);
+  private onLocal(story: string | null, c: RawChange): void {
+    (story === null ? this.writer : this.stories.get(story)!.writer).apply(c);
     this.loro.commit({ origin: LOCAL_ORIGIN });
     this.schedule();
   }
@@ -173,11 +205,26 @@ export class SyncBridge {
     if (e.by === 'local') return;
     let segDirty = false;
     let defsDirty = false;
+    const storySeg = new Set<string>();
     for (const ev of e.events) {
       if (ev.target === this.stylesId || ev.target === this.listsId) {
         defsDirty = true;
         continue;
       }
+      // 스토리 (11 §2.5): 연 스토리만 적용한다 (열지 않은 스토리는 열 때 Loro 상태에서 읽는다)
+      const route = this.routes.get(ev.target);
+      if (route) {
+        const link = this.stories.get(route.story)!;
+        if (route.role === 'text' && ev.diff.type === 'text') {
+          const delta = ev.diff.diff as TextDelta;
+          link.doc.applyDelta(delta);
+          if (delta.some((d) => d.attributes?.[SEG_MARK] !== undefined)) storySeg.add(route.story);
+        } else if (route.role === 'tail') link.doc.applyTailAll(readTail(this.loro, link.names));
+        else storySeg.add(route.story);
+        continue;
+      }
+      // 아직 열지 않은 스토리의 컨테이너 (cid:root-s:…:Text 등): 무시
+      if (STORY_CONTAINER.test(String(ev.target))) continue;
       if (ev.target === this.text.id && ev.diff.type === 'text') {
         const delta = ev.diff.diff as TextDelta;
         this.doc.applyDelta(delta);
@@ -188,6 +235,10 @@ export class SyncBridge {
     }
     // 텍스트(새 구획 표식)를 먼저 적용한 뒤 구획 상태를 맞춘다
     if (segDirty) this.doc.applySegState(readState(this.loro));
+    for (const id of storySeg) {
+      const link = this.stories.get(id)!;
+      link.doc.applySegState(readState(this.loro, link.names));
+    }
     if (defsDirty) {
       const d = readDefs(this.loro);
       this.doc.applyRemoteDefs(d.styles ?? {}, d.lists ?? {});
