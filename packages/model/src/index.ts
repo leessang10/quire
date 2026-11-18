@@ -3,4 +3,6 @@ export type { ElementId, Side, Position, ParagraphInfo, SegId, SegState, RawChan
 export { History, applyOp, invertOp } from './history';
 export { BODY_STYLE, DEFAULT_STYLES, mergeParaAttrs, resolveStyle } from './styles';
 export type { Style, ResolvedStyle } from './styles';
+export { MAX_LIST_LEVEL, defaultListDef, formatNumber, numberLists } from './lists';
+export type { ListDef, ListLevel, ListLabel, NumberFormat } from './lists';
 export type { Op, Selection, Transaction } from './history';

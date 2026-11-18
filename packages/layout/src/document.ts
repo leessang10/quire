@@ -200,7 +200,7 @@ export class PlacedPara {
     const pl = this.layout;
     const box = pl.box!;
     const avail = pl.widths[line.index === 0 ? 0 : 1];
-    line.x += box.left + (line.index === 0 ? box.first : 0);
+    line.x += box.left + (line.index === 0 ? box.first + (pl.marker?.shift ?? 0) : 0);
     const end = trimEnd(pl, line.start, line.end);
     const free = avail - (pl.xs[end]! - pl.xs[line.start]!);
     if (free <= 0) return;
@@ -340,7 +340,7 @@ function formatKey(f: ParaFormat): string {
     }
   }
   const b = f.box;
-  const bk = b ? `|${JSON.stringify(b)}` : '';
+  const bk = (b ? `|${JSON.stringify(b)}` : '') + (f.marker ? `|#${f.marker.id},${f.marker.hanging},${f.marker.text}` : '');
   return `${out}¶${f.mark}${bk}${f.key ? `|${f.key}` : ""}`;
 }
 
