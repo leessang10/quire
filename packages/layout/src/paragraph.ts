@@ -40,6 +40,8 @@ export interface ParaBox {
   after: number;
   /** 줄 간격: multiple은 기본 줄 높이의 배수, exact·atLeast는 px. null이면 배수 1 */
   line: { rule: 'multiple' | 'exact' | 'atLeast'; value: number } | null;
+  /** 쪽 나눔 제어 (12 §4): 앞에서 쪽 나눔, 다음 문단과 함께, 문단 나누지 않음. 없으면 모두 꺼짐 */
+  keep?: { breakBefore?: true; next?: true; together?: true };
 }
 
 /** 떠 있는 개체의 위치·배치 (11 §2.3). 길이는 px */

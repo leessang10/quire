@@ -253,7 +253,8 @@ export class Formatter {
   /** 문단 속성(스타일 사슬 → 직접 속성)을 px 상자로. 레이아웃에 영향이 없으면 null (기본 문단과 같은 빠른 경로) */
   paraBox(attrs: ParaAttrs, rs: ResolvedStyle, label: ListLabel | null = null): ParaBox | null {
     const a = hasKeys(rs.para) ? mergeParaAttrs(rs.para, attrs) : attrs;
-    if (!a.align && !a.indent && !a.space && !a.line && !label) return null;
+    const keep = a.pageBreakBefore || a.keepWithNext || a.keepTogether ? { ...(a.pageBreakBefore ? { breakBefore: true as const } : {}), ...(a.keepWithNext ? { next: true as const } : {}), ...(a.keepTogether ? { together: true as const } : {}) } : undefined;
+    if (!a.align && !a.indent && !a.space && !a.line && !label && !keep) return null;
     // 목록 문단: 왼쪽 들여쓰기는 목록 수준의 값, 첫 줄은 본문과 나란히 (번호는 내어쓴 자리에, 10 §4)
     const lv = label ? label.def.levels[label.level]! : null;
     return {
@@ -264,6 +265,7 @@ export class Formatter {
       before: a.space?.before !== undefined ? pt(a.space.before) : this.setup.paraSpacing,
       after: pt(a.space?.after),
       line: a.line ? (a.line.rule === 'multiple' ? { rule: 'multiple', value: a.line.value } : { rule: a.line.rule, value: pt(a.line.value) }) : null,
+      ...(keep ? { keep } : {}),
     };
   }
 
@@ -296,6 +298,8 @@ export function defaultPageSetup(fontSize = 16): PageSetup {
     lineHeight: Math.round(fontSize * 1.7),
     paraSpacing: Math.round(fontSize * 0.5),
     fontSize,
+    // 과부·고아 줄 막기 (12 §4, Word·한글 프로그램 기본과 같이 켬)
+    widowControl: true,
   };
 }
 
