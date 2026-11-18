@@ -5,7 +5,25 @@
  * - 키 순서를 고정해 직렬화한다(키 사전순, 들여쓰기 2칸, 끝 줄바꿈). 같은 문서는 늘 같은 바이트열 → 해시·diff가 안정적이다.
  * - CRDT 원소 ID·묘비·구획 표식은 들어가지 않는다. 그래서 정본으로 저장했다 다시 열면 구획이 하나뿐인 깨끗한 문서가 된다.
  */
-import { DEFAULT_STYLES, Doc, Document, MARK_KEYS, OBJ, OBJ_KEYS, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quire/model';
+import {
+  DEFAULT_STYLES,
+  Doc,
+  Document,
+  MARK_KEYS,
+  OBJ,
+  OBJ_KEYS,
+  cellKey,
+  cellStoryId,
+  emptyTable,
+  newTableId,
+  normalizeTable,
+  type ListDef,
+  type MarkSet,
+  type ObjAttrs,
+  type ParaAttrs,
+  type Style,
+  type TableRecord,
+} from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
 import { readRaw, readState } from './shape';
 
@@ -23,13 +41,26 @@ export interface QuireParagraph {
   c: QuireRun[];
 }
 
+/**
+ * 표 블록 (11 §6): 정규화한 격자. 덮인 칸은 셀이 없다 (HTML 표처럼). 셀 내용은 stories.<story>.
+ * 행·열 ID, 지운 행·열, 덮인 셀의 따로 된 스토리는 저장하지 않는다 (덮인 셀의 글은 주인 셀 스토리 뒤에 붙인다)
+ */
+export interface QuireTable {
+  table: {
+    /** 열 너비 (1/1000pt) */
+    cols: number[];
+    rows: Array<{ cells: Array<{ story: string; span?: [number, number]; fill?: string; valign?: string }>; h?: number; header?: true }>;
+    attrs?: Record<string, unknown>;
+  };
+}
+
 export interface QuireDoc {
   format: 'quire';
   version: number;
   settings: Record<string, unknown>;
   styles: Record<string, unknown>;
   sections: Array<Record<string, unknown>>;
-  stories: { body: QuireParagraph[] } & Record<string, unknown>;
+  stories: { body: Array<QuireParagraph | QuireTable> } & Record<string, unknown>;
   annotations: unknown[];
 }
 
@@ -61,6 +92,10 @@ export function textFromQuire(q: QuireDoc): string {
   if (!Array.isArray(body) || body.length === 0) throw new Error('document.json: stories.body must be a non-empty array');
   let out = '';
   body.forEach((block, i) => {
+    if (block && typeof block === 'object' && 'table' in block) {
+      out += `${OBJ}\n`; // 표 문단 = 표 원소 하나
+      return;
+    }
     if (!block || typeof block !== 'object' || !('p' in block)) throw new Error(`document.json: body[${i}] is not a paragraph (not supported yet)`);
     const runs = (block as QuireParagraph).c ?? [];
     if (!Array.isArray(runs)) throw new Error(`document.json: body[${i}].c must be an array`);
@@ -96,31 +131,114 @@ function paragraphsOf(doc: Doc): QuireParagraph[] {
   }));
 }
 
-/** 여러 스토리 문서 → QuireDoc (11 §6): 비지 않은 스토리는 stories.<ID> */
+const emptyStory = (d: Doc) => d.text() === '\n' && d.plain && Object.keys(d.paraAttrs(0)).length === 0;
+
+/**
+ * 여러 스토리 문서 → QuireDoc (11 §6): 비지 않은 스토리는 stories.<ID>. 표 문단은 표 블록으로, 셀 스토리는 표 순서·격자 자리로
+ * 이름을 새로 붙인다 (t<표>.r<행>c<열>): 같은 문서는 늘 같은 정본
+ */
 export function quireFromDocument(document: Document): QuireDoc {
   const q = quireFromDoc(document.body);
+  const stories = q.stories as Record<string, unknown>;
+  let tk = 0;
+  q.stories.body = q.stories.body.map((block) => {
+    const run = 'c' in block && block.c.length === 1 ? block.c[0]! : null;
+    const rec = run?.img?.kind === 'table' && run.img.table ? document.table(run.img.table) : undefined;
+    if (!rec) return block;
+    const g = normalizeTable(rec);
+    if (!g.rows.length || !g.cols.length) return block;
+    tk++;
+    const table: QuireTable['table'] = { cols: g.widths, rows: [] };
+    if (Object.keys(rec.attrs).length) table.attrs = { ...rec.attrs };
+    g.cells.forEach((row, y) => {
+      const r: QuireTable['table']['rows'][0] = { cells: [] };
+      const ra = rec.rowAttrs[g.rows[y]!];
+      if (ra?.minHeight) r.h = ra.minHeight;
+      if (ra?.header) r.header = true;
+      row.forEach((c, x) => {
+        if (!c) return;
+        const name = `t${tk}.r${y + 1}c${x + 1}`;
+        const cell: QuireTable['table']['rows'][0]['cells'][0] = { story: name };
+        if (c.span[0] > 1 || c.span[1] > 1) cell.span = [c.span[0], c.span[1]];
+        const ca = rec.cellAttrs[cellKey(c.row, c.col)];
+        if (ca?.fill) cell.fill = ca.fill;
+        if (ca?.valign) cell.valign = ca.valign;
+        r.cells.push(cell);
+        // 주인 셀 + 비지 않은 덮인 셀 (화면과 같은 순서)
+        const paras: QuireParagraph[] = [];
+        for (const sid of [c.story, ...c.covered]) {
+          if (!document.has(sid)) continue;
+          const d = document.story(sid);
+          if (sid !== c.story && emptyStory(d)) continue;
+          paras.push(...paragraphsOf(d));
+        }
+        if (paras.length && !(paras.length === 1 && paras[0]!.c.length === 0 && Object.keys(paras[0]!.p).length === 0)) stories[name] = paras;
+      });
+      table.rows.push(r);
+    });
+    return { table };
+  });
+  // 표 셀이 아닌 스토리 (3단계: 머리말·각주·글상자). 표 레코드가 있는 표의 셀은 표 블록이 쓴다
   for (const id of document.storyIds().sort()) {
+    if (id.includes('|') && document.table(id.split('|')[0]!)) continue; // 표 셀 (표 블록이 썼다)
     const d = document.story(id);
-    if (d.text() === '\n' && d.plain && Object.keys(d.paraAttrs(0)).length === 0) continue;
-    (q.stories as Record<string, unknown>)[id] = paragraphsOf(d);
+    if (emptyStory(d)) continue;
+    stories[id] = paragraphsOf(d);
   }
   return q;
 }
 
 /** QuireDoc → 여러 스토리 문서 (스토리는 가벼운 모양) */
 export function documentFromQuire(q: QuireDoc, peer?: string): { document: Document; notes: string[] } {
-  const { doc, notes } = docFromQuire(q, peer);
+  // 표 블록 → 표 원소 문단 + 새 표 레코드 (새 ID). 셀 스토리 이름 → (표, 행, 열) 스토리 ID
+  const tables: TableRecord[] = [];
+  const rename = new Map<string, string>();
+  const body = q.stories.body.map((block): QuireParagraph => {
+    if (!('table' in block)) return block;
+    const t = block.table;
+    const id = newTableId();
+    const rec = emptyTable(id);
+    rec.cols = t.cols.map((_, x) => `c${x + 1}`);
+    rec.rows = t.rows.map((_, y) => `r${y + 1}`);
+    t.cols.forEach((w, x) => (rec.widths[rec.cols[x]!] = w));
+    if (t.attrs) rec.attrs = { ...t.attrs };
+    // 덮인 칸을 건너뛰며 셀을 격자에 놓는다 (HTML 표와 같은 방식)
+    const taken = new Set<string>();
+    t.rows.forEach((row, y) => {
+      const r = rec.rows[y]!;
+      if (row.h) rec.rowAttrs[r] = { ...rec.rowAttrs[r], minHeight: row.h };
+      if (row.header) rec.rowAttrs[r] = { ...rec.rowAttrs[r], header: true };
+      let x = 0;
+      for (const cell of row.cells) {
+        while (taken.has(`${y},${x}`)) x++;
+        if (x >= rec.cols.length) break;
+        const [h, w] = cell.span ?? [1, 1];
+        for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) taken.add(`${yy},${xx}`);
+        const c = rec.cols[x]!;
+        if (h > 1 || w > 1) rec.spans[cellKey(r, c)] = { rows: rec.rows.slice(y + 1, y + h), cols: rec.cols.slice(x + 1, x + w) };
+        if (cell.fill || cell.valign)
+          rec.cellAttrs[cellKey(r, c)] = { ...(cell.fill ? { fill: cell.fill } : {}), ...(cell.valign ? { valign: cell.valign as 'top' } : {}) };
+        rename.set(cell.story, cellStoryId(id, r, c));
+        x += w;
+      }
+    });
+    tables.push(rec);
+    return { p: {}, c: [{ img: { id, kind: 'table', table: id } }] };
+  });
+  const { doc, notes } = docFromQuire({ ...q, stories: { ...q.stories, body } }, peer);
   const built = new Map<string, Doc>();
-  for (const [id, paras] of Object.entries(q.stories)) {
-    if (id === 'body' || !Array.isArray(paras)) continue;
+  for (const [name, paras] of Object.entries(q.stories)) {
+    if (name === 'body' || !Array.isArray(paras)) continue;
     const runs = (paras as QuireParagraph[]).map((b) => ({
       attrs: (b.p ?? {}) as ParaAttrs,
       runs: (b.c ?? []).map((r) => (r.img ? { text: OBJ, marks: r.m, obj: r.img } : { text: r.t ?? '', marks: r.m })),
     }));
-    built.set(id, Doc.fromParagraphRuns(runs, peer, true));
+    built.set(rename.get(name) ?? name, Doc.fromParagraphRuns(runs, peer, true));
   }
   const document = new Document(doc, (id) => built.get(id) ?? Doc.fromParagraphRuns([{ runs: [] }], peer, true));
   for (const id of built.keys()) document.story(id);
+  for (const t of tables) document.putTable(t);
+  document.takeDirtyTables();
   return { document, notes };
 }
 
@@ -151,12 +269,15 @@ export function quireFromDoc(doc: Doc): QuireDoc {
  * QuireDoc → 서식·문단 속성이 있는 문서. 모르는 서식 키·문단 속성은 버리고 notes에 적는다 (07 §4의 "모르는 속성 보존"은 아직 없음).
  */
 export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: string[] } {
-  const text = textFromQuire(q); // 구조 확인 (표·필드 등 아직 담을 수 없는 내용은 오류)
+  textFromQuire(q); // 구조 확인 (필드 등 아직 담을 수 없는 내용은 오류)
+  // 표 블록은 본문 하나만 여는 이 함수에서는 빈 문단 (표는 documentFromQuire가 연다)
+  const blocks = q.stories.body.map((b): QuireParagraph => ('table' in b ? { p: {}, c: [] } : b));
+  const text = textFromQuire({ ...q, stories: { ...q.stories, body: blocks } });
   // 서식 없는 문서: 빠른 길
-  const plainBody = q.stories.body.every((b) => Object.keys(b.p ?? {}).length === 0 && (b.c ?? []).every((r) => !r.img && (!r.m || Object.keys(r.m).length === 0)));
+  const plainBody = blocks.every((b) => Object.keys(b.p ?? {}).length === 0 && (b.c ?? []).every((r) => !r.img && (!r.m || Object.keys(r.m).length === 0)));
   if (plainBody && Object.keys(q.styles ?? {}).length === 0 && !q.settings?.lists) return { doc: Doc.fromText(text.slice(0, -1), peer), notes: [] };
   const notes = new Set<string>();
-  const paras = q.stories.body.map((block) => {
+  const paras = blocks.map((block) => {
     const attrs: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(block.p ?? {})) {
       if (PARA_KEYS.includes(k)) attrs[k] = v;

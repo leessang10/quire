@@ -98,6 +98,17 @@
         </select>
       </label>
       <input id="img-file" type="file" accept="image/*" hidden />
+      <button id="tbl-insert" title="표 넣기 (3 × 3)">표 넣기</button>
+      <span class="tbl-tools" hidden>
+        <button data-tbl="rowBelow" title="아래에 행">행+</button>
+        <button data-tbl="colRight" title="오른쪽에 열">열+</button>
+        <button data-tbl="delRow" title="행 지우기">행−</button>
+        <button data-tbl="delCol" title="열 지우기">열−</button>
+        <button data-tbl="merge" title="셀 병합 (Shift+클릭이나 끌어서 셀 범위를 고른 뒤)">병합</button>
+        <button data-tbl="unmerge" title="병합 나누기">나누기</button>
+        <button data-tbl="fill" title="셀 배경 (회색 / 해제)">배경</button>
+        <button data-tbl="delete" title="표 지우기">표 지우기</button>
+      </span>
     </div>
     <main class="layout">
       <section id="editor" class="editor" aria-label="편집기"></section>

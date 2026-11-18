@@ -9,6 +9,8 @@ export type { Op } from './doc';
 export interface Selection {
   anchor: Position;
   head: Position;
+  /** 선택이 있는 스토리 (표 셀 등, 11 §2.5). 없으면 본문 */
+  story?: string;
 }
 
 export interface Transaction {
@@ -53,6 +55,8 @@ export function invertOp(op: Op): Op {
       return { type: 'obj', ctr: op.ctr, key: op.key, before: op.after, after: op.before };
     case 'story':
       return { type: 'story', story: op.story, op: invertOp(op.op) };
+    case 'tableMap':
+      return { ...op, before: op.after, after: op.before };
   }
 }
 

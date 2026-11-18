@@ -78,7 +78,7 @@ void (async () => {
       onPresence: () => editor?.setRemoteCarets(client.remotes()),
       onStatus: setStatus,
       onReset: (lost) => {
-        editor?.setDoc(client.doc);
+        editor?.setDocument(client.document);
         note(
           lost
             ? '서버가 이 문서의 옛 판을 몰라, 끊긴 동안의 편집을 살리지 못했습니다.'
@@ -90,7 +90,7 @@ void (async () => {
   setStatus(true);
   editor = new Editor({
     host,
-    doc: client.doc,
+    document: client.document,
     onChange: () => editor?.setRemoteCarets(client.remotes()),
     onSelectionChange: (a, h) => client.setSelection(a, h),
     // 이미지 원본은 서버의 자산 저장소 (11 §2.2)

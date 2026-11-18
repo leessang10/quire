@@ -117,7 +117,7 @@ function makePeer(k: number, client: WorkerClient) {
   const host = section.querySelector<HTMLElement>('.peer-editor')!;
   const editor = new Editor({
     host,
-    doc: client.doc,
+    document: client.document,
     onChange: () => {
       showRemotes(k);
       status();

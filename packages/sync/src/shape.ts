@@ -26,6 +26,8 @@ import {
   type SegId,
   type SegState,
   type Style,
+  type TableChange,
+  type TableRecord,
   type TextDelta,
 } from '@quire/model';
 
@@ -58,10 +60,71 @@ export function storyOfText(name: string): string | null {
   return name.startsWith('s:') ? name.slice(2) : null;
 }
 
+// ── 표 레코드 (11 §2.4, §3.1) ─────────────────────────
+
+/** 표 컨테이너 ID → (표 ID, 부분) */
+export const TABLE_CONTAINER = /^cid:root-(tb[0-9a-z]+)\.(rows|cols|gone|w|span|ra|ca|attrs):/;
+const TABLE_MAPS = ['gone', 'w', 'span', 'ra', 'ca', 'attrs'] as const;
+
+/** 표 레코드의 변경 하나를 Loro에 (커밋은 부르는 쪽에서) */
+export function writeTable(loro: LoroDoc, c: TableChange): void {
+  if (c.kind === 'tableList') {
+    const list = loro.getMovableList(`${c.table}.${c.list}`);
+    const arr = list.toArray() as string[];
+    if (arr.includes(c.id)) return;
+    list.insert(c.after === null ? 0 : arr.indexOf(c.after) + 1, c.id);
+    return;
+  }
+  const m = loro.getMap(`${c.table}.${c.map}`);
+  if (c.value === undefined || c.value === null) m.delete(c.key);
+  else m.set(c.key, c.value as never);
+}
+
+/** Loro → 표 레코드 */
+export function readTable(loro: LoroDoc, id: string): TableRecord {
+  const map = (n: string) => loro.getMap(`${id}.${n}`).toJSON() as Record<string, never>;
+  return {
+    id,
+    rows: loro.getMovableList(`${id}.rows`).toJSON() as string[],
+    cols: loro.getMovableList(`${id}.cols`).toJSON() as string[],
+    gone: map('gone'),
+    widths: map('w'),
+    spans: map('span'),
+    rowAttrs: map('ra'),
+    cellAttrs: map('ca'),
+    attrs: map('attrs'),
+  };
+}
+
+/** Loro 문서에 있는 표 ID들 */
+export function tableIdsOf(loro: LoroDoc): string[] {
+  const out: string[] = [];
+  for (const k of Object.keys(loro.getShallowValue() as Record<string, unknown>)) {
+    const m = /^(tb[0-9a-z]+)\.rows$/.exec(k);
+    if (m) out.push(m[1]!);
+  }
+  return out.sort();
+}
+
+/** 표 레코드 전체를 새 Loro 문서에 쓴다 (새 판 압축) */
+export function writeTableRecord(loro: LoroDoc, t: TableRecord): void {
+  const rows = loro.getMovableList(`${t.id}.rows`);
+  t.rows.forEach((r, k) => rows.insert(k, r));
+  const cols = loro.getMovableList(`${t.id}.cols`);
+  t.cols.forEach((c, k) => cols.insert(k, c));
+  const maps: Record<(typeof TABLE_MAPS)[number], Record<string, unknown>> = {
+    gone: t.gone, w: t.widths, span: t.spans, ra: t.rowAttrs, ca: t.cellAttrs, attrs: t.attrs as Record<string, unknown>,
+  };
+  for (const n of TABLE_MAPS) {
+    const m = loro.getMap(`${t.id}.${n}`);
+    for (const [k, v] of Object.entries(maps[n])) m.set(k, v as never);
+  }
+}
+
 /** Loro 문서에 있는 스토리 ID들 (텍스트 컨테이너가 있는 것) */
 export function storyIdsOf(loro: LoroDoc): string[] {
   const out: string[] = [];
-  for (const k of Object.keys(loro.toJSON() as Record<string, unknown>)) {
+  for (const k of Object.keys(loro.getShallowValue() as Record<string, unknown>)) {
     const id = storyOfText(k);
     if (id !== null) out.push(id);
   }
@@ -209,6 +272,8 @@ export function documentFromLoro(loro: LoroDoc, peer?: string): Document {
   const p = peer ?? loro.peerIdStr;
   const d = new Document(docFromLoro(loro, p), (id) => docFromLoro(loro, p, id));
   for (const id of storyIdsOf(loro)) d.story(id);
+  for (const id of tableIdsOf(loro)) d.putTable(readTable(loro, id));
+  d.takeDirtyTables();
   return d;
 }
 

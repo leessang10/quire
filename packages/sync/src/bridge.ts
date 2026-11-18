@@ -14,8 +14,27 @@
  * - 처음 문서: [사용자 문단들 BRK(t)][¶ BRK(p)][¶ 보초]. t는 순서 목록에, p는 자리표시.
  */
 import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector } from 'loro-crdt';
-import { Document, type Doc, type RawChange, type TextDelta } from '@quire/model';
-import { LISTS, LoroWriter, SEG_MARK, STYLES, TEXT, docFromLoro, initLoro, newLoro, readDefs, readState, readTail, storyNames, type Names, type PeerId } from './shape';
+import { Document, type Doc, type RawChange, type TableChange, type TextDelta } from '@quire/model';
+import {
+  LISTS,
+  LoroWriter,
+  SEG_MARK,
+  STYLES,
+  TABLE_CONTAINER,
+  TEXT,
+  docFromLoro,
+  initLoro,
+  newLoro,
+  readDefs,
+  readState,
+  readTable,
+  readTail,
+  storyNames,
+  tableIdsOf,
+  writeTable,
+  type Names,
+  type PeerId,
+} from './shape';
 
 const LOCAL_ORIGIN = 'quire-local';
 /** 스토리 컨테이너의 ID (storyNames의 접두사) */
@@ -100,6 +119,8 @@ export class SyncBridge {
     this.loro = loro;
     this.opts = opts;
     this.document = new Document(doc, (id) => this.openStory(id));
+    for (const id of tableIdsOf(loro)) this.document.putTable(readTable(loro, id));
+    this.document.takeDirtyTables();
     this.text = loro.getText(TEXT);
     this.stylesId = loro.getMap(STYLES).id;
     this.listsId = loro.getMap(LISTS).id;
@@ -191,8 +212,9 @@ export class SyncBridge {
 
   // ── 로컬 → Loro ───────────────────────────────────────
 
-  private onLocal(story: string | null, c: RawChange): void {
-    (story === null ? this.writer : this.stories.get(story)!.writer).apply(c);
+  private onLocal(story: string | null, c: RawChange | TableChange): void {
+    if (c.kind === 'tableList' || c.kind === 'tableMap') writeTable(this.loro, c);
+    else (story === null ? this.writer : this.stories.get(story)!.writer).apply(c);
     this.loro.commit({ origin: LOCAL_ORIGIN });
     this.schedule();
   }
@@ -206,7 +228,13 @@ export class SyncBridge {
     let segDirty = false;
     let defsDirty = false;
     const storySeg = new Set<string>();
+    const tables = new Set<string>();
     for (const ev of e.events) {
+      const tm = TABLE_CONTAINER.exec(String(ev.target));
+      if (tm) {
+        tables.add(tm[1]!);
+        continue;
+      }
       if (ev.target === this.stylesId || ev.target === this.listsId) {
         defsDirty = true;
         continue;
@@ -239,6 +267,7 @@ export class SyncBridge {
       const link = this.stories.get(id)!;
       link.doc.applySegState(readState(this.loro, link.names));
     }
+    for (const id of tables) this.document.applyRemoteTable(readTable(this.loro, id));
     if (defsDirty) {
       const d = readDefs(this.loro);
       this.doc.applyRemoteDefs(d.styles ?? {}, d.lists ?? {});

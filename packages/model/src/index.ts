@@ -9,3 +9,6 @@ export type { ListDef, ListLevel, ListLabel, NumberFormat } from './lists';
 export type { Op, Selection, Transaction } from './history';
 export { Document } from './document';
 export type { StoryId } from './document';
+export { DEFAULT_COL_WIDTH, cellKey, cellStoryId, emptyTable, newTableId, normalizeTable, tableMap } from './tables';
+export type { CellAttrs, GridCell, RowAttrs, TableAttrs, TableChange, TableGrid, TableMapName, TableRecord, TableSpan } from './tables';
+export type { DocumentListener } from './document';

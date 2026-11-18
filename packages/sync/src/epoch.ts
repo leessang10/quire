@@ -11,7 +11,7 @@
  */
 import { DEFAULT_STYLES, MARK_KEYS, OBJ_KEYS, PARA_KEYS, type Doc, type MarkKey } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
-import { LoroWriter, documentFromLoro, initLoro, newLoro, storyIdsOf, storyNames, writeFormats, type PeerId } from './shape';
+import { LoroWriter, documentFromLoro, initLoro, newLoro, readTable, storyIdsOf, storyNames, tableIdsOf, writeFormats, writeTable, writeTableRecord, type PeerId } from './shape';
 import type { Document } from '@quire/model';
 
 export const META = 'meta';
@@ -47,6 +47,7 @@ export function compactDocument(document: Document, epoch: string, peer: PeerId)
     loro.getText(names.text).insert(0, text);
     writeFormats(loro, d, names);
   }
+  for (const id of document.tableIds()) writeTableRecord(loro, document.table(id)!);
   loro.commit();
   return loro;
 }
@@ -266,6 +267,25 @@ export function rebaseOnto(old: LoroDoc, info: RebaseInfo, peer: PeerId): { loro
     applyHunks(doc, diffText(doc.text(), want.text()));
     syncFormats(doc, want);
     doc.observe(null);
+  }
+  // 표 레코드: 옛 판의 레코드와 같게 (행·열 목록에 없는 ID를 넣고, 맵 항목을 맞춘다)
+  for (const id of tableIdsOf(old)) {
+    const want = readTable(old, id);
+    const have = readTable(fresh, id);
+    for (const list of ['rows', 'cols'] as const) {
+      let prev: string | null = null;
+      for (const x of want[list]) {
+        if (!have[list].includes(x)) writeTable(fresh, { kind: 'tableList', table: id, list, id: x, after: prev });
+        prev = x;
+      }
+    }
+    const pairs: Array<[import('@quire/model').TableMapName, Record<string, unknown>, Record<string, unknown>]> = [
+      ['gone', want.gone, have.gone], ['w', want.widths, have.widths], ['span', want.spans, have.spans],
+      ['ra', want.rowAttrs, have.rowAttrs], ['ca', want.cellAttrs, have.cellAttrs], ['attrs', want.attrs as Record<string, unknown>, have.attrs as Record<string, unknown>],
+    ];
+    for (const [map, w, h] of pairs)
+      for (const key of new Set([...Object.keys(w), ...Object.keys(h)]))
+        if (JSON.stringify(w[key]) !== JSON.stringify(h[key])) writeTable(fresh, { kind: 'tableMap', table: id, map, key, value: w[key] });
   }
   fresh.commit();
   return { loro: fresh, lost: false };

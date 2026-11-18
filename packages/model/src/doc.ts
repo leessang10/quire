@@ -95,7 +95,9 @@ export type Op =
   /** 개체 원소(카운터) 하나의 속성 키 하나 (11 §2.1) */
   | { type: 'obj'; ctr: number; key: ObjKey; before: unknown; after: unknown }
   /** 다른 스토리의 연산 (11 §2.5: 여러 스토리 트랜잭션). Document가 그 스토리에 적용한다 */
-  | { type: 'story'; story: string; op: Op };
+  | { type: 'story'; story: string; op: Op }
+  /** 표 레코드의 맵 항목 하나 (11 §2.4: 지운 표시·열 너비·병합·행/셀/표 속성). Document가 적용한다 */
+  | { type: 'tableMap'; table: string; map: import('./tables').TableMapName; key: string; before: unknown; after: unknown };
 
 /** 글자 서식 묶음 (10 §2.1). 값이 없는 키는 서식 없음. 크기는 1/1000pt */
 export interface MarkSet {
@@ -133,13 +135,15 @@ export type ParaKey = keyof ParaAttrs;
 export interface ObjAttrs {
   /** 개체 ID (동시 이동으로 생긴 중복을 가릴 때) */
   id?: string;
-  kind?: 'image';
+  kind?: 'image' | 'table';
   /** 자산 ID (이미지 원본의 SHA-256 앞 32자) */
   asset?: string;
   w?: number;
   h?: number;
   /** 대체 텍스트 */
   alt?: string;
+  /** 표 개체 (kind 'table')가 가리키는 표 레코드 ID (11 §2.4) */
+  table?: string;
   /** 떠 있는 개체면 위치·배치 (11 §2.3). 없으면 글자처럼 줄 안에 */
   float?: FloatAttrs;
 }
@@ -156,7 +160,7 @@ export interface FloatAttrs {
   behind?: boolean;
 }
 export type ObjKey = keyof ObjAttrs;
-export const OBJ_KEYS: readonly ObjKey[] = ['id', 'kind', 'asset', 'w', 'h', 'alt', 'float'];
+export const OBJ_KEYS: readonly ObjKey[] = ['id', 'kind', 'asset', 'w', 'h', 'alt', 'float', 'table'];
 /** Loro에서 개체 속성 마크 키의 접두사 */
 export const OBJ_MARK_PREFIX = 'o_';
 /** Loro에서 문단 속성 마크 키의 접두사 (마크 키에는 ':'를 쓸 수 없다, 10 §3) */
@@ -1040,6 +1044,14 @@ export class Doc {
     }
   }
 
+  /** 문단 i를 바뀐 것으로 표시한다 (내용은 그대로, 새 객체): 표 셀처럼 문단 밖의 것이 바뀌어 다시 조판해야 할 때 */
+  touchParagraph(i: number): void {
+    if (!this.paras[i]) return;
+    this.paras[i] = { ...this.paras[i]! };
+    this.changeFrom = Math.min(this.changeFrom, i);
+    this.changeSuffix = Math.min(this.changeSuffix, this.paras.length - 1 - i);
+  }
+
   private writeParaAttr(ctr: number, i: number, key: ParaKey, value: unknown): void {
     if (key === 'list') this._listEpoch++;
     const cur = this.paraAttrsMap.get(ctr) ?? NO_ATTRS;
@@ -1336,7 +1348,7 @@ export class Doc {
     else if (op.type === 'style') this.writeStyle(op.name, op.after);
     else if (op.type === 'list') this.writeList(op.id, op.after);
     else if (op.type === 'obj') this.writeObjAttr(op.ctr, op.key, op.after);
-    else if (op.type === 'story') throw new Error('Doc.apply: story op needs a Document');
+    else if (op.type === 'story' || op.type === 'tableMap') throw new Error(`Doc.apply: ${op.type} op needs a Document`);
     else {
       // 문단 속성: 그사이 다른 사용자가 같은 키를 바꿨으면 두지 않고 덮는다 (¶ 속성은 키 하나의 LWW)
       const i = this.paras.findIndex((p) => p.id === this.idOf(op.ctr));

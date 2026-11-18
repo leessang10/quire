@@ -23,3 +23,4 @@ export type { FormatState } from './shape';
 export type { Defs } from './protocol';
 export { BODY_NAMES, storyNames, storyIdsOf, documentFromLoro, readTail } from './shape';
 export type { Names } from './shape';
+export { readTable, tableIdsOf, writeTable, writeTableRecord } from './shape';
