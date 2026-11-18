@@ -1,5 +1,5 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
-import { Doc, defaultListDef, type MarkSet, type ParaAttrs } from '@quire/model';
+import { Doc, LAST_SECTION, PAPER_SIZES, defaultListDef, fullSection, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
 
@@ -86,6 +86,36 @@ async function sampleImage(): Promise<Blob> {
   g.font = 'bold 28px sans-serif';
   g.fillText('Quire 이미지', 24, 100);
   return new Promise((resolve) => c.toBlob((b) => resolve(b!), 'image/png'));
+}
+
+/**
+ * 구역 예제 (12 §3): 표지(A4 세로) → 가로 쪽(A4 가로, 다음 쪽) → 본문(홀수 쪽에서 시작, 여백 30mm) → 이어지는 구역(같은 쪽, 왼쪽 여백 넓게)
+ */
+function sectionsSample(): Doc {
+  const r = (text: string, marks: MarkSet = {}) => ({ text, marks });
+  const pa = (attrs: ParaAttrs, ...runs: Array<{ text: string; marks: MarkSet }>) => ({ attrs, runs });
+  const body = '구역마다 용지 크기·방향·여백이 다를 수 있습니다. 구역 나눔은 그 구역 마지막 문단에 붙은 표시이고, 다음 구역이 어떻게 시작할지(다음 쪽·이어서·짝수 쪽·홀수 쪽)는 다음 구역의 설정입니다.';
+  const doc = Doc.fromParagraphRuns([
+    pa({ style: 'h1', align: 'center' }, r('구역 예제')),
+    pa({ align: 'center' }, r('표지: A4 세로, 기본 여백')),
+    pa({ align: 'center', section: 'cover' }, r('Ctrl+Alt+Enter로 캐럿에서 구역을 나눌 수 있습니다.')),
+    pa({ style: 'h2' }, r('가로 쪽')),
+    pa({ align: 'justify' }, r(body)),
+    pa({ align: 'justify', section: 'wide' }, r('이 구역은 A4 가로입니다. 줄이 넓어져 같은 글이 더 적은 줄에 들어갑니다. ' + body)),
+    pa({ style: 'h2' }, r('본문 (홀수 쪽에서 시작)')),
+    ...Array.from({ length: 6 }, (_, k) => pa({ align: 'justify' }, r(`${k + 1}. ${body} ${body}`))),
+    pa({ align: 'justify', section: 'main' }, r('앞 구역이 짝수 쪽에서 끝나면 빈 쪽 없이, 홀수 쪽에서 끝나면 빈 쪽을 하나 두고 시작합니다.')),
+    pa({ style: 'h2' }, r('이어지는 구역')),
+    pa({ align: 'justify' }, r('이 구역은 앞 구역과 같은 쪽에서 이어서 시작하고 왼쪽 여백이 60mm입니다. ' + body)),
+  ]);
+  const mm = (v: number) => Math.round((v * 72000) / 25.4);
+  const [w, h] = PAPER_SIZES.A4!;
+  doc.setSection('cover', fullSection(undefined));
+  doc.setSection('wide', { page: { width: h, height: w, margin: [mm(20), mm(20), mm(20), mm(20)] }, start: 'nextPage' });
+  doc.setSection('main', { page: { width: w, height: h, margin: [mm(30), mm(30), mm(30), mm(30)] }, start: 'oddPage' });
+  doc.setSection(LAST_SECTION, { page: { width: w, height: h, margin: [mm(30), mm(30), mm(30), mm(60)] }, start: 'continuous' });
+  doc.takeParagraphChanges();
+  return doc;
 }
 
 /** 서식 예제를 열고 이미지 두 개를 넣는다 (인라인: 글자처럼 줄 안에) */
@@ -246,6 +276,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-doc]').forEach((btn) => {
       });
       return;
     }
+    if (kind === 'sections') {
+      editor.setDoc(sectionsSample());
+      editor.focus();
+      showStats();
+      return;
+    }
     const text = kind === 'sample' ? SAMPLE : kind === 'empty' ? '' : generate(Number(kind));
     editor.setText(text);
     editor.focus();
@@ -321,6 +357,95 @@ document.querySelectorAll<HTMLButtonElement>('[data-tbl]').forEach((b) =>
   }),
 );
 let fillOn = false;
+
+// 구역 (3-2): 구역 나누기, 쪽 설정 대화상자
+document.getElementById('sec-break')!.addEventListener('click', () => {
+  editor.insertSectionBreak('nextPage');
+  editor.focus();
+});
+const pageDialog = document.getElementById('page-dialog') as HTMLDialogElement;
+const pageForm = pageDialog.querySelector('form')!;
+const field = <T extends HTMLElement = HTMLInputElement>(name: string) => pageForm.elements.namedItem(name) as unknown as T;
+const toMm = (v: number) => Math.round((v * 25.4) / 72) / 1000;
+const fromMm = (v: number) => Math.round((v * 72000) / 25.4);
+/** 용지 크기 → 이름 (세로·가로 모두 본다, 1pt 안쪽이면 같음) */
+function paperName(w: number, h: number): string {
+  for (const [name, [a, b]] of Object.entries(PAPER_SIZES)) {
+    const near = (x: number, y: number) => Math.abs(x - y) < 1000;
+    if ((near(w, a) && near(h, b)) || (near(w, b) && near(h, a))) return name;
+  }
+  return 'custom';
+}
+function fillPageForm(p: SectionProps): void {
+  const { width, height, margin } = p.page;
+  field<HTMLSelectElement>('paper').value = paperName(width, height);
+  field('width').value = String(toMm(width));
+  field('height').value = String(toMm(height));
+  for (const el of pageForm.querySelectorAll<HTMLInputElement>('input[name="orient"]')) el.checked = el.value === (width > height ? 'landscape' : 'portrait');
+  ['mt', 'mr', 'mb', 'ml'].forEach((n, k) => (field(n).value = String(toMm(margin[k]!))));
+  field<HTMLSelectElement>('start').value = p.start;
+}
+function syncPaper(): void {
+  const name = field<HTMLSelectElement>('paper').value;
+  const custom = name === 'custom';
+  field('width').disabled = !custom;
+  field('height').disabled = !custom;
+  if (custom) return;
+  const [a, b] = PAPER_SIZES[name]!;
+  const land = (pageForm.querySelector<HTMLInputElement>('input[name="orient"]:checked')?.value ?? 'portrait') === 'landscape';
+  field('width').value = String(toMm(land ? b : a));
+  field('height').value = String(toMm(land ? a : b));
+}
+field<HTMLSelectElement>('paper').addEventListener('change', syncPaper);
+for (const el of pageForm.querySelectorAll<HTMLInputElement>('input[name="orient"]'))
+  el.addEventListener('change', () => {
+    if (field<HTMLSelectElement>('paper').value === 'custom') {
+      // 사용자 지정 크기: 너비와 높이를 바꾼다
+      const w = field('width').value;
+      const h = field('height').value;
+      const land = el.value === 'landscape';
+      if ((Number(w) > Number(h)) !== land) {
+        field('width').value = h;
+        field('height').value = w;
+      }
+    } else syncPaper();
+  });
+document.getElementById('page-setup')!.addEventListener('click', () => {
+  const info = editor.sectionInfo();
+  document.getElementById('page-section')!.textContent = `구역 ${info.index + 1} / ${info.count}`;
+  fillPageForm(info.props);
+  syncPaper();
+  (document.getElementById('sec-remove') as HTMLButtonElement).disabled = info.index >= info.count - 1;
+  (document.getElementById('page-error') as HTMLElement).hidden = true;
+  pageDialog.showModal();
+});
+document.getElementById('sec-remove')!.addEventListener('click', () => {
+  editor.removeSectionBreak();
+  pageDialog.close('cancel');
+});
+pageForm.addEventListener('submit', (e) => {
+  if ((e.submitter as HTMLButtonElement | null)?.value !== 'ok') return;
+  const num = (n: string) => Number(field(n).value);
+  const w = num('width');
+  const h = num('height');
+  const [mt, mr, mb, ml] = ['mt', 'mr', 'mb', 'ml'].map(num) as [number, number, number, number];
+  const err = document.getElementById('page-error') as HTMLElement;
+  const bad = [w, h, mt, mr, mb, ml].some((v) => !Number.isFinite(v) || v < 0);
+  // 본문이 너무 좁거나 낮으면 받지 않는다 (글자 하나도 들어가지 않는 쪽)
+  if (bad || w - ml - mr < 20 || h - mt - mb < 20) {
+    e.preventDefault();
+    err.textContent = '여백을 뺀 본문이 가로·세로 20mm보다 커야 합니다. 여백이나 용지 크기를 줄이세요.';
+    err.hidden = false;
+    return;
+  }
+  const info = editor.sectionInfo();
+  editor.setSectionProps({
+    ...info.props,
+    page: { width: fromMm(w), height: fromMm(h), margin: [fromMm(mt), fromMm(mr), fromMm(mb), fromMm(ml)] },
+    start: field<HTMLSelectElement>('start').value as SectionStart,
+  });
+});
+pageDialog.addEventListener('close', () => editor.focus());
 
 const placeSel = document.getElementById('img-place') as HTMLSelectElement;
 placeSel.addEventListener('change', () => {

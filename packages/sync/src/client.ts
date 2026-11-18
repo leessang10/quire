@@ -33,7 +33,7 @@ export interface ClientOptions {
 
 const isSeg = (c: LocalChange) => c.kind === 'order' || c.kind === 'list' || c.kind === 'hidden' || c.kind === 'flag';
 /** 스타일·목록 정의 변경 (Worker의 정의 상태는 통째로 오므로 구획 상태처럼 다룬다) */
-const isDef = (c: LocalChange) => c.kind === 'style' || c.kind === 'listDef';
+const isDef = (c: LocalChange) => c.kind === 'style' || c.kind === 'listDef' || c.kind === 'sectionDef';
 /** 가벼운 스토리 끝 ¶ 속성 변경 (Worker의 끝 ¶ 맵 상태는 통째로 오므로 구획 상태처럼 다룬다) */
 const isTail = (c: LocalChange) => c.kind === 'tail';
 /** 표 레코드 변경 (Worker의 표 레코드는 통째로 오므로 미룬다) */
@@ -306,7 +306,7 @@ export class SyncClient {
       return;
     }
     this.deferredDefs = null;
-    this.current.applyRemoteDefs(candidate.styles ?? {}, candidate.lists ?? {});
+    this.current.applyRemoteDefs(candidate.styles ?? {}, candidate.lists ?? {}, candidate.sections ?? {});
     this.opts.onRemoteChange?.();
   }
 

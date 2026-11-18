@@ -340,6 +340,8 @@ export function syncFormats(doc: Doc, target: Doc): void {
   for (const name of names) if (!same(doc.style(name), target.style(name))) doc.setStyle(name, target.style(name));
   const ids = new Set([...doc.lists().map((l) => l.id), ...target.lists().map((l) => l.id)]);
   for (const id of ids) if (!same(doc.listDef(id), target.listDef(id))) doc.setList(id, target.listDef(id));
+  const secs = new Set([...doc.sectionDefs().map(([id]) => id), ...target.sectionDefs().map(([id]) => id)]);
+  for (const id of secs) if (!same(doc.sectionDef(id), target.sectionDef(id))) doc.setSection(id, target.sectionDef(id));
 }
 
 /**

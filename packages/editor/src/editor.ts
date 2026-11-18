@@ -24,11 +24,15 @@ import {
   type Selection,
   cellKey,
   cellStoryId,
+  fullSection,
+  type SectionProps,
+  type SectionStart,
   type Style,
 } from '@quire/model';
 import {
   LayoutCache,
   PagedLayout,
+  SectionFrames,
   cpSlice,
   docToDisplay,
   lineX,
@@ -143,6 +147,9 @@ export interface EditorStats {
   /** 백그라운드 쪽 조립에 쓴 누적 시간 */
   backgroundMs: number;
 }
+
+/** 구역 나눔 표시의 시작 방식 이름 */
+const SECTION_LABELS: Record<SectionStart, string> = { nextPage: '다음 쪽', continuous: '이어서', evenPage: '짝수 쪽', oddPage: '홀수 쪽' };
 
 const COLORS = {
   desk: '#e9e9ec',
@@ -582,7 +589,7 @@ export class Editor {
   private resetLayouts(): void {
     this.cache.clear();
     this.cellCache.clear();
-    this.bodyLayout = new PagedLayout(this.setup, this.measurer, this.cache, this.fmt.formatOf);
+    this.bodyLayout = new PagedLayout(this.setup, this.measurer, this.cache, this.fmt.formatOf, new SectionFrames(this.setup, this.fmt.sections));
     this.fmt.reset(this.measurer, this.cellCache);
     this.layout = this.bodyLayout;
   }
@@ -717,7 +724,7 @@ export class Editor {
     }
     const viewH = this.scroller.clientHeight;
     this.spacer.style.height = `${Math.max(0, layout.totalHeight - viewH)}px`;
-    this.spacer.style.width = `${this.setup.width + this.setup.gap * 2}px`;
+    this.spacer.style.width = `${this.fmt.maxPageWidth() + this.setup.gap * 2}px`;
   }
 
   /** 남은 쪽 조립을 짧은 조각으로 나눠 유휴 시간에 진행 (02 §7) */
@@ -744,7 +751,9 @@ export class Editor {
   }
 
   private pageLeft(): number {
-    return Math.max(this.setup.gap, (this.scroller.clientWidth - this.setup.width) / 2);
+    // 쪽들은 기본 용지 폭의 가운데 축에 맞춘다 (구역마다 폭이 다르면 넓은 쪽이 왼쪽으로 나온다)
+    const over = (this.fmt.maxPageWidth() - this.setup.width) / 2;
+    return Math.max(this.setup.gap + over, (this.scroller.clientWidth - this.setup.width) / 2);
   }
 
   private render(): void {
@@ -818,7 +827,7 @@ export class Editor {
    * visibleParas: 본문이면 보이는 문단 번호를 모은다. 본문 영역이 아직 배치되지 않았으면 false
    */
   private drawLines(layout: PagedLayout, doc: Doc, px: number, top: number, h: number, visibleParas: Set<number> | null): boolean {
-    const { ctx, setup } = this;
+    const { ctx } = this;
     const isBody = doc === this.body;
     const active = layout === this.layout;
     this.drawDoc = doc;
@@ -868,7 +877,7 @@ export class Editor {
       // 끌고 있는 문단
       if (isBody && this.drag && ref.para >= this.drag.i && ref.para <= this.drag.j) {
         ctx.fillStyle = COLORS.dragSource;
-        ctx.fillRect(px + ln.x - 6, y, setup.width - setup.margin * 2 + 12, ln.height);
+        ctx.fillRect(px + para.frameLeft - 6, y, para.width + 12, ln.height);
       }
 
       // 형광펜 (선택 영역 아래)
@@ -911,7 +920,7 @@ export class Editor {
       }
 
       // 목록 번호·글머리 (첫 줄, 내어쓴 자리)
-      if (ln.index === 0 && para.layout.marker) this.drawMarker(para.layout, px, baseY, sty);
+      if (ln.index === 0 && para.layout.marker) this.drawMarker(para.layout, px + para.frameLeft, baseY, sty);
 
       // 글자
       ctx.fillStyle = COLORS.text;
@@ -965,8 +974,37 @@ export class Editor {
           ctx.fillRect(X(a), y + ln.height - 5, X(b) - X(a), 1.5);
         }
       }
+
+      // 구역 나눔 표시 (12 §3.1): 구역 끝 문단의 마지막 줄 뒤에 점선과 다음 구역의 시작 방식
+      if (isBody && ln.index === para.lines.length - 1 && (para.info as ParagraphInfo).attrs.section !== undefined)
+        this.drawSectionMark(para, ln, ref.para, X(ln.end) + this.fontSize * 0.6, px + para.frameLeft + para.width, y + ln.height / 2);
     }
     return ready;
+  }
+
+  /** 구역 나눔 점선: x0..x1 (화면), 가운데 y */
+  private drawSectionMark(_para: PlacedPara, _ln: PlacedLine, i: number, x0: number, x1: number, y: number): void {
+    const { ctx } = this;
+    const next = this.body.sectionOf(i + 1).id;
+    const start = fullSection(this.body.sectionDef(next)).start;
+    const label = `구역 나눔 (${SECTION_LABELS[start]})`;
+    ctx.save();
+    ctx.font = `11px ${this.family}`;
+    const tw = ctx.measureText(label).width;
+    const mid = Math.max(x0 + 8, (x0 + x1 - tw) / 2);
+    ctx.strokeStyle = COLORS.placeholderText;
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, y + 0.5);
+    ctx.lineTo(mid - 6, y + 0.5);
+    ctx.moveTo(mid + tw + 6, y + 0.5);
+    ctx.lineTo(Math.max(mid + tw + 6, x1), y + 0.5);
+    ctx.stroke();
+    ctx.fillStyle = COLORS.placeholderText;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, mid, y);
+    ctx.restore();
   }
 
   /** 표 하나 (11 §4.3): 셀 배경, 셀 내용(덮인 셀은 주인 셀 아래에 이어서), 셀 범위 선택, 테두리 */
@@ -1261,7 +1299,7 @@ export class Editor {
       if (ln) {
         ctx.fillStyle = COLORS.gripActive;
         ctx.font = `12px ${this.family}`;
-        ctx.fillText('⚓', px + this.setup.margin - 18, ln.baseline - top);
+        ctx.fillText('⚓', px + para.frameLeft - 18, ln.baseline - top);
       }
     }
   }
@@ -1324,7 +1362,7 @@ export class Editor {
     const bmp = await createImageBitmap(blob);
     const asset = await this.assets.put(blob);
     this.images.set(asset, bmp);
-    const maxW = this.setup.width - this.setup.margin * 2;
+    const maxW = this.contentWidthAt(at ?? this.headOffset());
     const scale = Math.min(1, maxW / bmp.width);
     const toPt = (v: number) => Math.round(v * 0.75 * 1000); // px(96dpi) → 1/1000pt
     const attrs: ObjAttrs = { id: crypto.randomUUID().slice(0, 8), kind: 'image', asset, w: toPt(bmp.width * scale), h: toPt(bmp.height * scale), ...(alt ? { alt } : {}) };
@@ -1385,7 +1423,7 @@ export class Editor {
       const target = this.layout.para(ref.para);
       const tTop = target.lines[0]!.y;
       const anchorPara = this.doc.paragraphIndexAt(obj.offset);
-      const float: FloatAttrs = { ...attrs.float, relX: 'column', x: toPt(newX - this.setup.margin), y: toPt(newY - tTop), relY: 'paragraph' };
+      const float: FloatAttrs = { ...attrs.float, relX: 'column', x: toPt(newX - target.frameLeft), y: toPt(newY - tTop), relY: 'paragraph' };
       const before: Selection = { ...this.sel };
       const ops: Op[] = [];
       let at = obj.offset;
@@ -1444,11 +1482,12 @@ export class Editor {
   }
 
   /** 목록 번호: 본문 왼쪽에서 내어 쓴 자리, ¶ 서식으로 (10 §4) */
-  private drawMarker(pl: ParaLayout, px: number, baseY: number, sty: string): void {
+  /** left: 화면에서 본문(프레임) 왼쪽 */
+  private drawMarker(pl: ParaLayout, left: number, baseY: number, sty: string): void {
     const mk = pl.marker!;
     const { ctx } = this;
     const d = this.fmt.drawStyle(mk.id, sty, this.drawDoc);
-    const x0 = px + this.setup.margin + (pl.box?.left ?? 0) + mk.x;
+    const x0 = left + (pl.box?.left ?? 0) + mk.x;
     ctx.fillStyle = d.color ?? COLORS.text;
     // 글꼴이 바뀌는 곳마다 (글머리 기호가 대체 글꼴에 있을 수 있다)
     const cps = Array.from(mk.text);
@@ -1582,6 +1621,64 @@ export class Editor {
   /** 선택한 문단들에 문단 스타일 (본문이면 style 키를 지운다) */
   setParagraphStyle(name: string): void {
     this.setParagraphAttr('style', name === BODY_STYLE ? undefined : name);
+  }
+
+  // ── 구역 (12 §3) ───────────────────────────────
+
+  /**
+   * 구역 나누기 (Ctrl+Alt+Enter: 다음 쪽): 캐럿에서 문단을 나누고 앞쪽 문단을 새 구역의 끝으로 한다. 새 구역(앞)은 지금 구역의
+   * 설정을 그대로 받고, 지금 구역(뒤)은 start 방식으로 시작한다 (Word처럼 나눔의 종류는 뒤 구역의 시작). 본문에서만. 실행 취소 한 단계
+   */
+  insertSectionBreak(start: SectionStart = 'nextPage'): void {
+    this.input.commitComposition();
+    if (this.active || this.extras.length) return;
+    const [from] = this.range();
+    const pi = this.doc.paragraphIndexAt(from);
+    if (this.doc.paragraphs()[pi]?.objs?.get(0)?.kind === 'table') return;
+    this.history.seal();
+    this.replaceSelection('\n', undefined, () => {
+      const d = this.doc;
+      const cur = d.sectionOf(pi + 1).id;
+      const props = fullSection(d.sectionDef(cur));
+      const id = d.newSectionId();
+      return [...d.setSection(id, props), ...d.setParaAttr(pi, 'section', id), ...d.setSection(cur, { ...props, start })];
+    });
+    this.history.seal();
+  }
+
+  /** 캐럿이 든 구역: ID, 설정(빠진 키는 기본값), 차례, 구역 수 */
+  sectionInfo(): { id: string; props: SectionProps; index: number; count: number } {
+    const b = this.body;
+    const pi = this.active ? this.tableIndex(this.active.table) : b.paragraphIndexAt(this.range()[0]);
+    const s = b.sectionOf(Math.max(0, pi));
+    return { id: s.id, props: fullSection(b.sectionDef(s.id)), index: s.index, count: b.sectionBreaks().length + 1 };
+  }
+
+  /** 캐럿이 든 구역의 설정을 바꾼다 (쪽 설정 대화상자). 그 구역부터 다시 조립. 실행 취소 한 단계 */
+  setSectionProps(props: SectionProps): void {
+    this.input.commitComposition();
+    const before: Selection = { ...this.sel };
+    const { id } = this.sectionInfo();
+    const ops = this.body.setSection(id, props);
+    if (!ops.length) return;
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.history.seal();
+  }
+
+  /** 캐럿이 든 구역의 끝 구역 나눔을 지운다: 이 구역이 다음 구역에 합쳐지고 다음 구역의 설정이 남는다 (12 §3.1) */
+  removeSectionBreak(): void {
+    this.input.commitComposition();
+    const b = this.body;
+    const { index } = this.sectionInfo();
+    const at = b.sectionBreaks()[index];
+    if (at === undefined) return;
+    const before: Selection = { ...this.sel };
+    const ops = b.setParaAttr(at, 'section', undefined);
+    if (!ops.length) return;
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.history.seal();
   }
 
   /** 문단 스타일 정의를 바꾼다 (그 스타일을 쓰는 문단만 다시 조판). 실행 취소 한 단계 */
@@ -1752,7 +1849,7 @@ export class Editor {
     const g = this.drag ? this.drag.i : this.hoverPara;
     if (g >= 0 && g < layout.validCount) {
       const ln = layout.paras[g]!.lines[0]!;
-      const cx = px + setup.margin - (GRIP_LEFT + GRIP_RIGHT) / 2;
+      const cx = px + layout.paras[g]!.frameLeft - (GRIP_LEFT + GRIP_RIGHT) / 2;
       const cy = ln.y - top + ln.height / 2;
       ctx.fillStyle = this.drag || this.hoverGrip ? COLORS.gripActive : COLORS.grip;
       for (let r = -1; r <= 1; r++) {
@@ -1774,10 +1871,11 @@ export class Editor {
       if (n - 1 >= layout.validCount) return;
       yLine = layout.paras[n - 1]!.bottom + setup.paraSpacing / 2;
     }
-    const x = px + setup.margin - 8;
+    const at = layout.paras[Math.min(to, n - 1)]!;
+    const x = px + at.frameLeft - 8;
     const y = yLine - top;
     ctx.fillStyle = COLORS.dropLine;
-    ctx.fillRect(x, y - 1, setup.width - setup.margin * 2 + 16, 2);
+    ctx.fillRect(x, y - 1, at.width + 16, 2);
     ctx.beginPath();
     ctx.arc(x, y, 4, 0, Math.PI * 2);
     ctx.fill();
@@ -2708,7 +2806,7 @@ export class Editor {
     this.input.commitComposition();
     this.leaveCellKeep();
     const before: Selection = { ...this.sel };
-    const width = Math.round((this.setup.width - this.setup.margin * 2) * (72 / 96) * 1000);
+    const width = Math.round(this.contentWidthAt(this.headOffset()) * (72 / 96) * 1000);
     const { id, ops } = this.document.insertTable(this.headOffset(), rows, cols, width);
     this.history.seal();
     this.commit(ops, before);
@@ -3001,7 +3099,7 @@ export class Editor {
         const img = r.img!;
         img.asset = asset;
         if (!img.w || !img.h) {
-          const maxW = this.setup.width - this.setup.margin * 2;
+          const maxW = this.contentWidthAt(this.headOffset());
           const sc = Math.min(1, maxW / bmp.width);
           img.w = Math.round(bmp.width * sc * 750);
           img.h = Math.round(bmp.height * sc * 750);
@@ -3087,6 +3185,12 @@ export class Editor {
     if (this.cellSel && e.key === 'Escape') {
       this.cellSel = null;
       this.render();
+      e.preventDefault();
+      return;
+    }
+    // 구역 나누기 (12 §3.1): Ctrl+Alt+Enter
+    if (mod && e.altKey && !shift && e.key === 'Enter') {
+      this.insertSectionBreak('nextPage');
       e.preventDefault();
       return;
     }
@@ -3356,7 +3460,7 @@ export class Editor {
     const p = this.docPoint(e);
     // 아직 쪽 조립이 안 된 영역의 클릭은 무시 (자리표시가 보이는 상태)
     if (p.y >= this.bodyLayout.validBottom) return;
-    if (e.detail === 1 && this.inGrip(p.x)) {
+    if (e.detail === 1 && this.inGrip(p.x, p.y)) {
       const ref = this.bodyLayout.firstLineBelow(p.y, false);
       if (ref) {
         this.leaveCellKeep();
@@ -3435,9 +3539,17 @@ export class Editor {
   // ── 문단 끌기 ─────────────────────────────────────────
 
   /** 쪽 왼쪽 기준 x가 문단 손잡이 영역인가 */
-  private inGrip(x: number): boolean {
-    const m = this.setup.margin;
+  private inGrip(x: number, y: number): boolean {
+    const ref = this.bodyLayout.firstLineBelow(y, false);
+    const m = ref ? this.bodyLayout.paras[ref.para]!.frameLeft : this.setup.margin;
     return x >= m - GRIP_LEFT && x < m - GRIP_RIGHT;
+  }
+
+  /** 오프셋 자리의 본문 폭 (px): 구역 여백, 셀이면 셀 폭 */
+  private contentWidthAt(offset: number): number {
+    const L = this.layout;
+    const pp = L.para(L.paraIndexAt(offset));
+    return pp.width || this.setup.width - this.setup.margin * 2;
   }
 
   private setHover(para: number, grip: boolean): void {
@@ -3453,14 +3565,14 @@ export class Editor {
   private onHover(e: MouseEvent): void {
     if (this.drag || e.buttons) return;
     const p = this.docPoint(e);
-    const { margin, width } = this.setup;
     let para = -1;
     const L = this.bodyLayout;
-    if (p.x >= margin - GRIP_LEFT && p.x <= width - margin && p.y < L.validBottom) {
+    if (p.y < L.validBottom) {
       const ref = L.firstLineBelow(p.y, false);
-      if (ref && p.y >= L.paras[ref.para]!.lines[0]!.y - this.setup.paraSpacing) para = ref.para;
+      const pp = ref ? L.paras[ref.para]! : null;
+      if (pp && p.x >= pp.frameLeft - GRIP_LEFT && p.x <= pp.frameLeft + pp.width && p.y >= pp.lines[0]!.y - this.setup.paraSpacing) para = ref!.para;
     }
-    this.setHover(para, para >= 0 && this.inGrip(p.x));
+    this.setHover(para, para >= 0 && this.inGrip(p.x, p.y));
   }
 
   /**

@@ -59,6 +59,23 @@ button {
   cursor: pointer;
 }
 button:hover { border-color: var(--accent); }
+
+/* 쪽 설정 대화상자 (12 §3.1) */
+.page-dialog { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; background: var(--panel); color: var(--fg); max-width: min(440px, calc(100vw - 32px)); }
+.page-dialog::backdrop { background: rgb(0 0 0 / 0.3); }
+.page-dialog h2 { font-size: 15px; margin: 0 0 12px; }
+.page-dialog .muted { color: var(--muted); font-weight: 400; font-size: 13px; }
+.page-dialog form { display: grid; gap: 10px; }
+.page-dialog label { display: flex; align-items: center; gap: 6px; }
+.page-dialog fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0; padding: 6px 10px 8px; }
+.page-dialog fieldset.row { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.page-dialog legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+.page-dialog input[type='number'] { width: 5.5em; font: inherit; }
+.page-dialog select { font: inherit; }
+.page-dialog .error { color: #c01c28; margin: 0; }
+.page-dialog .dialog-actions { display: flex; gap: 6px; align-items: center; }
+.page-dialog .spacer { flex: 1; }
+.page-dialog .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .layout {

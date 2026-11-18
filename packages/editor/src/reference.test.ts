@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { documentFromQuire, migrateQuire } from '@quire/sync';
 import { HbShaper, loadShapingFont, slotOf } from '@quire/shaping';
-import { LayoutCache, PagedLayout, cpSlice } from '@quire/layout';
+import { LayoutCache, PagedLayout, SectionFrames, cpSlice } from '@quire/layout';
 import type { Document } from '@quire/model';
 import { Formatter, defaultPageSetup } from './formatter';
 
@@ -27,7 +27,7 @@ function compose(document: Document) {
   const setup = { ...defaultPageSetup(16), ascent: pretendard.metrics.ascent, descent: pretendard.metrics.descent };
   const fmt = new Formatter(() => document, setup, 16);
   fmt.reset(shaper, new LayoutCache(20000));
-  const layout = new PagedLayout(setup, shaper, new LayoutCache(), fmt.formatOf);
+  const layout = new PagedLayout(setup, shaper, new LayoutCache(), fmt.formatOf, new SectionFrames(setup, fmt.sections));
   document.body.takeParagraphChanges();
   layout.update(document.body.paragraphs(), null, Infinity, null);
   layout.finish();
@@ -36,6 +36,8 @@ function compose(document: Document) {
 
 interface Summary {
   pages: number;
+  /** 쪽마다 용지 (px, 너비x높이): 구역마다 다르다 (12 §3) */
+  paper: string[];
   /** 쪽마다 첫 줄: 문단 번호, 줄 번호, 앞 글자들 */
   pageStarts: Array<{ page: number; para: number; line: number; text: string }>;
   /** 모든 줄(표 셀 포함)의 쪽·위치·글자 범위 FNV-1a */
@@ -88,7 +90,11 @@ function summarize(document: Document, { layout, fmt }: ReturnType<typeof compos
             }
         }
   }
-  return { pages: layout.pageCount, pageStarts, fingerprint: (h >>> 0).toString(16).padStart(8, '0') };
+  const paper = Array.from({ length: layout.pageCount }, (_, p) => {
+    const b = layout.pageBox(p);
+    return `${b.width}x${b.height}`;
+  });
+  return { pages: layout.pageCount, paper, pageStarts, fingerprint: (h >>> 0).toString(16).padStart(8, '0') };
 }
 
 const open = (name: string) => documentFromQuire(migrateQuire(JSON.parse(readFileSync(join(dir, name), 'utf8'))).doc).document;

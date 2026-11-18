@@ -18,7 +18,7 @@ export { applyHunks, compactDoc, compactDocument, compactLoro, diffText, readEpo
 export type { Hunk, RebaseInfo } from './epoch';
 export { parseRebase } from './ws';
 export { LoroWriter, initLoro, newLoro, readRaw, readState, displayOrderFromLoro, SEG_MARK, TEXT, ORDER, END } from './shape';
-export { applyFormats, docFromLoro, formatDelta, readDefs, readFormats, writeFormats, STYLES, LISTS } from './shape';
+export { applyFormats, docFromLoro, formatDelta, readDefs, readFormats, writeFormats, sectionsFromMap, STYLES, LISTS, SECTIONS } from './shape';
 export type { FormatState } from './shape';
 export type { Defs } from './protocol';
 export { BODY_NAMES, storyNames, storyIdsOf, documentFromLoro, readTail } from './shape';
