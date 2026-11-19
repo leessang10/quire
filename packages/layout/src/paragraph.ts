@@ -43,7 +43,21 @@ export interface ParaBox {
   /** 쪽 나눔 제어 (12 §4): 앞에서 쪽 나눔, 다음 문단과 함께, 문단 나누지 않음. 없으면 모두 꺼짐 */
   /** 쪽 나눔 제어 (12 §4): 앞에서 쪽 나눔, 다음 문단과 함께, 나누지 않음. column: 앞에서 단 나눔 (12 §7.1) */
   keep?: { breakBefore?: true; next?: true; together?: true; column?: true };
+  /**
+   * 한글 조판 (12 §9): char = 한글·한자 사이 어디서나 끊음 (글자 단위, 영문·숫자는 늘 단어 단위), hang = 줄 끝 쉼표·마침표 하나를
+   * 오른쪽 여백에 걸침, squeeze = 어간마다 줄일 수 있는 폭 (px, 양쪽 정렬 문단에서 한 어절을 더 넣는다)
+   */
+  korean?: { char?: true; hang?: true; squeeze?: number };
 }
+
+/** 줄바꿈 선택 (ParaBox.korean에서) */
+interface BreakOpts {
+  char: boolean;
+  hang: boolean;
+  squeeze: number;
+}
+
+const NO_KOREAN: BreakOpts = { char: false, hang: false, squeeze: 0 };
 
 /** 떠 있는 개체의 위치·배치 (11 §2.3). 길이는 px */
 export interface FloatSpec {
@@ -241,8 +255,35 @@ const segmenter = new Intl.Segmenter('ko', { granularity: 'grapheme' });
 const SIMPLE_TEXT =
   /^[\t\x20-\x7e -ÿ‐-‧‰-⁞　-〿㄰-㆏가-힣一-鿿！-￯]*$/;
 
-/** 줄 앞에 올 수 없는 문자 (금칙, 0단계 최소 목록) */
-const NO_LINE_START = new Set(Array.from('.,!?:;)]}>、。，．・」』】〉》”’…%'));
+/**
+ * 금칙 (12 §9.1, O-30): 줄 앞에 올 수 없는 문자. Word·한글 프로그램의 한국어 기본 목록을 참고한 초안 + 한글 조판 문장부호
+ */
+export const NO_LINE_START = new Set(Array.from('!%),.:;?]}¢°’”‰′″℃、。〉》」』】〕〗〙〛ﾠ…‥·・，．>'));
+/** 줄 끝에 올 수 없는 문자 (여는 괄호·따옴표) */
+export const NO_LINE_END = new Set(Array.from('$([{£¥‘“〈《「『【〔〖〘〚＄'));
+/** 줄 끝 여백에 걸칠 수 있는 문장부호 (12 §9.3) */
+const HANGABLE = new Set(Array.from(',.、。，．'));
+
+/** 한글 음절·자모, 한자, 가나 (글자 단위로 끊을 수 있는 글자) */
+function isCJK(ch: string): boolean {
+  const c = ch.codePointAt(0)!;
+  return (
+    (c >= 0xac00 && c <= 0xd7a3) ||
+    (c >= 0x1100 && c <= 0x11ff) ||
+    (c >= 0x3130 && c <= 0x318f) ||
+    (c >= 0x4e00 && c <= 0x9fff) ||
+    (c >= 0x3400 && c <= 0x4dbf) ||
+    (c >= 0x3040 && c <= 0x30ff)
+  );
+}
+
+/** a 뒤, b 앞에서 줄을 바꿀 수 있는가 (공백 뒤·개체 앞뒤, 글자 단위면 한글·한자 사이). 금칙이면 안 된다 */
+function canBreakBetween(a: string, b: string, opts: BreakOpts): boolean {
+  if (isSpace(b)) return false;
+  if (NO_LINE_START.has(b) || NO_LINE_END.has(a)) return false;
+  if (isSpace(a) || a === OBJ_CHAR || b === OBJ_CHAR) return true;
+  return opts.char && (isCJK(a) || isCJK(b));
+}
 
 function isSpace(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '　';
@@ -360,7 +401,7 @@ export function layoutParagraph(
     }
     xs[n] = x;
     const fonts = measurer.advances ? shapeXs(display, n, null, xs, measurer, fmt, st, objs) : null;
-    const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
+    const lines = breakLines(n, xs, gStart, gFirst, restW, firstW, koreanOpts(box));
     lineScales(lines, st, format);
   if (objs) lineObjects(lines, objs);
   const cpLine = st ? Float32Array.from({ length: n }, (_, k) => st(k).line) : null;
@@ -392,7 +433,7 @@ export function layoutParagraph(
   xs[n] = x;
   const fonts = measurer.advances ? shapeXs(display, n, u16, xs, measurer, fmt, st, objs) : null;
 
-  const lines = breakLines(n, xs, gStart, gFirst, restW, firstW);
+  const lines = breakLines(n, xs, gStart, gFirst, restW, firstW, koreanOpts(box));
   lineScales(lines, st, format);
   if (objs) lineObjects(lines, objs);
   const cpLine = st ? Float32Array.from({ length: n }, (_, k) => st(k).line) : null;
@@ -411,30 +452,32 @@ function withoutFloats(objs: Map<number, { w: number; h: number }>, floats: Map<
  * 길면 글자 단위 + 금칙). 적어도 grapheme 하나는 넣는다.
  */
 export function breakFrom(pl: ParaLayout, start: number, width: number): number {
-  const { n, xs, stops } = pl;
+  const { n, stops } = pl;
   if (start >= n) return n;
-  const nextStop = (i: number) => {
-    let j = i + 1;
-    while (j < n && !stops[j]) j++;
-    return j;
-  };
-  let lastBreak = -1;
-  let prev = -1;
-  let i = start;
-  while (i < n) {
-    const next = nextStop(i);
-    const ch = cpSlice(pl, i, i + 1);
-    if (ch === OBJ_CHAR && i > start) lastBreak = i;
-    if (!isSpace(ch) && xs[next]! - xs[start]! > width && i > start) {
-      if (lastBreak > start) return lastBreak;
-      if (NO_LINE_START.has(ch) && prev > start) return prev;
-      return i;
+  // 같은 규칙 (breakLines): start부터의 grapheme들로 한 줄만 나눈다
+  const starts: number[] = [];
+  const first: string[] = [];
+  for (let i = start; i < n; i++)
+    if (stops[i] || i === start) {
+      starts.push(i);
+      first.push(cpSlice(pl, i, i + 1));
     }
-    if (isSpace(ch) || ch === OBJ_CHAR) lastBreak = next;
-    prev = i;
-    i = next;
-  }
-  return n;
+  const lines = breakLines(n, pl.xs, starts, first, width, width, koreanOpts(pl.box), start, 1);
+  return lines[0]!.end;
+}
+
+function koreanOpts(box: ParaBox | null | undefined): BreakOpts {
+  const k = box?.korean;
+  if (!k) return NO_KOREAN;
+  return { char: !!k.char, hang: !!k.hang, squeeze: box?.align === 'justify' ? (k.squeeze ?? 0) : 0 };
+}
+
+/** 줄 끝에 걸친 문장부호 (12 §9.3): 줄 [start, end)의 마지막 공백 아닌 글자가 걸칠 수 있는 글자면 그 위치, 아니면 -1 */
+export function hangingAt(pl: ParaLayout, start: number, end: number): number {
+  if (!pl.box?.korean?.hang) return -1;
+  let e = end;
+  while (e > start && isSpace(cpSlice(pl, e - 1, e))) e--;
+  return e > start && HANGABLE.has(cpSlice(pl, e - 1, e)) ? e - 1 : -1;
 }
 
 /** 줄 [start, end)의 높이 배율과 개체 높이 (어울림 줄바꿈으로 새로 나눈 줄) */
@@ -528,13 +571,32 @@ function shapeXs(
   return fonts;
 }
 
-function breakLines(n: number, xs: Float32Array, starts: number[], first: string[], restWidth: number, firstWidth = restWidth): LineBox[] {
+/**
+ * 줄 나누기 (02 §4, 12 §9): 한 줄씩(탐욕). 끊을 수 있는 곳 = 공백 뒤, 개체 앞뒤, 글자 단위(char)면 한글·한자 사이. 금칙(줄 앞·줄 끝
+ * 금지)인 곳에서는 끊지 않는다 — 넘치면 앞의 끊을 곳으로 밀어낸다. 끊을 곳이 없으면 (어절이 줄보다 김) 글자 단위로 끊되 줄 앞 금지
+ * 글자는 한 글자 당긴다. squeeze면 줄 안 어간 수 × squeeze만큼 넘쳐도 된다 (양쪽 정렬에서 어간을 줄인다). hang이면 줄 끝을 넘는
+ * 쉼표·마침표 하나는 그 줄에 둔다 (여백에 걸침).
+ * startAt·maxLines: 어울림 줄바꿈 (breakFrom)
+ */
+function breakLines(
+  n: number,
+  xs: Float32Array,
+  starts: number[],
+  first: string[],
+  restWidth: number,
+  firstWidth = restWidth,
+  opts: BreakOpts = NO_KOREAN,
+  startAt = 0,
+  maxLines = Infinity,
+): LineBox[] {
   if (n === 0) return [{ start: 0, end: 0, scale: 1 }];
 
   const lines: LineBox[] = [];
-  let lineStart = 0;
-  let lastBreak = -1; // 이 인덱스에서 끊을 수 있음 (공백 다음)
+  let lineStart = startAt;
+  let lastBreak = -1; // 이 인덱스에서 끊을 수 있음
   let lastBreakG = -1; // 그 위치의 grapheme 번호
+  /** 줄 안 어간 수 (공백 뒤에 글자가 온 곳) */
+  let gaps = 0;
   let g = 0;
 
   while (g < starts.length) {
@@ -542,38 +604,50 @@ function breakLines(n: number, xs: Float32Array, starts: number[], first: string
     const next = g + 1 < starts.length ? starts[g + 1]! : n;
     const ch = first[g]!;
 
-    // 공백은 줄 끝에 매달릴 수 있으므로 넘침 판정에서 제외
-    const width = lines.length === 0 ? firstWidth : restWidth;
-    // 개체 앞은 줄바꿈 기회
-    if (ch === OBJ_CHAR && i > lineStart) {
-      lastBreak = i;
-      lastBreakG = g;
+    // 이 글자 앞에서 끊을 수 있는가 (줄 첫 글자 앞은 빼고)
+    if (g > 0 && i > lineStart) {
+      const a = first[g - 1]!;
+      if (canBreakBetween(a, ch, opts)) {
+        lastBreak = i;
+        lastBreakG = g;
+      }
+      if (isSpace(a) && !isSpace(ch)) gaps++;
     }
+
+    // 공백은 줄 끝에 매달릴 수 있으므로 넘침 판정에서 제외
+    const width = (lines.length === 0 ? firstWidth : restWidth) + (opts.squeeze > 0 ? gaps * opts.squeeze : 0);
     if (!isSpace(ch) && xs[next]! - xs[lineStart]! > width && i > lineStart) {
+      // 매달기: 넘치는 것이 쉼표·마침표 하나뿐이면 이 줄에 둔다
+      if (opts.hang && HANGABLE.has(ch) && xs[i]! - xs[lineStart]! <= width) {
+        g++;
+        continue;
+      }
       let breakAt: number;
       let bg: number;
       if (lastBreak > lineStart) {
-        breakAt = lastBreak; // 어절 단위
+        breakAt = lastBreak; // 끊을 곳 (어절, 글자 단위, 금칙으로 밀어냄)
         bg = lastBreakG;
       } else {
         breakAt = i; // 글자 단위 (어절이 줄보다 김)
         bg = g;
-        // 금칙: 줄 앞에 올 수 없는 글자면 한 글자 앞에서 끊는다
-        if (NO_LINE_START.has(first[bg]!) && bg > 0 && starts[bg - 1]! > lineStart) {
-          bg--;
-          breakAt = starts[bg]!;
+        // 금칙: 줄 앞 금지 글자가 줄 앞에 오거나 줄 끝 금지 글자가 줄 끝에 남으면 세 글자까지 당긴다 (안 되면 그대로)
+        for (let back = 1; back <= 3; back++) {
+          if (!NO_LINE_START.has(first[bg]!) && !(bg > 0 && NO_LINE_END.has(first[bg - 1]!))) break;
+          if (g - back <= 0 || starts[g - back]! <= lineStart) {
+            bg = g;
+            break;
+          }
+          bg = g - back;
         }
+        breakAt = starts[bg]!;
       }
       lines.push({ start: lineStart, end: breakAt, scale: 1 });
+      if (lines.length >= maxLines) return lines;
       lineStart = breakAt;
       lastBreak = -1;
+      gaps = 0;
       g = bg;
       continue;
-    }
-
-    if (isSpace(ch) || ch === OBJ_CHAR) {
-      lastBreak = next;
-      lastBreakG = g + 1;
     }
     g++;
   }

@@ -660,6 +660,19 @@ document.querySelectorAll<HTMLButtonElement>('[data-align]').forEach((b) =>
     editor.focus();
   }),
 );
+const breakSel = document.getElementById('para-break') as HTMLSelectElement;
+breakSel.addEventListener('change', () => {
+  editor.setParagraphAttr('koreanBreak', breakSel.value === 'char' ? 'char' : undefined);
+  editor.focus();
+});
+document.querySelectorAll<HTMLButtonElement>('[data-korean]').forEach((b) =>
+  b.addEventListener('click', () => {
+    const k = b.dataset.korean as 'hangPunct' | 'squeeze';
+    const ps = editor.paragraphState();
+    editor.setParagraphAttr(k, ps.attrs[k] === true && !ps.mixed.has(k) ? undefined : true);
+    editor.focus();
+  }),
+);
 lineSel.addEventListener('change', () => {
   editor.setParagraphAttr('line', lineSel.value ? { rule: 'multiple', value: Number(lineSel.value) } : undefined);
   editor.focus();
@@ -705,6 +718,11 @@ function showMarks(): void {
   const li = ps.attrs.list ? editor.doc.listDef(ps.attrs.list.id)?.kind : undefined;
   document.querySelectorAll<HTMLButtonElement>('[data-list]').forEach((b) => b.setAttribute('aria-pressed', String(li === b.dataset.list)));
   lineSel.value = ps.mixed.has('line') || ps.attrs.line?.rule !== 'multiple' ? '' : String(ps.attrs.line.value);
+  breakSel.value = ps.attrs.koreanBreak === 'char' ? 'char' : 'word';
+  document.querySelectorAll<HTMLButtonElement>('[data-korean]').forEach((b) => {
+    const k = b.dataset.korean as 'hangPunct' | 'squeeze';
+    b.setAttribute('aria-pressed', ps.mixed.has(k) ? 'mixed' : String(ps.attrs[k] === true));
+  });
   document.querySelectorAll<HTMLButtonElement>('[data-keep]').forEach((b) => {
     const k = b.dataset.keep as 'pageBreakBefore' | 'keepWithNext' | 'keepTogether';
     b.setAttribute('aria-pressed', ps.mixed.has(k) ? 'mixed' : String(ps.attrs[k] === true));

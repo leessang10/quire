@@ -49,6 +49,14 @@
           <option value="2">2</option>
         </select>
       </label>
+      <label title="한글 줄 나눔 (12 §9.1): 어절 단위 또는 글자 단위 (영문·숫자는 늘 단어 단위)">줄 나눔
+        <select id="para-break">
+          <option value="word">어절</option>
+          <option value="char">글자</option>
+        </select>
+      </label>
+      <button data-korean="hangPunct" aria-pressed="false" title="문장부호 걸침: 줄 끝 쉼표·마침표 하나를 오른쪽 여백에">걸침</button>
+      <button data-korean="squeeze" aria-pressed="false" title="어간 줄임: 양쪽 정렬에서 어간을 줄여 한 어절을 더 넣는다">줄임</button>
       <button data-list="bullet" aria-pressed="false" title="글머리 목록 (Ctrl+Shift+8)">• 글머리</button>
       <button data-list="number" aria-pressed="false" title="번호 목록 (Ctrl+Shift+7)">1. 번호</button>
       <button id="para-outdent" title="내어쓰기">← 들여쓰기</button>

@@ -123,7 +123,7 @@ export function textFromQuire(q: QuireDoc): string {
 }
 
 /** 지금 모델이 아는 문단 속성 키 (10 §2.2) */
-const PARA_KEYS = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore', 'columnBreakBefore', 'section'];
+const PARA_KEYS = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore', 'columnBreakBefore', 'koreanBreak', 'hangPunct', 'squeeze', 'section'];
 
 /**
  * 구역 (12 §3.2): 문서 순서의 구역 배열, 마지막이 기본 구역. 구역 나눔 문단의 p.section이 앞 구역의 ID를 가리킨다.
