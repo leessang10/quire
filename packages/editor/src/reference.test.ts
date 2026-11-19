@@ -45,6 +45,8 @@ interface Summary {
   fingerprint: string;
   /** 머리말·꼬리말이 있는 문서: 쪽마다 "종류|머리말|꼬리말" (필드는 그 쪽 값, 12 §5) */
   headers?: string[];
+  /** 각주가 있는 문서: 쪽마다 각주 영역의 "번호[줄 from,to)" (+는 앞 쪽에서 이어 씀, 12 §6) */
+  notes?: string[];
 }
 
 function summarize(document: Document, { layout, fmt }: ReturnType<typeof compose>): Summary {
@@ -105,6 +107,13 @@ function summarize(document: Document, { layout, fmt }: ReturnType<typeof compos
       return `${hf.kind}|${text(hf.header.story, hf)}|${text(hf.footer.story, hf)}`;
     });
   }
+  if (fmt.noteList().length)
+    out.notes = Array.from({ length: layout.pageCount }, (_, p) =>
+      layout
+        .notesOnPage(p)
+        .map((n) => `${fmt.noteNumber(n.id)}[${n.from},${n.to})${n.cont ? '+' : ''}`)
+        .join(' '),
+    );
   return out;
 }
 

@@ -77,6 +77,8 @@ export interface ParaFormat {
   objs?: ReadonlyMap<number, { w: number; h: number }> | null;
   /** 떠 있는 개체 (11 §2.3, px): 원래 텍스트의 코드포인트 위치(앵커) → 위치·크기·배치. 앵커는 폭 0 */
   floats?: ReadonlyMap<number, FloatSpec> | null;
+  /** 각주 참조 (12 §6): 원래 텍스트의 코드포인트 위치 → 각주 ID와 각주 내용의 줄 높이들 (px, 각주 영역 폭으로 조판한 것) */
+  notes?: ReadonlyMap<number, NoteSpec> | null;
   /** 레이아웃 캐시 키에 더할 값: style 함수가 서식 번호 밖의 것(문단 스타일 등)에 따라 달라지면 그것을 나타내는 문자열 */
   key?: string;
   /**
@@ -84,6 +86,22 @@ export interface ParaFormat {
    * (행 하나가 쪽보다 높으면 넘친다)
    */
   table?: TableSpec | null;
+}
+
+/** 각주 하나 (12 §6.2): 줄마다 높이 (문단 간격 포함, 합 = 각주 높이). 각주를 쪽 사이에서 나눌 때 줄 경계에서 나눈다 */
+export interface NoteSpec {
+  id: string;
+  lines: readonly number[];
+}
+
+/** 문단의 각주 참조 (표시 위치 순) */
+export interface NoteRef {
+  /** 표시 코드포인트 위치 */
+  k: number;
+  id: string;
+  lines: readonly number[];
+  /** 각주 높이 */
+  total: number;
 }
 
 /** 표 문단의 행 (px) */
@@ -152,6 +170,8 @@ export interface ParaLayout {
   objs: Map<number, { w: number; h: number }> | null;
   /** 떠 있는 개체: 표시 코드포인트 위치(앵커) → 위치·배치. 없으면 null */
   floats: Map<number, FloatSpec> | null;
+  /** 각주 참조 (표시 위치 순). 없으면 null */
+  notes?: NoteRef[] | null;
   /** 표 문단이면 행 (11 §4.3) */
   table?: TableSpec | null;
   /** 코드포인트별 줄 높이 배율 (서식 있을 때, 어울림 줄바꿈에서 줄 높이를 다시 구할 때). 없으면 모두 1 */
@@ -268,6 +288,13 @@ export function layoutParagraph(
     objs ??= new Map();
     for (const k of floats.keys()) objs.set(k, { w: 0, h: 0 });
   }
+  let notes: NoteRef[] | null = null;
+  if (format?.notes && format.notes.size) {
+    const shift = pre ? pre[1] - pre[0] : 0;
+    notes = [...format.notes]
+      .map(([k, n]) => ({ k: pre && k >= pre[0] ? k + shift : k, id: n.id, lines: n.lines, total: n.lines.reduce((a, b) => a + b, 0) }))
+      .sort((a, b) => a.k - b.k);
+  }
   const style = format?.style;
   const dfmt = fmt;
   const st = dfmt && style ? (k: number) => style(dfmt[k]!) : null;
@@ -328,7 +355,7 @@ export function layoutParagraph(
   if (objs) lineObjects(lines, objs);
   const cpLine = st ? Float32Array.from({ length: n }, (_, k) => st(k).line) : null;
   const markLine = format ? format.style(format.mark).line : 1;
-    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, cpLine, markLine, table: format?.table ?? null };
+    return { text: display, n, u16: null, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, notes, cpLine, markLine, table: format?.table ?? null };
   }
   for (const seg of segmenter.segment(display)) {
     const s = seg.segment;
@@ -360,7 +387,7 @@ export function layoutParagraph(
   if (objs) lineObjects(lines, objs);
   const cpLine = st ? Float32Array.from({ length: n }, (_, k) => st(k).line) : null;
   const markLine = format ? format.style(format.mark).line : 1;
-  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, cpLine, markLine, table: format?.table ?? null };
+  return { text: display, n, u16, xs, stops, preedit: pre, lines, fonts, fmt, box, widths: [firstW, restW], marker, objs: objs && floats ? withoutFloats(objs, floats) : objs, floats, notes, cpLine, markLine, table: format?.table ?? null };
 }
 
 /** 그리기용 인라인 개체 표: 앵커(폭 0)는 뺀다 */

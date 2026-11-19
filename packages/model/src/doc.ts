@@ -140,7 +140,8 @@ export type ParaKey = keyof ParaAttrs;
 export interface ObjAttrs {
   /** 개체 ID (동시 이동으로 생긴 중복을 가릴 때) */
   id?: string;
-  kind?: 'image' | 'table' | 'field';
+  /** note: 각주 참조 (12 §6.1, 내용은 스토리 fn|<id>) */
+  kind?: 'image' | 'table' | 'field' | 'note';
   /** 자산 ID (이미지 원본의 SHA-256 앞 32자) */
   asset?: string;
   w?: number;
@@ -822,6 +823,12 @@ export class Doc {
    * offset에 개체 하나를 넣는다 (서식은 보통 입력처럼 이어받는다). 실행 취소 연산: 삽입 + 속성.
    * 속성은 지워도 기억하므로 되살리면 그대로다.
    */
+  /** 이 종류의 개체가 있었는가 (지운 것도 포함하는 빠른 판단: 각주 번호를 훑을지) */
+  hasObjectKind(kind: NonNullable<ObjAttrs['kind']>): boolean {
+    for (const a of this.objAttrsMap.values()) if (a.kind === kind) return true;
+    return false;
+  }
+
   insertObject(offset: number, attrs: ObjAttrs, marks?: MarkSet): Op[] {
     const ids = this.insertText(offset, OBJ, marks);
     const ctr = this.ctrOf(ids[0]!);

@@ -2,7 +2,7 @@
  * 구역 동기화·저장 (12 §3.2): 구역 설정은 Loro 맵 sections의 '<구역 ID>|<키>' (키마다 LWW), 구역 나눔은 ¶의 문단 속성.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { Doc, Document, LAST_SECTION, fullSection, hfStoryId, type SectionProps } from '@quire/model';
+import { Doc, Document, LAST_SECTION, fullSection, hfStoryId, noteRefs, noteStoryId, type SectionProps } from '@quire/model';
 import { SyncBridge } from './index';
 import { SyncClient } from './client';
 import { SyncCore } from './core';
@@ -113,6 +113,41 @@ describe('headers, footers and fields (12 §5)', () => {
     const back = documentFromQuire(JSON.parse(canonicalJson(q))).document;
     expect(back.body.sectionDef(LAST_SECTION)).toEqual(d.body.sectionDef(LAST_SECTION));
     expect(fields(back.story(id))).toEqual(fields(d.story(id)));
+    expect(canonicalJson(quireFromDocument(back))).toBe(canonicalJson(q));
+  });
+});
+
+describe('footnotes (12 §6)', () => {
+  it('sends note references and note stories; numbers follow the reference order on both peers', () => {
+    const { a, b, settle } = bridges(['첫 문단', '둘째 문단'].join(NL));
+    a.doc.insertObject(2, { id: 'x1', kind: 'note' });
+    a.story(noteStoryId('x1')).insertText(0, '첫 각주');
+    settle();
+    // 다른 피어가 앞에 각주를 넣으면 번호가 밀린다 (번호는 저장하지 않는다)
+    b.doc.insertObject(0, { id: 'x0', kind: 'note' });
+    b.story(noteStoryId('x0')).insertText(0, '앞 각주');
+    settle();
+    for (const d of [a, b]) {
+      expect(noteRefs(d.doc).map((n) => n.id)).toEqual(['x0', 'x1']);
+      expect(d.story(noteStoryId('x1')).text()).toBe(`첫 각주${NL}`);
+    }
+  });
+
+  it('stores only notes whose reference is still in the body, and round-trips them', () => {
+    const d = new Document(Doc.fromText(['가나다', '라마'].join(NL)));
+    d.body.insertObject(1, { id: 'a', kind: 'note' });
+    d.body.insertObject(5, { id: 'b', kind: 'note' });
+    d.story(noteStoryId('a')).insertText(0, '각주 A');
+    d.story(noteStoryId('b')).insertText(0, '각주 B');
+    // 참조 b를 지운다: 스토리는 남지만 (되돌리면 돌아온다) 정본에는 쓰지 않는다
+    d.body.deleteRange(5, 6);
+    expect(d.story(noteStoryId('b')).text()).toBe(`각주 B${NL}`);
+    const q = quireFromDocument(d);
+    expect(Object.keys(q.stories).sort()).toEqual(['body', noteStoryId('a')]);
+    expect(q.stories.body[0]).toEqual({ p: {}, c: [{ t: '가' }, { img: { id: 'a', kind: 'note' } }, { t: '나다' }] });
+    const back = documentFromQuire(JSON.parse(canonicalJson(q))).document;
+    expect(noteRefs(back.body).map((n) => n.id)).toEqual(['a']);
+    expect(back.story(noteStoryId('a')).text()).toBe(`각주 A${NL}`);
     expect(canonicalJson(quireFromDocument(back))).toBe(canonicalJson(q));
   });
 });
