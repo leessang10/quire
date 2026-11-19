@@ -1,7 +1,9 @@
 export { Editor } from './editor';
 export { HttpAssets, MemoryAssets, assetId } from './assets';
 export type { AssetStore } from './assets';
-export type { EditorOptions, EditorStats, FindStatus, FontSource, HeaderFooterInfo, RemoteCaret, SuggestionView, ThreadView, ViewMode } from './editor';
+export type { Decoration, DecorationPara, DecorationSource, DecorationStyle, EditorOptions, EditorStats, FindStatus, FontSource, HeaderFooterInfo, RemoteCaret, SuggestionView, SpellMenu, ThreadView, ViewMode } from './editor';
+export { HttpChecker, SpellSession, WordListChecker, carryIssues, wordsOf } from './spell';
+export type { SpellChecker, SpellIssue, SpellKind, SpellSessionOptions } from './spell';
 export { TextareaInput } from './input';
 export type { InputBackend, InputIntent, InputLogEntry, InputMode } from './input';
 export { EditContextInput, editContextSupported } from './edit-context';
