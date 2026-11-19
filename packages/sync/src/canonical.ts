@@ -188,6 +188,8 @@ const emptyStory = (d: Doc) => d.text() === '\n' && d.plain && Object.keys(d.par
 export function quireFromDocument(document: Document): QuireDoc {
   const q = quireFromDoc(document.body);
   const stories = q.stories as Record<string, unknown>;
+  /** 셀 스토리 ID → 정본 이름 (주석 위치) */
+  const cellNames = new Map<string, string>();
   let tk = 0;
   q.stories.body = q.stories.body.map((block) => {
     const run = 'c' in block && block.c.length === 1 ? block.c[0]! : null;
@@ -207,6 +209,7 @@ export function quireFromDocument(document: Document): QuireDoc {
       row.forEach((c, x) => {
         if (!c) return;
         const name = `t${tk}.r${y + 1}c${x + 1}`;
+        cellNames.set(c.story, name);
         const cell: QuireTable['table']['rows'][0]['cells'][0] = { story: name };
         if (c.span[0] > 1 || c.span[1] > 1) cell.span = [c.span[0], c.span[1]];
         const ca = rec.cellAttrs[cellKey(c.row, c.col)];
@@ -236,6 +239,25 @@ export function quireFromDocument(document: Document): QuireDoc {
     if (emptyStory(d)) continue;
     stories[id] = paragraphsOf(d);
   }
+  // 주석 (14 §2.3): 위치는 스토리 이름 + 코드포인트 오프셋. 범위가 없으면(고아) story만
+  const anns: Array<Record<string, unknown>> = [];
+  for (const id of document.annotationIds().sort()) {
+    const a = document.annotation(id)!;
+    let story: string | null;
+    if (a.story === null) story = 'body';
+    else if (cellNames.has(a.story)) story = cellNames.get(a.story)!;
+    else if (a.story.includes('|') && document.table(a.story.split('|')[0]!)) story = null; // 덮인 셀 (주인 셀에 합쳐 저장): 위치를 잃는다
+    else story = a.story;
+    if (story === null) continue;
+    const range = document.resolveRange(a);
+    const e: Record<string, unknown> = { id, type: a.type, data: structuredClone(a.data) };
+    if (range && !range.orphan) {
+      e.start = { story, offset: range.from };
+      e.end = { story, offset: range.to };
+    } else e.story = story;
+    anns.push(e);
+  }
+  q.annotations = anns;
   return q;
 }
 
@@ -291,6 +313,21 @@ export function documentFromQuire(q: QuireDoc, peer?: string): { document: Docum
   for (const id of built.keys()) document.story(id);
   for (const t of tables) document.putTable(t);
   document.takeDirtyTables();
+  // 주석 (14 §2.3)
+  for (const raw of Array.isArray(q.annotations) ? q.annotations : []) {
+    const e = raw as { id?: unknown; type?: unknown; data?: unknown; story?: unknown; start?: { story?: unknown; offset?: unknown }; end?: { offset?: unknown } };
+    if (typeof e.id !== 'string' || typeof e.type !== 'string') continue;
+    const name = typeof e.start?.story === 'string' ? e.start.story : typeof e.story === 'string' ? e.story : 'body';
+    const story = name === 'body' ? null : (rename.get(name) ?? name);
+    const data = e.data && typeof e.data === 'object' ? structuredClone(e.data as Record<string, unknown>) : {};
+    const base = { id: e.id, type: e.type, story, data };
+    if (typeof e.start?.offset === 'number' && typeof e.end?.offset === 'number') {
+      const d = document.docOf(story);
+      const from = Math.max(0, Math.min(d.maxCaret, e.start.offset));
+      const to = Math.max(from, Math.min(d.maxCaret, e.end.offset));
+      document.applyRemoteAnnotation(e.id, { ...base, ...document.rangePositions(story, from, to) });
+    } else document.applyRemoteAnnotation(e.id, { ...base, start: null, end: null });
+  }
   return { document, notes };
 }
 

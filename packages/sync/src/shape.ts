@@ -32,6 +32,7 @@ import {
   type SectionProps,
   SECTION_KEYS,
 } from '@quire/model';
+import { annFromWire, annIdsInLoro, readAnn } from './annotations';
 
 export const TEXT = 'body';
 export const ORDER = 'order';
@@ -165,11 +166,34 @@ export function newLoro(peer: PeerId): LoroDoc {
   return loro;
 }
 
+/** 한 번에 넣을 긴 텍스트의 조각 크기 (UTF-16) */
+const INSERT_CHUNK = 65536;
+
+/**
+ * 긴 텍스트를 뒤 조각부터 같은 자리에 넣는다. Loro는 한 피어가 이어 넣은 글자들을 한 원소로 합치고, 커서↔위치 변환 때 그 원소 안을
+ * 앞에서부터 센다: 1.5M자를 한 번에 넣으면 getCursor가 1.5 ms, getCursorPos가 0.6 ms (주석 1,000개 풀기에 수 초). 거꾸로 넣으면
+ * 조각의 ID가 이어지지 않아 합쳐지지 않는다. 조각이 작을수록 변환이 빠르지만 스냅샷 압축이 나빠진다 (8K: 변환 ~10 µs, 스냅샷 +30~800%;
+ * 64K: 스냅샷 +4%). 서로게이트 쌍은 자르지 않는다
+ */
+export function insertChunked(text: LoroText, at: number, s: string): void {
+  if (s.length <= INSERT_CHUNK) {
+    if (s) text.insert(at, s);
+    return;
+  }
+  const cuts = [0];
+  for (let i = INSERT_CHUNK; i < s.length; i += INSERT_CHUNK) {
+    const c = s.charCodeAt(i - 1);
+    cuts.push(c >= 0xd800 && c <= 0xdbff ? i + 1 : i);
+    i = cuts[cuts.length - 1]!;
+  }
+  for (let k = cuts.length - 1; k >= 0; k--) text.insert(at, s.slice(cuts[k]!, k + 1 < cuts.length ? cuts[k + 1]! : s.length));
+}
+
 /** 새 문서의 처음 내용을 넣는다 (커밋 포함) */
 export function initLoro(loro: LoroDoc, text: string, peer: PeerId): void {
   const body = loro.getText(TEXT);
   const user = text.replace(/\r\n?/g, NL) + NL;
-  body.insert(0, user + BRK_CHAR + NL + BRK_CHAR + NL);
+  insertChunked(body, 0, user + BRK_CHAR + NL + BRK_CHAR + NL);
   const t = `${String(peer)}.t`;
   const p = `${String(peer)}.p`;
   const u = user.length;
@@ -299,6 +323,11 @@ export function documentFromLoro(loro: LoroDoc, peer?: string): Document {
   for (const id of storyIdsOf(loro)) d.story(id);
   for (const id of tableIdsOf(loro)) d.putTable(readTable(loro, id));
   d.takeDirtyTables();
+  // 주석 (14 §2.2)
+  for (const id of annIdsInLoro(loro)) {
+    const w = readAnn(loro, id);
+    if (w) d.applyRemoteAnnotation(id, annFromWire(d, id, w));
+  }
   return d;
 }
 
@@ -448,7 +477,7 @@ export class LoroWriter {
   apply(c: RawChange): void {
     switch (c.kind) {
       case 'insert': {
-        this.text.insert(c.at, c.text);
+        insertChunked(this.text, c.at, c.text);
         this.fixInsertedMarks(c.at, c.text.length, (c.marks ?? {}) as Record<string, unknown>);
         if (c.segs) {
           let k = 0;

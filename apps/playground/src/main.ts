@@ -472,6 +472,16 @@ document.getElementById('col-break')!.addEventListener('click', () => {
   editor.focus();
 });
 
+// 주석 레이어 (4-1)
+document.getElementById('ann-add')!.addEventListener('click', () => {
+  editor.annotate('highlight');
+  editor.focus();
+});
+document.getElementById('ann-del')!.addEventListener('click', () => {
+  for (const a of editor.annotationsAtCaret()) editor.unannotate(a.id);
+  editor.focus();
+});
+
 // 각주 (3-5)
 document.getElementById('footnote')!.addEventListener('click', () => {
   editor.insertFootnote();

@@ -14,7 +14,8 @@
  * - 처음 문서: [사용자 문단들 BRK(t)][¶ BRK(p)][¶ 보초]. t는 순서 목록에, p는 자리표시.
  */
 import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector } from 'loro-crdt';
-import { Document, type Doc, type RawChange, type TableChange, type TextDelta } from '@quire/model';
+import { Document, type AnnotationChange, type Doc, type RawChange, type TableChange, type TextDelta } from '@quire/model';
+import { ANNOTATIONS, annFromWire, annIdsInLoro, annIdsOf, annRangeToU16, readAnn, writeAnnKey, writeAnnRange } from './annotations';
 import {
   LISTS,
   SECTIONS,
@@ -73,6 +74,9 @@ export class SyncBridge {
   private readonly stylesId: string;
   private readonly listsId: string;
   private readonly sectionsId: string;
+  private readonly annotationsId: string;
+  /** 커서가 지운 글자에 붙어 있던 주석: 가져오기가 끝난 뒤 살아 있는 글자로 다시 쓴다 */
+  private rewrites = new Set<string>();
   /** 마지막으로 내보낸 시점의 버전 (그 사이 가져온 원격 연산 포함) */
   private exported: VersionVector;
   private inbox: Uint8Array[] = [];
@@ -127,6 +131,12 @@ export class SyncBridge {
     this.stylesId = loro.getMap(STYLES).id;
     this.listsId = loro.getMap(LISTS).id;
     this.sectionsId = loro.getMap(SECTIONS).id;
+    this.annotationsId = loro.getMap(ANNOTATIONS).id;
+    // 주석 (14 §2): Loro 상태에서 (스토리는 필요하면 연다)
+    for (const id of annIdsInLoro(loro)) {
+      const w = readAnn(loro, id);
+      if (w) this.document.applyRemoteAnnotation(id, annFromWire(this.document, id, w));
+    }
     this.writer = new LoroWriter(loro, () => doc.segmentOrder());
     this.exported = loro.oplogVersion();
     this.document.observe((story, c) => this.onLocal(story, c));
@@ -163,9 +173,15 @@ export class SyncBridge {
       const batch = this.inbox;
       this.inbox = [];
       this.loro.importBatch(batch);
+      this.exported = this.loro.oplogVersion();
+      // 지운 글자에 붙은 주석 커서는 살아 있는 글자로 (모든 피어가 같은 글자를 고른다). 이 로컬 변경은 다음 묶음에 내보낸다
+      if (this.rewrites.size) {
+        const ids = [...this.rewrites];
+        this.rewrites.clear();
+        for (const id of ids) this.document.rewriteRange(id);
+      }
       this.opts.onRemoteChange?.();
-    }
-    this.exported = this.loro.oplogVersion();
+    } else this.exported = this.loro.oplogVersion();
     for (const fn of this.flushListeners) fn();
   }
 
@@ -215,8 +231,10 @@ export class SyncBridge {
 
   // ── 로컬 → Loro ───────────────────────────────────────
 
-  private onLocal(story: string | null, c: RawChange | TableChange): void {
-    if (c.kind === 'tableList' || c.kind === 'tableMap') writeTable(this.loro, c);
+  private onLocal(story: string | null, c: RawChange | TableChange | AnnotationChange): void {
+    if (c.kind === 'annKey') writeAnnKey(this.loro, c.id, c.key, c.value);
+    else if (c.kind === 'annRange') writeAnnRange(this.loro, c.id, c.story, annRangeToU16(this.document, c));
+    else if (c.kind === 'tableList' || c.kind === 'tableMap') writeTable(this.loro, c);
     else (story === null ? this.writer : this.stories.get(story)!.writer).apply(c);
     this.loro.commit({ origin: LOCAL_ORIGIN });
     this.schedule();
@@ -232,7 +250,14 @@ export class SyncBridge {
     let defsDirty = false;
     const storySeg = new Set<string>();
     const tables = new Set<string>();
+    const anns = new Set<string>();
+    /** 원격 삭제가 있던 스토리 (null = 본문) */
+    const textDeleted = new Set<string | null>();
     for (const ev of e.events) {
+      if (ev.target === this.annotationsId) {
+        if (ev.diff.type === 'map') for (const id of annIdsOf(Object.keys(ev.diff.updated))) anns.add(id);
+        continue;
+      }
       const tm = TABLE_CONTAINER.exec(String(ev.target));
       if (tm) {
         tables.add(tm[1]!);
@@ -249,6 +274,7 @@ export class SyncBridge {
         if (route.role === 'text' && ev.diff.type === 'text') {
           const delta = ev.diff.diff as TextDelta;
           link.doc.applyDelta(delta);
+          if (delta.some((d) => d.delete)) textDeleted.add(route.story);
           if (delta.some((d) => d.attributes?.[SEG_MARK] !== undefined)) storySeg.add(route.story);
         } else if (route.role === 'tail') link.doc.applyTailAll(readTail(this.loro, link.names));
         else storySeg.add(route.story);
@@ -259,6 +285,7 @@ export class SyncBridge {
       if (ev.target === this.text.id && ev.diff.type === 'text') {
         const delta = ev.diff.diff as TextDelta;
         this.doc.applyDelta(delta);
+        if (delta.some((d) => d.delete)) textDeleted.add(null);
         if (delta.some((d) => d.attributes?.[SEG_MARK] !== undefined)) segDirty = true;
       } else {
         segDirty = true;
@@ -274,6 +301,14 @@ export class SyncBridge {
     if (defsDirty) {
       const d = readDefs(this.loro);
       this.doc.applyRemoteDefs(d.styles ?? {}, d.lists ?? {}, d.sections ?? {});
+    }
+    // 원격 삭제로 기준 원소가 지워진 주석은 Loro 커서에서 다시 푼다 (모든 피어가 같은 Loro로 같은 자리를 얻는다)
+    if (textDeleted.size) for (const s of textDeleted) for (const id of this.document.deadAnchored(s)) anns.add(id);
+    // 주석: 텍스트를 다 적용한 뒤 커서를 푼다
+    for (const id of anns) {
+      const w = readAnn(this.loro, id);
+      this.document.applyRemoteAnnotation(id, w ? annFromWire(this.document, id, w) : null);
+      if (w?.dead) this.rewrites.add(id);
     }
   }
 

@@ -8,6 +8,8 @@ export { MAX_LIST_LEVEL, defaultListDef, formatNumber, numberLists } from './lis
 export type { ListDef, ListLevel, ListLabel, NumberFormat } from './lists';
 export type { Op, Selection, Transaction } from './history';
 export { Document } from './document';
+export { newAnnotationId } from './annotations';
+export type { Annotation, AnnotationChange, AnnotationKey, AnnotationRange } from './annotations';
 export { isNoteStory, noteRefs, noteStoryId } from './notes';
 export type { NoteRefAt } from './notes';
 export type { StoryId } from './document';

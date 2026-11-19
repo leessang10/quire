@@ -27,6 +27,8 @@ import {
   fullSection,
   hfStoryId,
   isHFStory,
+  newAnnotationId,
+  type AnnotationRange,
   isNoteStory,
   noteStoryId,
   type FieldKind,
@@ -44,6 +46,7 @@ import {
   cellGroups,
   rowParts,
   cpSlice,
+  displayToDoc,
   docToDisplay,
   lineX,
   type Measurer,
@@ -166,6 +169,10 @@ const COLORS = {
   desk: '#e9e9ec',
   /** 단 구분선 */
   columnRule: '#9a9aa2',
+  /** 주석 범위 (14 §2.4): 댓글, 그 밖, 고른 것 */
+  annComment: 'rgba(255, 196, 0, 0.28)',
+  annOther: 'rgba(80, 150, 255, 0.2)',
+  annFocus: 'rgba(255, 170, 0, 0.55)',
   /** 머리말·꼬리말을 편집할 때 필드 바탕 */
   field: '#e4e4ea',
   page: '#ffffff',
@@ -342,6 +349,8 @@ export class Editor {
   private hf: ActiveHF | null = null;
   /** 편집 중인 각주 (null이면 아님) */
   private note: ActiveNote | null = null;
+  /** 진하게 칠할 주석 */
+  private focusAnn: string | null = null;
   /** 지금 그리는 머리말·꼬리말의 필드 값 */
   private drawFields: FieldValues | null = null;
   /** 다음 붙여넣기는 글자만 (Ctrl+Shift+V) */
@@ -992,6 +1001,9 @@ export class Editor {
     ctx.textBaseline = 'alphabetic';
     // 셰이핑 중이면 커닝을 켠다: 같은 글꼴 파일이면 캔버스가 HarfBuzz와 같은 폭으로 그린다 (ADR-0002)
     if (this.kerningOff) ctx.fontKerning = this.shapedFonts ? 'normal' : 'none';
+    // 주석 범위 (14 §2.4): 이 스토리의 주석 (문서 판마다 캐시)
+    const storyId = this.document.storyIdOf(doc);
+    const anns = storyId === undefined ? [] : this.document.annotationRanges().filter((a) => (a.story ?? null) === storyId && !a.orphan && a.to > a.from);
     // 화면 영역이 아직 배치되지 않았으면 시간 예산 안에서만 배치한다 (스크롤바로 멀리 이동한 경우 등).
     // 못 끝낸 부분은 자리표시로 그리고 다음 프레임에 이어서 한다.
     const ready = isBody ? layout.ensureThroughY(top + h, RENDER_LAYOUT_BUDGET_MS) : true;
@@ -1043,6 +1055,8 @@ export class Editor {
       // 형광펜 (선택 영역 아래)
       const baseY = ln.baseline - top;
       if (para.layout.fmt) this.drawHighlights(para.layout, ln, px, baseY, sty);
+      // 주석 범위 칠 (겹치면 진해진다)
+      if (anns.length) this.drawAnnotations(anns, para, ln, X, y);
 
       // 선택 영역
       for (const [selFrom, selTo] of ranges) {
@@ -1253,6 +1267,75 @@ export class Editor {
     for (let k = 0; k < s.from; k++) before += lines[k] ?? 0;
     L.setOrigin(s.x + NOTE_INDENT, s.y - before);
     return L;
+  }
+
+  /** 줄에 걸친 주석 범위를 칠한다 (14 §2.4) */
+  private drawAnnotations(anns: readonly AnnotationRange[], para: PlacedPara, ln: PlacedLine, X: (d: number) => number, y: number): void {
+    const { ctx } = this;
+    const isLast = ln.index === para.lines.length - 1;
+    const lineFrom = displayToDoc(para, ln.start);
+    const lineEnd = displayToDoc(para, ln.end);
+    const lineTo = lineEnd + (isLast ? 1 : 0);
+    // 시작 오프셋 순이므로 줄 끝을 넘으면 그만 본다
+    for (const a of anns) {
+      if (a.from >= lineTo) break;
+      if (a.to <= lineFrom) continue;
+      const sd = Math.max(ln.start, docToDisplay(para, Math.max(a.from, lineFrom)));
+      const ed = Math.min(ln.end, docToDisplay(para, Math.min(a.to, lineEnd)));
+      const sx = X(sd);
+      // 마지막 줄의 ¶까지 덮으면 ¶ 표시 폭만큼
+      const ex = X(ed) + (isLast && a.to > lineEnd ? this.fontSize * 0.5 : 0);
+      if (ex <= sx) continue;
+      ctx.fillStyle = a.id === this.focusAnn ? COLORS.annFocus : a.type === 'comment' ? COLORS.annComment : COLORS.annOther;
+      ctx.fillRect(sx, y, ex - sx, ln.height);
+    }
+  }
+
+  // ── 주석 (14 §2) ─────────────────────────────────────
+
+  /**
+   * 선택 범위에 주석을 건다 (편집 중인 스토리). 범위가 없으면 아무것도 하지 않는다. 실행 취소 한 단계. 만든 주석 ID (없으면 null)
+   */
+  annotate(type: string, data: Record<string, unknown> = {}): string | null {
+    this.input.commitComposition();
+    const [from, to] = this.range();
+    if (from === to) return null;
+    const story = this.storyId;
+    const id = newAnnotationId();
+    const before: Selection = { ...this.sel };
+    this.history.seal();
+    this.commit(this.document.annotate({ id, type, story, from, to, data }), before);
+    this.history.seal();
+    return id;
+  }
+
+  /** 주석 지우기 (실행 취소 한 단계) */
+  unannotate(id: string): void {
+    const before: Selection = { ...this.sel };
+    const ops = this.document.unannotate(id);
+    if (!ops.length) return;
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.history.seal();
+  }
+
+  /** 캐럿(또는 선택)이 걸친 주석들 (편집 중인 스토리) */
+  annotationsAtCaret(): AnnotationRange[] {
+    const [from, to] = this.range();
+    const story = this.storyId;
+    return this.document.annotationRanges().filter((a) => (a.story ?? null) === story && !a.orphan && a.from <= to && a.to >= from && (a.from < to || a.to > from || from === to));
+  }
+
+  /** 모든 주석 (문서 순서, 고아 포함) */
+  annotations(): readonly AnnotationRange[] {
+    return this.document.annotationRanges();
+  }
+
+  /** 진하게 칠할 주석 (댓글 창에서 고른 것) */
+  focusAnnotation(id: string | null): void {
+    if (this.focusAnn === id) return;
+    this.focusAnn = id;
+    this.scheduleRender();
   }
 
   /** 본문 문단 i 뒤의 나눔 표시: 구역 나눔, 다음 문단의 앞에서 쪽 나눔 (없으면 null) */
