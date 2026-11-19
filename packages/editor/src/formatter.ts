@@ -523,7 +523,12 @@ export class Formatter {
             ...(a.columnBreakBefore ? { column: true as const } : {}),
           }
         : undefined;
-    if (!a.align && !a.indent && !a.space && !a.line && !label && !keep) return null;
+    // 한글 조판 (12 §9): 글자 단위, 문장부호 걸침, 어간 줄임 (어간마다 0.05em까지)
+    const korean =
+      a.koreanBreak === 'char' || a.hangPunct || a.squeeze
+        ? { ...(a.koreanBreak === 'char' ? { char: true as const } : {}), ...(a.hangPunct ? { hang: true as const } : {}), ...(a.squeeze ? { squeeze: this.fontSize * 0.05 } : {}) }
+        : undefined;
+    if (!a.align && !a.indent && !a.space && !a.line && !label && !keep && !korean) return null;
     // 목록 문단: 왼쪽 들여쓰기는 목록 수준의 값, 첫 줄은 본문과 나란히 (번호는 내어쓴 자리에, 10 §4)
     const lv = label ? label.def.levels[label.level]! : null;
     return {
@@ -535,6 +540,7 @@ export class Formatter {
       after: pt(a.space?.after),
       line: a.line ? (a.line.rule === 'multiple' ? { rule: 'multiple', value: a.line.value } : { rule: a.line.rule, value: pt(a.line.value) }) : null,
       ...(keep ? { keep } : {}),
+      ...(korean ? { korean } : {}),
     };
   }
 

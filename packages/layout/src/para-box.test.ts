@@ -70,12 +70,12 @@ describe('paragraph box', () => {
     const para = pl.para(0);
     const [l0, l1] = para.lines;
     expect([l0!.start, l0!.end]).toEqual([0, 9]);
-    // 내용 폭 80 (끝 공백 제외) → 남는 20을 공백 2개에 10씩
-    expect(lineX(para.layout, l0!, 8)).toBe(50 + 100);
-    expect(lineX(para.layout, l0!, 3)).toBe(50 + 40); // "다" 앞: 공백 하나 지남
+    // 내용 폭 80 (끝 공백 제외) → 남는 20 (12 §9.2, em 12): ① 공백 2개에 0.5em(6)씩 ② 글자 사이 3곳에 0.1em(1.2)씩 ③ 남은 4.4를 공백에
+    expect(lineX(para.layout, l0!, 8)).toBeCloseTo(50 + 100, 4);
+    expect(lineX(para.layout, l0!, 3)).toBeCloseTo(50 + 30 + 1.2 + 8.2, 4); // "다" 앞: 글자 사이 하나, 공백 하나 지남
     expect(para.layout.xs[3]).toBe(30); // xs는 그대로
     expect(l1!.adj).toBeNull(); // 마지막 줄은 맞추지 않음
-    expect(pl.caretRect(3).x).toBe(90);
+    expect(pl.caretRect(3).x).toBeCloseTo(89.4, 4);
     expect(pl.hitTest(91, l0!.y + 1)).toBe(3);
   });
 

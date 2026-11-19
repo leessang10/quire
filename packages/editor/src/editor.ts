@@ -1929,7 +1929,7 @@ export class Editor {
     for (let k = i + 1; k <= last; k++) {
       if (styleOf(k) !== styleOf(i)) mixed.add('style');
       const a = this.doc.effectiveParaAttrs(k);
-      for (const key of ['align', 'indent', 'space', 'line', 'pageBreakBefore', 'keepWithNext', 'keepTogether'] as const)
+      for (const key of ['align', 'indent', 'space', 'line', 'pageBreakBefore', 'keepWithNext', 'keepTogether', 'koreanBreak', 'hangPunct', 'squeeze'] as const)
         if (JSON.stringify(a[key]) !== JSON.stringify(first[key])) mixed.add(key);
     }
     return { style: styleOf(i), attrs: first, mixed };

@@ -21,6 +21,7 @@
 import {
   breakFrom,
   cpSlice,
+  hangingAt,
   layoutParagraph,
   lineMetrics,
   type FloatSpec,
@@ -998,44 +999,61 @@ export class PlacedPara {
     const avail = availOverride ?? pl.widths[line.index === 0 ? 0 : 1];
     line.x += box.left + (line.index === 0 ? box.first + (pl.marker?.shift ?? 0) : 0);
     const end = trimEnd(pl, line.start, line.end);
-    const free = avail - (pl.xs[end]! - pl.xs[line.start]!);
-    if (free <= 0) return;
+    // 여백에 걸친 문장부호는 줄 폭에 세지 않는다 (12 §9.3)
+    const hang = hangingAt(pl, line.start, end);
+    const contentEnd = hang >= 0 && pl.xs[end]! - pl.xs[line.start]! > avail ? hang : end;
+    const free = avail - (pl.xs[contentEnd]! - pl.xs[line.start]!);
+    const squeeze = box.align === 'justify' && !last ? (box.korean?.squeeze ?? 0) : 0;
+    if (free <= 0 && !(free < 0 && squeeze > 0)) return;
     if (box.align === 'center') line.x += free / 2;
     else if (box.align === 'right') line.x += free;
     else if (box.align === 'justify' && !last) {
-      // 공백(어간)에 나눈다. 공백이 없으면 글자 사이에 나누되 글자당 상한을 둔다
+      // 12 §9.2: 늘림은 ① 어간을 0.5em까지 ② 글자 사이를 0.1em까지 ③ 남으면 어간에 모두 (어간이 없으면 글자 사이 0.3em까지).
+      // 줄임(squeeze): 어간을 똑같이 줄인다 (줄바꿈이 어간 수 × squeeze까지만 넘치게 했다)
       const n = end - line.start;
       const spaces: number[] = [];
-      for (let d = line.start; d < end; d++) if (isJustifySpace(cpSlice(pl, d, d + 1))) spaces.push(d);
-      const adj = new Float32Array(n + 1);
-      if (spaces.length > 0) {
-        const each = free / spaces.length;
-        let acc = 0;
-        let s = 0;
-        for (let d = line.start; d <= end; d++) {
-          adj[d - line.start] = acc;
-          if (s < spaces.length && spaces[s] === d) {
-            acc += each;
-            s++;
-          }
-        }
+      for (let d = line.start; d < contentEnd; d++) if (isJustifySpace(cpSlice(pl, d, d + 1))) spaces.push(d);
+      const em = this.geo.setup.fontSize ?? this.geo.setup.lineHeight / 1.7;
+      let sEach = 0;
+      let gEach = 0;
+      const gaps: number[] = [];
+      if (free < 0) {
+        if (!spaces.length) return;
+        sEach = Math.max(free / spaces.length, -squeeze);
       } else {
-        const gaps: number[] = [];
-        for (let d = line.start + 1; d < end; d++) if (pl.stops[d]) gaps.push(d);
-        if (gaps.length === 0) return;
-        const em = this.geo.setup.fontSize ?? this.geo.setup.lineHeight / 1.7;
-        const each = Math.min(free / gaps.length, em * MAX_CHAR_STRETCH);
-        let acc = 0;
-        let g = 0;
-        for (let d = line.start; d <= end; d++) {
-          if (g < gaps.length && gaps[g] === d) {
-            acc += each;
-            g++;
+        const S = spaces.length;
+        if (S) sEach = Math.min(free / S, em * 0.5);
+        let rest = free - sEach * S;
+        if (rest > 1e-6) {
+          for (let d = line.start + 1; d < contentEnd; d++)
+            if (pl.stops[d] && !isJustifySpace(cpSlice(pl, d - 1, d)) && !isJustifySpace(cpSlice(pl, d, d + 1))) gaps.push(d);
+          if (gaps.length) {
+            gEach = Math.min(rest / gaps.length, em * 0.1);
+            rest -= gEach * gaps.length;
           }
-          adj[d - line.start] = acc;
+          if (rest > 1e-6) {
+            if (S) sEach += rest / S;
+            else if (gaps.length) gEach = Math.min(gEach + rest / gaps.length, em * MAX_CHAR_STRETCH);
+          }
         }
-        line.adjChars = true;
+        if (sEach === 0 && gEach === 0) return;
       }
+      const adj = new Float32Array(n + 1);
+      let acc = 0;
+      let s = 0;
+      let g = 0;
+      for (let d = line.start; d <= end; d++) {
+        if (g < gaps.length && gaps[g] === d) {
+          acc += gEach;
+          g++;
+        }
+        adj[d - line.start] = acc;
+        if (s < spaces.length && spaces[s] === d) {
+          acc += sEach;
+          s++;
+        }
+      }
+      if (gEach > 0) line.adjChars = true;
       line.adj = adj;
     }
   }
