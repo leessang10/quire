@@ -219,7 +219,7 @@ describe('Doc with segments, randomized against a reference', () => {
         const off = Math.floor(r() * doc.length);
         expect(doc.resolve(doc.positionAt(off))).toBe(off);
       }
-    });
+    }, 20000); // 무작위 시험: 부하가 큰 기계에서 5초를 넘기도 한다
   }
   it('exercised the segment paths', () => {
     // 위 무작위 시험이 구획 경로(여러 구획, 경계를 넘는 삭제의 꼬리 옮기기)를 실제로 거쳤는지

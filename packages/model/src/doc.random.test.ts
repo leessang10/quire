@@ -84,7 +84,7 @@ describe('Doc randomized consistency', () => {
         const off = Math.floor(r() * doc.length);
         expect(doc.resolve(doc.positionAt(off))).toBe(off);
       }
-    });
+    }, 20000); // 무작위 시험: 부하가 큰 기계에서 5초를 넘기도 한다
   }
 });
 

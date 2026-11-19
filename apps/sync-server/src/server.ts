@@ -29,6 +29,9 @@
  *   GET /<방>/versions        버전 목록 (14 §5.1): [{ id, epoch, time, name?, auto, authors: [{ name, color }] }] 새것부터
  *   POST /<방>/versions       이름 붙인 버전 ({ name }) → 만든 버전
  *   GET /<방>/versions/<id>   그 시점의 Loro 스냅샷 (forkAt, 앞 판이면 그 판의 마지막 상태 위에서)
+ *   POST /<방>/versions/<id>/restore  그 버전으로 복원 (14 §5.4): 같은 판이면 revertTo, 앞 판이면 재기반처럼 차이를 적용.
+ *                             새 변경으로 모든 클라이언트에 간다. 복원 직전 상태를 자동 버전으로 남긴다 (되돌리기)
+ *   GET /<방>/history/<판>    그 판의 이력 전체 스냅샷 (비교 14 §5.3: 클라이언트가 두 버전의 frontiers로 diff, O-34). 첫 판은 '_'
  *
  * 버전 (14 §5.1): 편집이 멈춘 뒤 versionIdleMs(기본 10분), 방이 빌 때, 새 판 압축 직전에 자동 버전을 남긴다 (앞 버전 뒤로
  * 바뀐 것이 있을 때만). 작성자는 그사이 버전 벡터가 늘어난 피어이고, 피어 → 사용자는 프레즌스(이름·색)에서 배운다.
@@ -37,7 +40,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { LoroDoc, VersionVector } from 'loro-crdt';
-import { assetIdOf, assetIdsOf, canonicalJson, compactDocument, documentFromLoro, documentFromQuire, openQuire, packQuire, quireFromDocument, quireFromText, readEpoch, type QuireAsset } from '@quire/sync';
+import { assetIdOf, assetIdsOf, canonicalJson, compactDocument, documentFromLoro, documentFromQuire, openQuire, packQuire, quireFromDocument, quireFromText, readEpoch, restoreInto, type QuireAsset } from '@quire/sync';
 import { fileStorage, memoryStorage, type PeerUser, type RoomStore, type Storage, type VersionRecord } from './store';
 
 export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6 } as const;
@@ -88,6 +91,10 @@ export interface ServerOptions {
   checkpointEvery?: number;
   /** 편집이 이만큼 멈추면 자동 버전 (기본 10분, null이면 하지 않음) */
   versionIdleMs?: number | null;
+  /** 자동 버전 보존 (14 §5.5): 이보다 오래된 자동 버전은 지운다 (기본 30일). 이름 붙인 버전은 지우지 않는다 */
+  versionRetentionMs?: number;
+  /** 자동 버전을 방마다 이만큼까지 (넘으면 오래된 것부터, 기본 500) */
+  maxAutoVersions?: number;
 }
 
 export interface SyncServer {
@@ -102,6 +109,8 @@ export interface SyncServer {
   compact(name: string): boolean;
   /** 버전 남기기 (자동이면 바뀐 것이 없을 때 null) */
   version(name: string, opts?: { name?: string; auto?: boolean; time?: number }): VersionRecord | null;
+  /** 버전으로 복원 (없으면 false) */
+  restore(name: string, id: string): boolean;
 }
 
 const randomEpoch = () => randomBytes(6).toString('hex');
@@ -121,6 +130,8 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
   const idleMs = opts.idleMs ?? null;
   const checkpointEvery = opts.checkpointEvery ?? 200;
   const versionIdleMs = opts.versionIdleMs === undefined ? 10 * 60 * 1000 : opts.versionIdleMs;
+  const versionRetentionMs = opts.versionRetentionMs ?? 30 * 24 * 60 * 60 * 1000;
+  const maxAutoVersions = opts.maxAutoVersions ?? 500;
 
   const roomOf = (name: string): Room => {
     const loaded = rooms.get(name);
@@ -181,9 +192,57 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       auto,
     };
     list.push(v);
-    room.store.putVersions(list);
+    room.store.putVersions(prune(list, v.time));
     log(`v ${room.name}: ${o.name ? `'${o.name}'` : '자동'} 버전 (${authors.length}명)`);
     return v;
+  }
+
+  /** 보존 (14 §5.5): 오래된 자동 버전과 개수를 넘는 자동 버전을 지운다. 이름 붙인 버전은 둔다 */
+  function prune(list: VersionRecord[], now: number): VersionRecord[] {
+    let out = list.filter((v) => !v.auto || now - v.time <= versionRetentionMs);
+    const autos = out.filter((v) => v.auto);
+    if (autos.length > maxAutoVersions) {
+      const drop = new Set(autos.slice(0, autos.length - maxAutoVersions).map((v) => v.id));
+      out = out.filter((v) => !drop.has(v.id));
+    }
+    return out;
+  }
+
+  /**
+   * 버전으로 복원 (14 §5.4): 지금 상태를 자동 버전으로 남기고, 서버 피어로 만든 변경을 받아들여 모든 클라이언트에 보낸다.
+   * 같은 판: revertTo(frontiers) (원소 기준, 이력은 지우지 않는다). 앞 판: 그 시점 문서와의 차이(텍스트 → 서식 → 표)를 적용
+   */
+  function restoreVersion(room: Room, id: string): boolean {
+    const v = room.store.versions().find((x) => x.id === id);
+    if (!v) return false;
+    makeVersion(room);
+    const work = room.doc.fork();
+    work.setPeerId(randomPeer());
+    if (v.epoch === room.epoch) work.revertTo(v.frontiers as never);
+    else {
+      const snap = versionSnapshot(room, id);
+      if (!snap) return false;
+      const old = new LoroDoc();
+      old.import(snap);
+      restoreInto(work, old);
+    }
+    work.commit();
+    const update = work.export({ mode: 'update', from: room.doc.oplogVersion() });
+    room.doc.import(update);
+    room.store.append(update);
+    room.changedSinceBase = true;
+    room.jsonStale = true;
+    room.dirty++;
+    for (const c of room.conns) if (c.ready) send(c, frame(MSG.UPDATE, update));
+    touchVersionTimer(room);
+    log(`r ${room.name}: 버전 ${id}로 복원 (${update.length} 바이트)`);
+    return true;
+  }
+
+  /** 판의 이력 전체 (비교용) */
+  function epochHistory(room: Room, epoch: string): Uint8Array | null {
+    if (epoch === room.epoch) return room.doc.export({ mode: 'snapshot' });
+    return room.store.epochFinal(epoch)?.final ?? null;
   }
 
   /** 편집이 멈추면 자동 버전 (업데이트마다 다시 잰다) */
@@ -227,7 +286,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
           const u = room.peers[p];
           if (u && !users.some((x) => x.name === u.name && x.color === u.color)) users.push(u);
         }
-        return { id: v.id, epoch: v.epoch, time: v.time, auto: v.auto, ...(v.name ? { name: v.name } : {}), authors: users, current: v.epoch === room.epoch };
+        return { id: v.id, epoch: v.epoch, time: v.time, auto: v.auto, ...(v.name ? { name: v.name } : {}), authors: users, current: v.epoch === room.epoch, frontiers: v.frontiers };
       });
   }
 
@@ -246,8 +305,15 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     return fork.export({ mode: 'snapshot' });
   }
 
-  function onVersions(req: IncomingMessage, res: ServerResponse, name: string, id: string | undefined): void {
+  function onVersions(req: IncomingMessage, res: ServerResponse, name: string, id: string | undefined, action?: string): void {
     const room = roomOf(name);
+    if (action === 'restore') {
+      if (req.method !== 'POST' || !id) reply(res, 405, 'method not allowed');
+      else if (!restoreVersion(room, id)) reply(res, 404, 'no such version');
+      else jsonReply(res, 200, { ok: true });
+      idle(room);
+      return;
+    }
     if (req.method === 'GET' && !id) {
       jsonReply(res, 200, versionList(room));
       idle(room);
@@ -399,9 +465,18 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     }
     const path = decodeURIComponent((req.url ?? '/').split('?')[0]!.replace(/^\/+/, ''));
     // 자산 (11 §2.2): <방>/assets/<ID>. ID는 내용 해시라 PUT은 내용을 확인한다
-    const vm = /^(.+)\/versions(?:\/([0-9a-f]{12}))?$/.exec(path);
+    const vm = /^(.+)\/versions(?:\/([0-9a-f]{12})(?:\/(restore))?)?$/.exec(path);
     if (vm) {
-      onVersions(req, res, vm[1]!, vm[2]);
+      onVersions(req, res, vm[1]!, vm[2], vm[3]);
+      return;
+    }
+    const hm = /^(.+)\/history\/([0-9a-f]+|_)$/.exec(path);
+    if (hm && req.method === 'GET') {
+      const room = roomOf(hm[1]!);
+      const h = epochHistory(room, hm[2] === '_' ? '' : hm[2]!);
+      if (!h) reply(res, 404, 'no such epoch');
+      else reply(res, 200, h, 'application/octet-stream');
+      idle(room);
       return;
     }
     const am = /^(.+)\/assets\/([0-9a-f]{32})$/.exec(path);
@@ -662,6 +737,9 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
         },
         version(name, o) {
           return makeVersion(roomOf(name), o);
+        },
+        restore(name, id) {
+          return restoreVersion(roomOf(name), id);
         },
         dropAll() {
           for (const c of [...all]) c.socket.destroy();

@@ -291,6 +291,16 @@ export function rebaseOnto(old: LoroDoc, info: RebaseInfo, peer: PeerId): { loro
   if (info.update.length) old.import(info.update);
   // F의 화면 = 새 판 처음 상태의 화면 (서버가 F의 화면·서식으로 새 판을 만든다). 옛 문서를 F 시점으로
   // 갈라 읽는 것(forkAt)보다 훨씬 싸다: 10만 문단에서 13초 → 새 판은 어차피 읽어야 한다
+  restoreInto(fresh, old);
+  fresh.commit();
+  return { loro: fresh, lost: false };
+}
+
+/**
+ * loro를 target의 화면·서식·표 레코드와 같게 바꾼다 (텍스트 차이 → 서식 차이, 새 변경으로). 재기반과 앞 판 버전 복원(14 §5.4)이 쓴다.
+ * 커밋은 부르는 쪽
+ */
+export function restoreInto(fresh: LoroDoc, old: LoroDoc): void {
   const document = documentFromLoro(fresh);
   const target = documentFromLoro(old);
   // 본문과 스토리마다: 텍스트 차이를 적용하고 서식 차이를 맞춘다 (옛 판에만 있는 스토리도 새 판에서 빈 스토리로 시작)
@@ -323,8 +333,6 @@ export function rebaseOnto(old: LoroDoc, info: RebaseInfo, peer: PeerId): { loro
       for (const key of new Set([...Object.keys(w), ...Object.keys(h)]))
         if (JSON.stringify(w[key]) !== JSON.stringify(h[key])) writeTable(fresh, { kind: 'tableMap', table: id, map, key, value: w[key] });
   }
-  fresh.commit();
-  return { loro: fresh, lost: false };
 }
 
 /**
