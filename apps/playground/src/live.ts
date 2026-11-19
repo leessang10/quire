@@ -7,6 +7,7 @@
  */
 import { Editor, HttpAssets } from '@quire/editor';
 import { startSyncWorker } from '@quire/sync';
+import { VersionsPane } from './versions-pane';
 
 const params = new URLSearchParams(location.search);
 const room = params.get('room') || 'demo';
@@ -97,6 +98,8 @@ void (async () => {
     assets: new HttpAssets(`${server.replace(/^ws/, 'http')}/${encodeURIComponent(room)}/assets/`),
   });
   editor.focus();
+  // 버전 기록 (14 §5)
+  new VersionsPane(document.getElementById('versions')!, editor, `${httpBase}/${encodeURIComponent(room)}`);
   addEventListener('pagehide', () => client.close());
   Object.assign(window, { client, editor });
 })();

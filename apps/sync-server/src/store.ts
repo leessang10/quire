@@ -9,12 +9,36 @@
  *   epochs/<판>/final.bin 그 판의 마지막 상태 (다음 판으로 압축할 때)
  *   epochs/<판>/next      다음 판 ID
  *   assets/<ID>           자산(이미지 원본, 11 §2.2). 파일 이름 = 내용 해시, assets/<ID>.type = MIME
+ *   versions.json         버전 목록 (14 §5.1). 새 판 압축이 지우지 않는다
+ *   peers.json            Loro 피어 ID → 사용자 (프레즌스에서 배운다)
  *
  * 첫 판의 ID는 ''이고 디렉터리 이름은 '_'이다. 쓰기는 임시 파일에 쓴 뒤 이름을 바꾼다 (중간에 죽어도 반쪽 파일이 남지 않음).
  * 로그 끝의 잘린 레코드(덧붙이다 죽음)는 버린다.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+/** 버전 하나 (14 §5.1) */
+export interface VersionRecord {
+  id: string;
+  /** 그 시점의 판 (앞 판이면 epochs/<판>/final.bin 위에서 연다) */
+  epoch: string;
+  /** Loro frontiers (forkAt) */
+  frontiers: Array<{ peer: string; counter: number }>;
+  /** 버전 벡터 (피어 → 다음 카운터): 작성자 계산 */
+  vv: Record<string, number>;
+  time: number;
+  /** 앞 버전 뒤로 변경을 넣은 피어 */
+  authors: string[];
+  name?: string;
+  auto: boolean;
+}
+
+/** 피어의 사용자 (4단계: 프레즌스의 이름·색) */
+export interface PeerUser {
+  name: string;
+  color: string;
+}
 
 export interface RoomData {
   snapshot: Uint8Array | null;
@@ -34,6 +58,11 @@ export interface RoomStore {
   /** 자산 (내용 주소: 같은 ID는 같은 바이트) */
   putAsset(id: string, mime: string, bytes: Uint8Array): void;
   getAsset(id: string): { mime: string; bytes: Uint8Array } | null;
+  /** 버전 목록 (오래된 것부터) */
+  versions(): VersionRecord[];
+  putVersions(list: VersionRecord[]): void;
+  peers(): Record<string, PeerUser>;
+  putPeers(map: Record<string, PeerUser>): void;
 }
 
 export interface Storage {
@@ -137,6 +166,32 @@ class FileRoom implements RoomStore {
     const t = this.read('assets', `${id}.type`);
     return { mime: t ? new TextDecoder().decode(t) : 'application/octet-stream', bytes };
   }
+
+  private json<T>(name: string, fallback: T): T {
+    const b = this.read(name);
+    if (!b) return fallback;
+    try {
+      return JSON.parse(new TextDecoder().decode(b)) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
+  versions(): VersionRecord[] {
+    return this.json<VersionRecord[]>('versions.json', []);
+  }
+
+  putVersions(list: VersionRecord[]): void {
+    this.write(JSON.stringify(list), 'versions.json');
+  }
+
+  peers(): Record<string, PeerUser> {
+    return this.json<Record<string, PeerUser>>('peers.json', {});
+  }
+
+  putPeers(map: Record<string, PeerUser>): void {
+    this.write(JSON.stringify(map), 'peers.json');
+  }
 }
 
 /** 메모리 저장소 (서버 프로세스가 사는 동안만) */
@@ -189,5 +244,19 @@ class MemoryRoom implements RoomStore {
   }
   getAsset(id: string) {
     return this.assets.get(id) ?? null;
+  }
+  private vlist: VersionRecord[] = [];
+  private pmap: Record<string, PeerUser> = {};
+  versions() {
+    return structuredClone(this.vlist);
+  }
+  putVersions(list: VersionRecord[]) {
+    this.vlist = structuredClone(list);
+  }
+  peers() {
+    return { ...this.pmap };
+  }
+  putPeers(map: Record<string, PeerUser>) {
+    this.pmap = { ...map };
   }
 }

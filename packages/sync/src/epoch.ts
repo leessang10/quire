@@ -33,6 +33,13 @@ export function compactLoro(text: string, epoch: string, peer: PeerId, doc?: Doc
   return loro;
 }
 
+/** 버전 스냅샷(서버 GET /<방>/versions/<id>) → 읽기 전용으로 볼 문서 (14 §5.2) */
+export function documentFromSnapshot(bytes: Uint8Array): Document {
+  const loro = newLoro(0);
+  loro.import(bytes);
+  return documentFromLoro(loro);
+}
+
 /** 서식 있는 문서로 새 판을 만든다 (서버 압축·파일 열기) */
 export function compactDoc(doc: Doc, epoch: string, peer: PeerId): LoroDoc {
   return compactLoro(doc.text(), epoch, peer, doc);

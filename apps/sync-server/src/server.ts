@@ -4,7 +4,7 @@
  * 다른 클라이언트에게 전한다. 프레즌스는 저장하지 않고 전하기만 한다 (새로 온 클라이언트에게는 마지막 것을 보낸다).
  *
  *   node --experimental-transform-types --import ./apps/sync-server/src/resolve.ts apps/sync-server/src/server.ts
- *        [포트] [--data=디렉터리] [--idle=ms]
+ *        [포트] [--data=디렉터리] [--idle=ms] [--versions=ms]
  *
  * 저장 (09 §9): 받은 업데이트는 곧바로 방의 로그에 덧붙이고, 일정 수마다 스냅샷으로 체크포인트한다. 방이 비면 정본 JSON도
  * 쓴다 (화면 텍스트 계산이 10만 문단에서 1초쯤 걸려, 편집 중에는 하지 않는다).
@@ -26,13 +26,19 @@
  *   GET /<방>.json    정본 JSON (07 §4)
  *   GET /<방>.quire   .quire 파일 (document.json + history/crdt.bin)
  *   PUT /<방>.quire   .quire 파일로 빈 방을 만든다 (07 §3 여는 규칙)
+ *   GET /<방>/versions        버전 목록 (14 §5.1): [{ id, epoch, time, name?, auto, authors: [{ name, color }] }] 새것부터
+ *   POST /<방>/versions       이름 붙인 버전 ({ name }) → 만든 버전
+ *   GET /<방>/versions/<id>   그 시점의 Loro 스냅샷 (forkAt, 앞 판이면 그 판의 마지막 상태 위에서)
+ *
+ * 버전 (14 §5.1): 편집이 멈춘 뒤 versionIdleMs(기본 10분), 방이 빌 때, 새 판 압축 직전에 자동 버전을 남긴다 (앞 버전 뒤로
+ * 바뀐 것이 있을 때만). 작성자는 그사이 버전 벡터가 늘어난 피어이고, 피어 → 사용자는 프레즌스(이름·색)에서 배운다.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { LoroDoc, VersionVector } from 'loro-crdt';
 import { assetIdOf, assetIdsOf, canonicalJson, compactDocument, documentFromLoro, documentFromQuire, openQuire, packQuire, quireFromDocument, quireFromText, readEpoch, type QuireAsset } from '@quire/sync';
-import { fileStorage, memoryStorage, type RoomStore, type Storage } from './store';
+import { fileStorage, memoryStorage, type PeerUser, type RoomStore, type Storage, type VersionRecord } from './store';
 
 export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6 } as const;
 
@@ -65,6 +71,10 @@ export interface Room {
   /** 판의 처음 상태 뒤로 바뀐 것이 있는가 (없으면 압축할 것이 없다) */
   changedSinceBase: boolean;
   idle: ReturnType<typeof setTimeout> | null;
+  /** 편집이 멈추면 자동 버전 */
+  versionTimer: ReturnType<typeof setTimeout> | null;
+  /** 피어 → 사용자 (저장소와 같게) */
+  peers: Record<string, PeerUser>;
 }
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -76,6 +86,8 @@ export interface ServerOptions {
   idleMs?: number | null;
   /** 업데이트 이만큼마다 체크포인트 (기본 200) */
   checkpointEvery?: number;
+  /** 편집이 이만큼 멈추면 자동 버전 (기본 10분, null이면 하지 않음) */
+  versionIdleMs?: number | null;
 }
 
 export interface SyncServer {
@@ -88,6 +100,8 @@ export interface SyncServer {
   rooms: Map<string, Room>;
   /** 시험용: 방을 지금 압축한다 (저장소에서 읽어 오며, 연결이 없을 때만) */
   compact(name: string): boolean;
+  /** 버전 남기기 (자동이면 바뀐 것이 없을 때 null) */
+  version(name: string, opts?: { name?: string; auto?: boolean; time?: number }): VersionRecord | null;
 }
 
 const randomEpoch = () => randomBytes(6).toString('hex');
@@ -106,6 +120,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
   const storage = opts.storage ?? memoryStorage();
   const idleMs = opts.idleMs ?? null;
   const checkpointEvery = opts.checkpointEvery ?? 200;
+  const versionIdleMs = opts.versionIdleMs === undefined ? 10 * 60 * 1000 : opts.versionIdleMs;
 
   const roomOf = (name: string): Room => {
     const loaded = rooms.get(name);
@@ -123,7 +138,10 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       b.import(base);
       changedSinceBase = b.oplogVersion().compare(doc.oplogVersion()) !== 0;
     }
-    const r: Room = { name, doc, epoch, store, conns: new Set(), claimed: false, waiting: [], dirty: updates.length, jsonStale: true, changedSinceBase, idle: null };
+    const r: Room = {
+      name, doc, epoch, store, conns: new Set(), claimed: false, waiting: [], dirty: updates.length, jsonStale: true, changedSinceBase, idle: null,
+      versionTimer: null, peers: store.peers(),
+    };
     rooms.set(name, r);
     if (snapshot || updates.length > 0) log(`< ${name}: 판 '${epoch}', 로그 ${updates.length}개`);
     return r;
@@ -138,10 +156,141 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     if (json) room.jsonStale = false;
   }
 
+  // ── 버전 (14 §5) ──────────────────────────────────────
+
+  const vvObject = (doc: LoroDoc): Record<string, number> => Object.fromEntries(doc.oplogVersion().toJSON());
+
+  /** 지금 상태로 버전을 남긴다. 자동이면 같은 판의 앞 버전 뒤로 바뀐 것이 없을 때 남기지 않는다 */
+  function makeVersion(room: Room, o: { name?: string; auto?: boolean; time?: number } = {}): VersionRecord | null {
+    if (room.doc.oplogVersion().length() === 0) return null;
+    const list = room.store.versions();
+    const vv = vvObject(room.doc);
+    const prev = [...list].reverse().find((v) => v.epoch === room.epoch);
+    const prevVV = prev?.vv ?? {};
+    const authors = Object.keys(vv).filter((p) => (vv[p] ?? 0) > (prevVV[p] ?? 0));
+    const auto = o.auto ?? !o.name;
+    if (auto && authors.length === 0) return null;
+    const v: VersionRecord = {
+      id: randomBytes(6).toString('hex'),
+      epoch: room.epoch,
+      frontiers: room.doc.frontiers().map((f) => ({ peer: String(f.peer), counter: f.counter })),
+      vv,
+      time: o.time ?? Date.now(),
+      authors,
+      ...(o.name ? { name: o.name } : {}),
+      auto,
+    };
+    list.push(v);
+    room.store.putVersions(list);
+    log(`v ${room.name}: ${o.name ? `'${o.name}'` : '자동'} 버전 (${authors.length}명)`);
+    return v;
+  }
+
+  /** 편집이 멈추면 자동 버전 (업데이트마다 다시 잰다) */
+  function touchVersionTimer(room: Room): void {
+    if (versionIdleMs === null) return;
+    if (room.versionTimer !== null) clearTimeout(room.versionTimer);
+    room.versionTimer = setTimeout(() => {
+      room.versionTimer = null;
+      if (rooms.get(room.name) === room) makeVersion(room);
+    }, versionIdleMs);
+  }
+
+  /** 프레즌스에서 피어 → 사용자를 배운다 (presence-store의 [{ k, s, v: { name, color } }]) */
+  function learnPeers(room: Room, bytes: Uint8Array): void {
+    let entries: unknown;
+    try {
+      entries = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return;
+    }
+    if (!Array.isArray(entries)) return;
+    let changed = false;
+    for (const e of entries as Array<{ k?: unknown; v?: { name?: unknown; color?: unknown } | null }>) {
+      if (typeof e?.k !== 'string' || !e.v || typeof e.v.name !== 'string' || typeof e.v.color !== 'string') continue;
+      const cur = room.peers[e.k];
+      if (cur && cur.name === e.v.name && cur.color === e.v.color) continue;
+      room.peers[e.k] = { name: e.v.name.slice(0, 64), color: e.v.color.slice(0, 16) };
+      changed = true;
+    }
+    if (changed) room.store.putPeers(room.peers);
+  }
+
+  /** 목록 응답: 새것부터, 작성자는 사용자로 (같은 사용자는 한 번) */
+  function versionList(room: Room) {
+    return room.store
+      .versions()
+      .reverse()
+      .map((v) => {
+        const users: PeerUser[] = [];
+        for (const p of v.authors) {
+          const u = room.peers[p];
+          if (u && !users.some((x) => x.name === u.name && x.color === u.color)) users.push(u);
+        }
+        return { id: v.id, epoch: v.epoch, time: v.time, auto: v.auto, ...(v.name ? { name: v.name } : {}), authors: users, current: v.epoch === room.epoch };
+      });
+  }
+
+  /** 버전의 스냅샷: 같은 판이면 지금 문서, 앞 판이면 그 판의 마지막 상태에서 forkAt */
+  function versionSnapshot(room: Room, id: string): Uint8Array | null {
+    const v = room.store.versions().find((x) => x.id === id);
+    if (!v) return null;
+    let doc = room.doc;
+    if (v.epoch !== room.epoch) {
+      const fin = room.store.epochFinal(v.epoch);
+      if (!fin) return null;
+      doc = new LoroDoc();
+      doc.import(fin.final);
+    }
+    const fork = doc.forkAt(v.frontiers as never);
+    return fork.export({ mode: 'snapshot' });
+  }
+
+  function onVersions(req: IncomingMessage, res: ServerResponse, name: string, id: string | undefined): void {
+    const room = roomOf(name);
+    if (req.method === 'GET' && !id) {
+      jsonReply(res, 200, versionList(room));
+      idle(room);
+      return;
+    }
+    if (req.method === 'GET' && id) {
+      const snap = versionSnapshot(room, id);
+      if (!snap) reply(res, 404, 'no such version');
+      else reply(res, 200, snap, 'application/octet-stream');
+      idle(room);
+      return;
+    }
+    if (req.method !== 'POST' || id) {
+      reply(res, 405, 'method not allowed');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => {
+      let label = '';
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as { name?: unknown };
+        label = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
+      } catch {
+        reply(res, 400, 'bad json');
+        return;
+      }
+      if (!label) {
+        reply(res, 400, 'name required');
+        return;
+      }
+      const v = makeVersion(room, { name: label, auto: false });
+      if (!v) jsonReply(res, 409, { error: '빈 문서입니다' });
+      else jsonReply(res, 201, versionList(room).find((x) => x.id === v.id));
+      idle(room);
+    });
+  }
+
   /** 새 판으로 압축한다 (연결이 없고 바뀐 것이 있을 때만) */
   function compact(room: Room): boolean {
     if (room.conns.size > 0 || room.doc.oplogVersion().length() === 0 || !room.changedSinceBase) return false;
     checkpoint(room);
+    makeVersion(room); // 압축 직전 자동 버전 (14 §5.1)
     const old = room.doc.export({ mode: 'snapshot' });
     const next = randomEpoch();
     const fresh = compactDocument(documentFromLoro(room.doc), next, randomPeer());
@@ -159,6 +308,12 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
   function idle(room: Room): void {
     if (room.conns.size > 0) return;
     checkpoint(room, true);
+    if (room.versionTimer !== null) {
+      // 방이 비었다: 자동 버전 (14 §5.1)
+      clearTimeout(room.versionTimer);
+      room.versionTimer = null;
+      makeVersion(room);
+    }
     if (idleMs === null) return;
     if (room.idle !== null) clearTimeout(room.idle);
     room.idle = setTimeout(() => {
@@ -236,7 +391,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'GET, PUT',
+        'access-control-allow-methods': 'GET, PUT, POST',
         'access-control-allow-headers': 'content-type',
       });
       res.end();
@@ -244,6 +399,11 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     }
     const path = decodeURIComponent((req.url ?? '/').split('?')[0]!.replace(/^\/+/, ''));
     // 자산 (11 §2.2): <방>/assets/<ID>. ID는 내용 해시라 PUT은 내용을 확인한다
+    const vm = /^(.+)\/versions(?:\/([0-9a-f]{12}))?$/.exec(path);
+    if (vm) {
+      onVersions(req, res, vm[1]!, vm[2]);
+      return;
+    }
     const am = /^(.+)\/assets\/([0-9a-f]{32})$/.exec(path);
     if (am) {
       onAsset(req, res, am[1]!, am[2]!);
@@ -411,6 +571,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       room.jsonStale = true;
       if (room.epoch === '') room.epoch = readEpoch(room.doc);
       if (++room.dirty >= checkpointEvery) checkpoint(room);
+      touchVersionTimer(room);
       broadcast(room, conn, frame(MSG.UPDATE, body));
       if (room.waiting.length) {
         const w = room.waiting;
@@ -419,6 +580,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       }
     } else if (type === MSG.PRESENCE) {
       conn.presence = new Uint8Array(body);
+      learnPeers(room, conn.presence);
       broadcast(room, conn, frame(MSG.PRESENCE, body));
     }
   }
@@ -498,6 +660,9 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
         compact(name) {
           return compact(roomOf(name));
         },
+        version(name, o) {
+          return makeVersion(roomOf(name), o);
+        },
         dropAll() {
           for (const c of [...all]) c.socket.destroy();
         },
@@ -505,6 +670,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
           for (const c of [...all]) c.socket.destroy();
           for (const r of rooms.values()) {
             if (r.idle !== null) clearTimeout(r.idle);
+            if (r.versionTimer !== null) clearTimeout(r.versionTimer);
             checkpoint(r, true);
           }
           return new Promise((r) => server.close(() => r()));
@@ -569,7 +735,8 @@ if (process.argv[1] && /server\.ts$/.test(process.argv[1])) {
   const port = Number(args.find((a) => !a.startsWith('--')) ?? 8787);
   const data = flag('data') ?? '.quire-data';
   const idleMs = Number(flag('idle') ?? 10000);
-  void startServer(port, (s) => console.log(s), { storage: fileStorage(data), idleMs }).then((s) =>
+  const versionIdleMs = Number(flag('versions') ?? 10 * 60 * 1000);
+  void startServer(port, (s) => console.log(s), { storage: fileStorage(data), idleMs, versionIdleMs }).then((s) =>
     console.log(`quire sync server on ws://localhost:${s.port}/<방 이름> (저장: ${data}, 빈 방 ${idleMs} ms 뒤 압축)`),
   );
 }
