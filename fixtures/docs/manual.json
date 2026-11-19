@@ -4,7 +4,16 @@
   "sections": [
     {
       "columns": 1,
+      "footer": {
+        "default": "ftr|s1|default",
+        "even": "ftr|s1|default"
+      },
+      "header": {
+        "default": "hdr|s1|default",
+        "even": "hdr|s1|even"
+      },
       "id": "s1",
+      "oddEven": true,
       "page": {
         "height": 841890,
         "margin": [
@@ -14,7 +23,8 @@
           72000
         ],
         "width": 595276
-      }
+      },
+      "titlePage": true
     }
   ],
   "settings": {},
@@ -355,6 +365,52 @@
         "p": {
           "align": "justify"
         }
+      }
+    ],
+    "ftr|s1|default": [
+      {
+        "c": [
+          {
+            "img": {
+              "field": "page",
+              "kind": "field"
+            }
+          },
+          {
+            "t": " / "
+          },
+          {
+            "img": {
+              "field": "pages",
+              "kind": "field"
+            }
+          }
+        ],
+        "p": {
+          "align": "center"
+        }
+      }
+    ],
+    "hdr|s1|default": [
+      {
+        "c": [
+          {
+            "t": "문서 편집기 설명서"
+          }
+        ],
+        "p": {
+          "align": "right"
+        }
+      }
+    ],
+    "hdr|s1|even": [
+      {
+        "c": [
+          {
+            "t": "처음 쓰는 사람을 위한 안내"
+          }
+        ],
+        "p": {}
       }
     ]
   },

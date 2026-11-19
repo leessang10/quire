@@ -140,7 +140,7 @@ export type ParaKey = keyof ParaAttrs;
 export interface ObjAttrs {
   /** 개체 ID (동시 이동으로 생긴 중복을 가릴 때) */
   id?: string;
-  kind?: 'image' | 'table';
+  kind?: 'image' | 'table' | 'field';
   /** 자산 ID (이미지 원본의 SHA-256 앞 32자) */
   asset?: string;
   w?: number;
@@ -151,7 +151,12 @@ export interface ObjAttrs {
   table?: string;
   /** 떠 있는 개체면 위치·배치 (11 §2.3). 없으면 글자처럼 줄 안에 */
   float?: FloatAttrs;
+  /** 필드 (kind 'field', 12 §5.1): 값은 저장하지 않고 그릴 때 정한다 */
+  field?: FieldKind;
 }
+
+/** 필드 종류 (12 §5.1): 쪽 번호, 전체 쪽 수, 구역 쪽 수, 오늘 날짜 */
+export type FieldKind = 'page' | 'pages' | 'sectionPages' | 'date';
 
 /** 떠 있는 개체의 위치·배치 (11 §2.3). 길이는 1/1000pt */
 export interface FloatAttrs {
@@ -165,7 +170,7 @@ export interface FloatAttrs {
   behind?: boolean;
 }
 export type ObjKey = keyof ObjAttrs;
-export const OBJ_KEYS: readonly ObjKey[] = ['id', 'kind', 'asset', 'w', 'h', 'alt', 'float', 'table'];
+export const OBJ_KEYS: readonly ObjKey[] = ['id', 'kind', 'asset', 'w', 'h', 'alt', 'float', 'table', 'field'];
 /** Loro에서 개체 속성 마크 키의 접두사 */
 export const OBJ_MARK_PREFIX = 'o_';
 /** Loro에서 문단 속성 마크 키의 접두사 (마크 키에는 ':'를 쓸 수 없다, 10 §3) */

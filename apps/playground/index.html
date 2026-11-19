@@ -115,7 +115,17 @@
       <button data-keep="keepWithNext" aria-pressed="false" title="다음 문단과 함께: 다음 문단의 첫 두 줄과 같은 쪽에 (제목은 기본으로 켜짐)">다음과 함께</button>
       <button data-keep="keepTogether" aria-pressed="false" title="문단 나누지 않음: 문단 전체를 한 쪽에">나누지 않음</button>
       <button id="sec-break" title="구역 나누기 (Ctrl+Alt+Enter): 캐럿에서 문단을 나누고 뒤를 새 쪽에서 시작">구역 나누기</button>
-      <button id="page-setup" title="캐럿이 든 구역의 용지·방향·여백·시작 방식">쪽 설정</button>
+      <button id="page-setup" title="캐럿이 든 구역의 용지·방향·여백·시작 방식·쪽 번호">쪽 설정</button>
+      <button id="hf-header" title="머리말 편집 (쪽 위 여백을 두 번 눌러도 된다)">머리말</button>
+      <button id="hf-footer" title="꼬리말 편집 (쪽 아래 여백을 두 번 눌러도 된다)">꼬리말</button>
+      <span class="hf-tools" hidden>
+        <button data-field="page" title="쪽 번호 넣기">쪽 번호</button>
+        <button data-field="pages" title="전체 쪽 수 넣기">전체 쪽 수</button>
+        <button data-hfopt="titlePage" aria-pressed="false" title="이 구역 첫 쪽의 머리말·꼬리말을 따로">첫 쪽 다르게</button>
+        <button data-hfopt="oddEven" aria-pressed="false" title="이 구역 짝수 쪽의 머리말·꼬리말을 따로">짝·홀 다르게</button>
+        <button id="hf-link" aria-pressed="false" title="이전 구역의 머리말·꼬리말을 이어 쓴다 (끄면 이 구역 것으로 복사)">이전과 연결</button>
+        <button id="hf-close" title="머리말·꼬리말 닫기 (Esc, 본문을 두 번 눌러도 된다)">닫기</button>
+      </span>
     </div>
     <dialog id="page-dialog" class="page-dialog" aria-labelledby="page-dialog-title">
       <form method="dialog">
@@ -156,6 +166,17 @@
             <option value="oddPage">홀수 쪽</option>
           </select>
         </label>
+        <fieldset class="row">
+          <legend>쪽 번호</legend>
+          <label>시작 <input name="pnStart" type="number" min="0" max="9999" step="1" placeholder="이어서" /></label>
+          <label>모양
+            <select name="pnFormat">
+              <option value="decimal">1, 2, 3</option>
+              <option value="roman">i, ii, iii</option>
+              <option value="hangul">가, 나, 다</option>
+            </select>
+          </label>
+        </fieldset>
         <p id="page-error" class="error" role="alert" hidden></p>
         <div class="dialog-actions">
           <button type="button" id="sec-remove" title="이 구역 끝의 구역 나눔을 지운다: 다음 구역에 합쳐지고 다음 구역 설정이 남는다">구역 나눔 지우기</button>

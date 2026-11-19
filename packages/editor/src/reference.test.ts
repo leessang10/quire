@@ -13,6 +13,7 @@ import { HbShaper, loadShapingFont, slotOf } from '@quire/shaping';
 import { LayoutCache, PagedLayout, SectionFrames, cpSlice } from '@quire/layout';
 import type { Document } from '@quire/model';
 import { Formatter, defaultPageSetup } from './formatter';
+import { hfText, pageHF } from './headers';
 
 const root = join(__dirname, '../../..');
 const dir = join(root, 'fixtures/docs');
@@ -42,6 +43,8 @@ interface Summary {
   pageStarts: Array<{ page: number; para: number; line: number; text: string }>;
   /** 모든 줄(표 셀 포함)의 쪽·위치·글자 범위 FNV-1a */
   fingerprint: string;
+  /** 머리말·꼬리말이 있는 문서: 쪽마다 "종류|머리말|꼬리말" (필드는 그 쪽 값, 12 §5) */
+  headers?: string[];
 }
 
 function summarize(document: Document, { layout, fmt }: ReturnType<typeof compose>): Summary {
@@ -94,7 +97,15 @@ function summarize(document: Document, { layout, fmt }: ReturnType<typeof compos
     const b = layout.pageBox(p);
     return `${b.width}x${b.height}`;
   });
-  return { pages: layout.pageCount, paper, pageStarts, fingerprint: (h >>> 0).toString(16).padStart(8, '0') };
+  const out: Summary = { pages: layout.pageCount, paper, pageStarts, fingerprint: (h >>> 0).toString(16).padStart(8, '0') };
+  if (fmt.sectionList().some((s) => Object.keys(s.header).length || Object.keys(s.footer).length)) {
+    const text = (story: string | null, hf: ReturnType<typeof pageHF>) => (story ? hfText(fmt, document.story(story), hf.fields) : '');
+    out.headers = Array.from({ length: layout.pageCount }, (_, p) => {
+      const hf = pageHF(fmt, layout, p, '2026. 1. 1.');
+      return `${hf.kind}|${text(hf.header.story, hf)}|${text(hf.footer.story, hf)}`;
+    });
+  }
+  return out;
 }
 
 const open = (name: string) => documentFromQuire(migrateQuire(JSON.parse(readFileSync(join(dir, name), 'utf8'))).doc).document;

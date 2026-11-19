@@ -8,6 +8,8 @@
  */
 import {
   BODY_STYLE,
+  DEFAULT_HF_DISTANCE,
+  LAST_SECTION,
   fullSection,
   mergeParaAttrs,
   normalizeTable,
@@ -22,11 +24,14 @@ import {
   type ResolvedStyle,
   type SectionProps,
   type TableGrid,
+  type FieldKind,
+  type HFKind,
 } from '@quire/model';
 import {
   CELL_PAD,
   LayoutCache,
   PLAIN_STYLE,
+  PagedLayout,
   TableLayouter,
   geomKey,
   type FloatSpec,
@@ -65,6 +70,24 @@ const SUP_SHIFT = -0.33;
 const SUB_SHIFT = 0.2;
 const LINK_COLOR = '#1a5fb4';
 
+/** 필드 값 (12 §5.1): 그리는 쪽의 값 */
+export type FieldValues = Record<FieldKind, string>;
+
+/** 자리표시 값 (12 §5.2): 머리말 높이를 이 값의 폭으로 잰다. 그래서 본문 프레임은 쪽 번호와 무관하다 */
+export const FIELD_PLACEHOLDER: FieldValues = { page: '999', pages: '999', sectionPages: '999', date: '0000. 00. 00.' };
+
+/** 구역 하나의 머리말·꼬리말 (문서 순서로 이어 쓴 것까지) */
+export interface SectionHF {
+  id: string;
+  def: SectionProps | undefined;
+  /** 이어 쓴 스토리 ID */
+  header: Partial<Record<HFKind, string>>;
+  footer: Partial<Record<HFKind, string>>;
+  /** 쓰는 종류 중 가장 큰 높이 (px, 자리표시 값) */
+  heights: [header: number, footer: number];
+  geom: SectionGeom;
+}
+
 /** 조판한 표: 격자, 레이아웃 입력, 행 높이, 표 원소 위치 (본문) */
 export interface TableView {
   id: string;
@@ -92,11 +115,20 @@ export class Formatter {
   readonly formatOf: FormatSource = (info, force) => this.formatWith(this.document().body, info, force);
   /** 구역 설정 → 쪽 모양 (설정 객체가 바뀌면 다시) */
   private readonly geoms = new Map<string, { def: SectionProps | undefined; geom: SectionGeom }>();
-  /** 본문 문단 → 구역 차례·쪽 모양 (12 §3.3, SectionFrames) */
+  /** 문서 순서의 구역: 머리말·꼬리말 이어 쓰기와 높이를 넣은 쪽 모양 (syncSections) */
+  private secs: SectionHF[] = [];
+  /** 머리말·꼬리말 스토리 → 잰 높이 (스토리 판·폭·스타일 판이 같으면 그대로) */
+  private readonly hfHeights = new Map<string, { version: number; styles: number; width: number; height: number }>();
+  /** 머리말·꼬리말 문단 레이아웃 캐시 (필드 값마다 폭이 다르다) */
+  private readonly hfCache = new LayoutCache(2000);
+  private measurer: Measurer | null = null;
+  /** 지금 조판하는 필드 값 (null이면 자리표시) */
+  fields: FieldValues | null = null;
+  /** 본문 문단 → 구역 차례·쪽 모양 (12 §3.3, SectionFrames). 머리말·꼬리말이 크면 본문을 민다 (§5.2) */
   readonly sections: SectionSource = {
     sectionOf: (m) => {
       const s = this.body.sectionOf(m);
-      return { index: s.index, geom: this.sectionGeom(s.id) };
+      return { index: s.index, geom: this.sectionAt(s.index, s.id).geom };
     },
     count: () => this.body.sectionBreaks().length + 1,
   };
@@ -111,6 +143,10 @@ export class Formatter {
 
   /** 셀 레이아웃을 새로 (측정이 바뀌었거나 문서가 바뀜) */
   reset(measurer: Measurer, cellCache: LayoutCache): void {
+    this.measurer = measurer;
+    this.hfHeights.clear();
+    this.hfCache.clear();
+    this.secs = [];
     this.tables = new TableLayouter(
       this.setup,
       measurer,
@@ -137,6 +173,89 @@ export class Formatter {
     const geom = { ...g, key: geomKey(g) };
     this.geoms.set(id, { def, geom });
     return geom;
+  }
+
+  /** 구역 차례 i (ID id): 설정 객체가 같으면 지난 syncSections 값, 아니면 다시 맞춘다 */
+  sectionAt(i: number, id: string): SectionHF {
+    const s = this.secs[i];
+    if (s && s.id === id && s.def === this.body.sectionDef(id) && this.secs.length === this.body.sectionBreaks().length + 1) return s;
+    this.syncSections();
+    return this.secs[i] ?? this.secs[this.secs.length - 1]!;
+  }
+
+  /** 문서 순서의 구역들 (머리말·꼬리말 포함) */
+  sectionList(): readonly SectionHF[] {
+    if (this.secs.length !== this.body.sectionBreaks().length + 1) this.syncSections();
+    return this.secs;
+  }
+
+  /**
+   * 구역들의 머리말·꼬리말을 다시 맞춘다 (12 §5.2): 이어 쓰기, 스토리 높이(자리표시 값). 본문을 조판하기 전에 부른다.
+   * 쪽 모양이 바뀐 첫 구역의 차례 (없으면 -1): 부르는 쪽이 그 구역 첫 문단부터 다시 놓게 한다
+   */
+  syncSections(): number {
+    const b = this.body;
+    const breaks = b.sectionBreaks();
+    const n = breaks.length + 1;
+    const old = this.secs;
+    const out: SectionHF[] = [];
+    let header: Partial<Record<HFKind, string>> = {};
+    let footer: Partial<Record<HFKind, string>> = {};
+    let changed = -1;
+    for (let i = 0; i < n; i++) {
+      const id = i < n - 1 ? b.paraAttrs(breaks[i]!).section! : LAST_SECTION;
+      const def = b.sectionDef(id);
+      if (def?.header) header = { ...header, ...pick(def.header) };
+      if (def?.footer) footer = { ...footer, ...pick(def.footer) };
+      const base = this.sectionGeom(id);
+      const f = fullSection(def);
+      const kinds: HFKind[] = ['default', ...(f.titlePage ? (['first'] as const) : []), ...(f.oddEven ? (['even'] as const) : [])];
+      const width = base.width - base.left - base.right;
+      const hh = Math.max(0, ...kinds.map((k) => this.storyHeight(header[k], width)));
+      const fh = Math.max(0, ...kinds.map((k) => this.storyHeight(footer[k], width)));
+      let geom = base;
+      if (hh > 0 || fh > 0) {
+        const top = hh > 0 ? Math.max(base.top, Math.ceil(pt(f.headerDistance ?? DEFAULT_HF_DISTANCE) + hh)) : base.top;
+        const bottom = fh > 0 ? Math.max(base.bottom, Math.ceil(pt(f.footerDistance ?? DEFAULT_HF_DISTANCE) + fh)) : base.bottom;
+        if (top !== base.top || bottom !== base.bottom) {
+          const g = { width: base.width, height: base.height, top, right: base.right, bottom, left: base.left, start: base.start };
+          geom = { ...g, key: geomKey(g) };
+        }
+      }
+      out.push({ id, def, header, footer, heights: [hh, fh], geom });
+      if (changed < 0 && old[i]?.geom.key !== geom.key) changed = i;
+    }
+    this.secs = out;
+    return old.length ? changed : -1;
+  }
+
+  /** 머리말·꼬리말 스토리의 높이 (px, 자리표시 값). 스토리가 없으면 0 */
+  storyHeight(story: string | undefined, width: number): number {
+    if (!story) return 0;
+    const doc = this.document().story(story);
+    const hit = this.hfHeights.get(story);
+    const styles = this.body.stylesVersion;
+    if (hit && hit.version === doc.version && hit.width === width && hit.styles === styles) return hit.height;
+    const height = this.layoutStory(doc, width, null).contentBottom;
+    this.hfHeights.set(story, { version: doc.version, styles, width, height });
+    return height;
+  }
+
+  /**
+   * 머리말·꼬리말 스토리를 폭 width로 조판한다 (원점 0, 쪽 하나). fields: 그 쪽의 필드 값 (null이면 자리표시).
+   * 문단 레이아웃은 캐시에 있으므로 쪽마다 새로 만들어도 싸다
+   */
+  layoutStory(doc: Doc, width: number, fields: FieldValues | null, preedit: { offset: number; text: string; fmt?: number } | null = null): PagedLayout {
+    const setup: PageSetup = { ...this.setup, width, height: 1e9, margin: 0, gap: 0, originX: 0, originY: 0 };
+    const L = new PagedLayout(setup, this.measurer!, this.hfCache, this.cellFormat(doc));
+    const prev = this.fields;
+    this.fields = fields;
+    try {
+      L.update(doc.paragraphs(), preedit, Infinity, null);
+    } finally {
+      this.fields = prev;
+    }
+    return L;
   }
 
   /** 가장 넓은 쪽 폭 (px): 화면 가로 스크롤 폭 */
@@ -166,7 +285,7 @@ export class Formatter {
     const box = this.paraBox(attrs, rs, label);
     if (!p.fmt && !p.mark && !force && !box && !styled && !p.objs) return null;
     const marker = label ? { text: label.text, id: p.mark ?? 0, hanging: pt(label.def.levels[label.level]!.hanging) } : null;
-    const objs = p.objs ? objSizes(p.objs) : null;
+    const objs = p.objs ? this.objSizes(p, doc, styled ? (attrs.style ?? BODY_STYLE) : '') : null;
     // 셀 안의 떠 있는 개체는 인라인으로 (셀 원점이 바뀌어도 놓인 자리를 다시 구하지 않으므로)
     const floats = p.objs && doc === body ? floatSpecs(p.objs) : null;
     const sty = styled ? (attrs.style ?? BODY_STYLE) : '';
@@ -175,6 +294,36 @@ export class Formatter {
     // 서식 번호의 뜻은 스토리마다 다르므로 셀은 캐시 키에 스토리 번호를 넣는다
     const key = (doc === body ? '' : `d${this.docId(doc)}`) + (styled ? `${sty}@${body.stylesVersion}` : '');
     return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty, doc), box, marker, objs, floats, key: key || undefined };
+  }
+
+  /** 인라인 개체 크기 (px). 필드는 값(또는 자리표시)의 글자 폭, 높이는 글자 ascent보다 작게 (줄 높이를 바꾸지 않는다) */
+  private objSizes(p: ParagraphInfo, doc: Doc, sty: string): Map<number, { w: number; h: number }> | null {
+    const out = objSizes(p.objs!);
+    if (!out) return null;
+    for (const [k, o] of p.objs!) {
+      if (o.kind !== 'field' || o.float) continue;
+      const run = this.drawStyle(p.fmt?.[k] ?? 0, sty, doc).run;
+      out.set(k, { w: this.textWidth(this.fieldText(o.field), run.face) * run.scale, h: 0.7 * this.fontSize * run.scale });
+    }
+    return out;
+  }
+
+  /** 필드 하나의 글자 (지금 필드 값, 없으면 자리표시) */
+  fieldText(kind: FieldKind | undefined): string {
+    return kind ? (this.fields ?? FIELD_PLACEHOLDER)[kind] : '?';
+  }
+
+  /** 글자열 폭 (px, 기본 크기) */
+  textWidth(text: string, face = 0): number {
+    const m = this.measurer;
+    if (!m) return text.length * this.fontSize * 0.6;
+    let w = 0;
+    if (m.advances) {
+      for (const a of m.advances(text, face)) w += a;
+      return w;
+    }
+    for (const ch of text) w += m.width(ch, face);
+    return w;
   }
 
   private docId(doc: Doc): number {
@@ -301,6 +450,13 @@ export function defaultPageSetup(fontSize = 16): PageSetup {
     // 과부·고아 줄 막기 (12 §4, Word·한글 프로그램 기본과 같이 켬)
     widowControl: true,
   };
+}
+
+/** 스토리 ID가 있는 종류만 */
+function pick(m: Partial<Record<HFKind, string>>): Partial<Record<HFKind, string>> {
+  const out: Partial<Record<HFKind, string>> = {};
+  for (const k of ['default', 'first', 'even'] as const) if (m[k]) out[k] = m[k];
+  return out;
 }
 
 export function hasKeys(o: object): boolean {
