@@ -29,6 +29,7 @@ import {
 } from './shape';
 import type { TableRecord } from '@quire/model';
 import { PresenceStore } from './presence-store';
+import { COMMENTS, readCmt, readCmts, writeCmt } from './comments';
 import { ANNOTATIONS, annIdsInLoro, annIdsOf, readAnn, writeAnnKey, writeAnnRange, type AnnWire } from './annotations';
 import type { RemoteSel, StoryDelta, StoryInit, ToMain, ToWorker } from './protocol';
 
@@ -91,6 +92,9 @@ export class SyncCore {
   private tablesDirty = new Set<string>();
   /** 원격 변경이 있던 주석 (14 §2.2) */
   private annsDirty = new Set<string>();
+  /** 원격 변경이 있던 댓글 키 (14 §3) */
+  private cmtsDirty = new Set<string>();
+  private readonly commentsId: string;
   /**
    * 원격 텍스트 변경 자리 근처의 주석: 다시 풀어 보낸다. 메인은 원격 연산을 변환해 적용하므로 같은 글자가 이어질 때 Loro와 다른
    * (같은 모양의) 원소를 지울 수 있다: 메인은 범위가 Loro와 다른 주석만 다시 건다
@@ -125,6 +129,7 @@ export class SyncCore {
     this.text = loro.getText(TEXT);
     this.defIds = new Set([loro.getMap(STYLES).id, loro.getMap(LISTS).id, loro.getMap(SECTIONS).id]);
     this.annotationsId = loro.getMap(ANNOTATIONS).id;
+    this.commentsId = loro.getMap(COMMENTS).id;
     this.writer = new LoroWriter(loro, () => displayOrderFromLoro(loro));
     this.store = new PresenceStore(loro.peerIdStr, opts.presenceTimeoutMs ?? 30000);
     this.exported = loro.oplogVersion();
@@ -136,7 +141,7 @@ export class SyncCore {
     for (const id of tableIdsOf(loro)) tables[id] = readTable(loro, id);
     const anns: Record<string, AnnWire | null> = {};
     for (const id of annIdsInLoro(loro)) anns[id] = this.readAnn(id);
-    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr, formats: readFormats(loro), stories, tables, anns };
+    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr, formats: readFormats(loro), stories, tables, anns, cmts: readCmts(loro) };
     opts.post(opts.reset ? { t: 'reset', ...init, lost: opts.reset.lost } : { t: 'init', ...init });
     this.heartbeat = setInterval(() => this.tick(), (opts.presenceTimeoutMs ?? 30000) / 2);
   }
@@ -235,6 +240,7 @@ export class SyncCore {
     for (const c of cs) {
       if (c.kind === 'sel') sel = { anchor: c.anchor, head: c.head };
       else if (c.kind === 'annKey') writeAnnKey(this.loro, c.id, c.key, c.value);
+      else if (c.kind === 'cmt') writeCmt(this.loro, c.key, c.value);
       else if (c.kind === 'annRange') writeAnnRange(this.loro, c.id, c.story, { start: c.start, last: c.last });
       else if (c.kind === 'tableList' || c.kind === 'tableMap') writeTable(this.loro, c);
       else if (c.story !== undefined) this.writerFor(c.story).apply(c);
@@ -245,6 +251,9 @@ export class SyncCore {
     // 로컬로 바꾼 주석: 적용한 뒤의 상태 (메인이 미뤄 둔 원격 값 대신 쓴다)
     let anns: Record<string, AnnWire | null> | undefined;
     for (const c of cs) if (c.kind === 'annKey' || c.kind === 'annRange') (anns ??= {})[c.id] = this.readAnn(c.id);
+    // 로컬로 바꾼 댓글 키: 적용한 뒤의 값 (메인이 미뤄 둔 원격 값 대신 쓴다)
+    let cmts: Record<string, unknown> | undefined;
+    for (const c of cs) if (c.kind === 'cmt') (cmts ??= {})[c.key] = readCmt(this.loro, c.key);
     // 로컬 텍스트 변경 자리 근처의 주석: 메인과 다른 원소를 지웠거나 넣었을 수 있다 (같은 글자가 이어질 때)
     let resync: Record<string, AnnWire> | undefined;
     if (this.annPos.size) {
@@ -276,8 +285,9 @@ export class SyncCore {
         ...(Object.keys(tables).length ? { tables } : {}),
         ...(anns ? { anns } : {}),
         ...(resync ? { annsResync: resync } : {}),
+        ...(cmts ? { cmts } : {}),
       });
-    } else this.opts.post({ t: 'ack', ...(anns ? { anns } : {}), ...(resync ? { annsResync: resync } : {}) });
+    } else this.opts.post({ t: 'ack', ...(anns ? { anns } : {}), ...(resync ? { annsResync: resync } : {}), ...(cmts ? { cmts } : {}) });
     if (sel) this.setSelection(sel.anchor, sel.head);
     if (this.pendingExport) this.schedule();
   }
@@ -319,6 +329,10 @@ export class SyncCore {
     for (const ev of e.events) {
       if (ev.target === this.annotationsId) {
         if (ev.diff.type === 'map') for (const id of annIdsOf(Object.keys(ev.diff.updated))) this.annsDirty.add(id);
+        continue;
+      }
+      if (ev.target === this.commentsId) {
+        if (ev.diff.type === 'map') for (const k of Object.keys(ev.diff.updated)) this.cmtsDirty.add(k);
         continue;
       }
       if (this.defIds.has(ev.target)) {
@@ -385,7 +399,10 @@ export class SyncCore {
       if (w && w.start !== null && w.end !== null) (resync ??= {})[id] = w;
     }
     this.annsResync = new Set();
-    const anyAnn = Object.keys(anns).length > 0 || !!resync;
+    let cmts: Record<string, unknown> | undefined;
+    for (const k of this.cmtsDirty) (cmts ??= {})[k] = readCmt(this.loro, k);
+    this.cmtsDirty = new Set();
+    const anyAnn = Object.keys(anns).length > 0 || !!resync || !!cmts;
     if (ops.length > 0 || dirty || defs || anyStory || anyTable || anyAnn) {
       this.log.set(this.len, ops);
       this.len++;
@@ -398,6 +415,7 @@ export class SyncCore {
         ...(anyTable ? { tables } : {}),
         ...(Object.keys(anns).length ? { anns } : {}),
         ...(resync ? { annsResync: resync } : {}),
+        ...(cmts ? { cmts } : {}),
       });
     }
     if (this.store.states.size > 0) this.postRemotes();

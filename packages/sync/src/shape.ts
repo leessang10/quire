@@ -33,6 +33,7 @@ import {
   SECTION_KEYS,
 } from '@quire/model';
 import { annFromWire, annIdsInLoro, readAnn } from './annotations';
+import { readCmts } from './comments';
 
 export const TEXT = 'body';
 export const ORDER = 'order';
@@ -328,6 +329,8 @@ export function documentFromLoro(loro: LoroDoc, peer?: string): Document {
     const w = readAnn(loro, id);
     if (w) d.applyRemoteAnnotation(id, annFromWire(d, id, w));
   }
+  // 댓글 (14 §3)
+  for (const [k, v] of Object.entries(readCmts(loro))) d.applyRemoteComment(k, v);
   return d;
 }
 

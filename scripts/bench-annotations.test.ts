@@ -86,6 +86,28 @@ function modelScenario(paras: number, anns: number) {
     backEdge.push(performance.now() - t0);
   }
   layout.finish();
+  // 댓글 창 목록 (14 §3.2): 주석마다 스레드를 걸고, 입력 뒤 목록(스레드 + 범위 + 범위 y)을 다시 만드는 비용 (편집기 threads()와 같은 일)
+  const author = { id: 'u', name: '가', color: '#000' };
+  for (const id of document.annotationIds()) document.updateAnnotation(id, { thread: `t${id}` });
+  for (const id of document.annotationIds()) {
+    document.setComment(`t${id}|anchor`, id);
+    document.addMessage(`t${id}`, { id: 'm', author, time: 1, text: '댓글' });
+  }
+  const list: number[] = [];
+  at = doc.paragraphs()[mid]!.start + 12;
+  for (let k = 0; k < 50; k++) {
+    doc.insertText(at++, '가');
+    frame();
+    t0 = performance.now();
+    const ranges = new Map(document.annotationRanges().map((r) => [r.id, r]));
+    let ys = 0;
+    for (const t of document.threads()) {
+      const r = t.anchor ? ranges.get(t.anchor) : undefined;
+      if (r && !r.orphan) ys += layout.caretRect(r.from).y;
+    }
+    list.push(performance.now() - t0);
+    if (ys < 0) throw new Error('bad');
+  }
   console.log(
     [
       '',
@@ -95,6 +117,7 @@ function modelScenario(paras: number, anns: number) {
       `  주석 안 글자 입력      ${stats(type)}`,
       `  Backspace              ${stats(back)}`,
       `  주석 시작 글자 지우기  ${stats(backEdge)}`,
+      `  댓글 창 목록 (입력 뒤) ${stats(list)}`,
     ].join(NL),
   );
 }

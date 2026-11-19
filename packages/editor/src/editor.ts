@@ -28,7 +28,11 @@ import {
   hfStoryId,
   isHFStory,
   newAnnotationId,
+  newMessageId,
+  newThreadId,
   type AnnotationRange,
+  type CommentAuthor,
+  type CommentThread,
   isNoteStory,
   noteStoryId,
   type FieldKind,
@@ -90,6 +94,18 @@ export interface EditorOptions {
   onSelectionChange?: (anchor: number, head: number) => void;
   /** 이미지 원본 저장소 (11 §2.2). 없으면 메모리 */
   assets?: AssetStore;
+  /** 댓글 작성자 (14 §3.1: 4단계는 접속할 때의 사용자 정보). 없으면 "나" */
+  user?: CommentAuthor;
+}
+
+/** 댓글 창에 놓을 스레드 (14 §3.2): 범위와 그 화면 y (문서 좌표, 고아면 null) */
+export interface ThreadView extends CommentThread {
+  story: string | null;
+  from: number;
+  to: number;
+  orphan: boolean;
+  /** 범위 시작의 문서 y (스크롤 전). 고아·찾지 못하면 null */
+  y: number | null;
 }
 
 /** 엔진이 불러올 글꼴 파일 (TTF·OTF: HarfBuzz가 woff2를 읽지 못하므로 압축 안 된 sfnt) */
@@ -1003,7 +1019,8 @@ export class Editor {
     if (this.kerningOff) ctx.fontKerning = this.shapedFonts ? 'normal' : 'none';
     // 주석 범위 (14 §2.4): 이 스토리의 주석 (문서 판마다 캐시)
     const storyId = this.document.storyIdOf(doc);
-    const anns = storyId === undefined ? [] : this.document.annotationRanges().filter((a) => (a.story ?? null) === storyId && !a.orphan && a.to > a.from);
+    // 해결한 댓글 스레드의 범위는 칠하지 않는다 (14 §3.2)
+    const anns = storyId === undefined ? [] : this.document.annotationRanges().filter((a) => (a.story ?? null) === storyId && !a.orphan && a.to > a.from && !this.hiddenAnn(a));
     // 화면 영역이 아직 배치되지 않았으면 시간 예산 안에서만 배치한다 (스크롤바로 멀리 이동한 경우 등).
     // 못 끝낸 부분은 자리표시로 그리고 다음 프레임에 이어서 한다.
     const ready = isBody ? layout.ensureThroughY(top + h, RENDER_LAYOUT_BUDGET_MS) : true;
@@ -1336,6 +1353,169 @@ export class Editor {
     if (this.focusAnn === id) return;
     this.focusAnn = id;
     this.scheduleRender();
+  }
+
+  // ── 댓글 (14 §3) ─────────────────────────────────────
+
+  /** 칠하지 않을 주석: 해결했거나 지운 스레드의 댓글 */
+  private hiddenAnn(a: AnnotationRange): boolean {
+    if (a.type !== 'comment' || typeof a.data.thread !== 'string') return false;
+    const t = this.document.thread(a.data.thread);
+    return !!t && (t.resolved || t.deleted);
+  }
+
+  private get author(): CommentAuthor {
+    return this.opts.user ?? { id: 'local', name: '나', color: '#2563eb' };
+  }
+
+  /** 선택 범위에 댓글 스레드를 만든다 (주석 + 첫 메시지, 실행 취소 한 단계). 범위가 없거나 글이 비면 null */
+  addComment(text: string): string | null {
+    this.input.commitComposition();
+    const [from, to] = this.range();
+    if (from === to || !text.trim()) return null;
+    const thread = newThreadId();
+    const before: Selection = { ...this.sel };
+    this.history.seal();
+    const ops = this.document.addThread({
+      thread, annotation: newAnnotationId(), story: this.storyId, from, to, message: newMessageId(), author: this.author, text, time: Date.now(),
+    });
+    this.focusAnn = this.document.thread(thread)?.anchor ?? null;
+    this.commitRaw(ops, before);
+    this.history.seal();
+    return thread;
+  }
+
+  /** 답글 (실행 취소 기록 없음: 댓글 대화는 문서 편집이 아니다) */
+  replyComment(thread: string, text: string): string | null {
+    if (!text.trim() || !this.document.thread(thread)) return null;
+    const id = newMessageId();
+    this.document.addMessage(thread, { id, author: this.author, time: Date.now(), text });
+    this.commentChanged();
+    return id;
+  }
+
+  /** 메시지 고치기 (기록 없음) */
+  editComment(thread: string, message: string, text: string): void {
+    if (!text.trim()) return;
+    this.document.editMessage(thread, message, text, Date.now());
+    this.commentChanged();
+  }
+
+  /** 메시지 지우기 (지운 표시, 기록 없음). 첫 메시지를 지우면 스레드를 지운다 */
+  deleteComment(thread: string, message: string): void {
+    const t = this.document.thread(thread);
+    if (t && t.messages[0]?.id === message) return this.deleteThread(thread);
+    this.document.deleteMessage(thread, message);
+    this.commentChanged();
+  }
+
+  /** 해결 / 다시 열기 (기록 없음) */
+  resolveThread(thread: string, on: boolean): void {
+    this.document.resolveThread(thread, on);
+    if (on && this.focusAnn === this.document.thread(thread)?.anchor) this.focusAnn = null;
+    this.commentChanged();
+  }
+
+  /** 스레드 지우기: 주석을 지우고 스레드는 지운 표시 (실행 취소 한 단계: 글을 지운 것처럼 되돌릴 수 있다) */
+  deleteThread(thread: string): void {
+    const ops = this.document.deleteThread(thread);
+    if (!ops.length) return;
+    const before: Selection = { ...this.sel };
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.history.seal();
+  }
+
+  private commentChanged(): void {
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 선택 범위 시작의 문서 y (새 댓글 쓰는 자리). 찾지 못하면 null */
+  selectionY(): number | null {
+    return this.storyY(this.storyId, this.range()[0]);
+  }
+
+  /** 스크롤하는 요소 (댓글 창이 스레드를 범위의 y - scrollTop에 맞추어 놓는다) */
+  get scrollElement(): HTMLElement {
+    return this.scroller;
+  }
+
+  /** 스레드를 고르고 그 범위로 간다 (본문이면 범위를 선택하고 보이게 스크롤) */
+  revealThread(thread: string): void {
+    const t = this.threads().find((v) => v.id === thread);
+    this.focusThread(thread);
+    if (!t || t.orphan || t.story !== null || this.storyId !== null) return;
+    this.setSelection(t.from, t.to);
+    this.scrollCaretIntoView();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 고른 스레드의 범위를 진하게 칠한다 (null이면 없음) */
+  focusThread(thread: string | null): void {
+    this.focusAnnotation(thread ? (this.document.thread(thread)?.anchor ?? null) : null);
+  }
+
+  /** 지금 고른 스레드 */
+  focusedThread(): string | null {
+    if (!this.focusAnn) return null;
+    const a = this.document.annotation(this.focusAnn);
+    return a && typeof a.data.thread === 'string' ? a.data.thread : null;
+  }
+
+  /** 캐럿이 걸친 댓글 스레드 (편집 중인 스토리, 열린 것) */
+  threadsAtCaret(): string[] {
+    const out: string[] = [];
+    for (const a of this.annotationsAtCaret()) {
+      if (a.type !== 'comment' || typeof a.data.thread !== 'string') continue;
+      const t = this.document.thread(a.data.thread);
+      if (t && !t.deleted && !t.resolved) out.push(t.id);
+    }
+    return out;
+  }
+
+  /**
+   * 스레드 목록 (14 §3.2, 지운 것 빼고): 범위가 있는 것은 문서 순서(스토리 위치의 y 순), 그다음 고아. 각 항목에 범위 시작의
+   * 문서 y가 있다 (댓글 창이 맞추어 놓는다). 본문 밖 스토리는 그 스토리가 걸린 자리: 표·각주 참조 문단, 머리말은 첫 쪽 위, 꼬리말은 첫 쪽 아래
+   */
+  threads(): ThreadView[] {
+    const ranges = new Map<string, AnnotationRange>();
+    for (const r of this.document.annotationRanges()) if (r.type === 'comment') ranges.set(r.id, r);
+    const out: ThreadView[] = [];
+    for (const t of this.document.threads()) {
+      if (t.deleted || !t.messages.length) continue;
+      const r = t.anchor ? ranges.get(t.anchor) : undefined;
+      const orphan = !r || r.orphan;
+      const story = r?.story ?? null;
+      out.push({ ...t, story, from: r?.from ?? 0, to: r?.to ?? 0, orphan, y: orphan ? null : this.storyY(story, r!.from) });
+    }
+    out.sort((a, b) => (a.y === null ? 1 : 0) - (b.y === null ? 1 : 0) || (a.y ?? 0) - (b.y ?? 0) || a.from - b.from || (a.id < b.id ? -1 : 1));
+    return out;
+  }
+
+  /** 스토리 위치의 문서 y (본문 레이아웃 좌표). 찾지 못하면 null */
+  private storyY(story: string | null, offset: number): number | null {
+    try {
+      if (story === null) return this.bodyLayout.caretRect(offset).y;
+      if (isHFStory(story)) return story.startsWith('ftr') ? this.setup.height * 0.9 : 0;
+      // 표 셀·각주: 그 개체가 있는 본문 문단
+      const noteId = story.startsWith('fn|') ? story.slice(3) : null;
+      const tableId = noteId === null ? story.split('|')[0]! : null;
+      const paras = this.body.paragraphs();
+      for (let i = 0; i < paras.length; i++) {
+        const objs = paras[i]!.objs;
+        if (!objs) continue;
+        for (const [k, o] of objs) {
+          if (noteId !== null ? o.kind === 'note' && o.id === noteId : o.kind === 'table' && o.table === tableId) {
+            return noteId !== null ? this.bodyLayout.caretRect(paras[i]!.start + k).y : this.bodyLayout.para(i).lines[0]!.y;
+          }
+        }
+      }
+    } catch {
+      // 아직 조립하지 않은 곳
+    }
+    return null;
   }
 
   /** 본문 문단 i 뒤의 나눔 표시: 구역 나눔, 다음 문단의 앞에서 쪽 나눔 (없으면 null) */

@@ -101,7 +101,9 @@ export type Op =
   /** 표 레코드의 맵 항목 하나 (11 §2.4: 지운 표시·열 너비·병합·행/셀/표 속성). Document가 적용한다 */
   | { type: 'tableMap'; table: string; map: import('./tables').TableMapName; key: string; before: unknown; after: unknown }
   /** 주석 하나 (14 §2, undefined = 없음). Document가 적용한다 */
-  | { type: 'annotation'; id: string; before: import('./annotations').Annotation | undefined; after: import('./annotations').Annotation | undefined };
+  | { type: 'annotation'; id: string; before: import('./annotations').Annotation | undefined; after: import('./annotations').Annotation | undefined }
+  /** 댓글 키 하나 (14 §3, undefined = 없음). Document가 적용한다 */
+  | { type: 'comment'; key: string; before: unknown; after: unknown };
 
 /** 글자 서식 묶음 (10 §2.1). 값이 없는 키는 서식 없음. 크기는 1/1000pt */
 export interface MarkSet {
@@ -1497,7 +1499,7 @@ export class Doc {
     else if (op.type === 'list') this.writeList(op.id, op.after);
     else if (op.type === 'section') this.writeSection(op.id, op.after);
     else if (op.type === 'obj') this.writeObjAttr(op.ctr, op.key, op.after);
-    else if (op.type === 'story' || op.type === 'tableMap' || op.type === 'annotation') throw new Error(`Doc.apply: ${op.type} op needs a Document`);
+    else if (op.type === 'story' || op.type === 'tableMap' || op.type === 'annotation' || op.type === 'comment') throw new Error(`Doc.apply: ${op.type} op needs a Document`);
     else {
       // 문단 속성: 그사이 다른 사용자가 같은 키를 바꿨으면 두지 않고 덮는다 (¶ 속성은 키 하나의 LWW)
       const i = this.paras.findIndex((p) => p.id === this.idOf(op.ctr));

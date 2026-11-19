@@ -14,7 +14,8 @@
  * - 처음 문서: [사용자 문단들 BRK(t)][¶ BRK(p)][¶ 보초]. t는 순서 목록에, p는 자리표시.
  */
 import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector } from 'loro-crdt';
-import { Document, type AnnotationChange, type Doc, type RawChange, type TableChange, type TextDelta } from '@quire/model';
+import { Document, type AnnotationChange, type CommentChange, type Doc, type RawChange, type TableChange, type TextDelta } from '@quire/model';
+import { COMMENTS, readCmt, readCmts, writeCmt } from './comments';
 import { ANNOTATIONS, annFromWire, annIdsInLoro, annIdsOf, annRangeToU16, readAnn, writeAnnKey, writeAnnRange } from './annotations';
 import {
   LISTS,
@@ -75,6 +76,7 @@ export class SyncBridge {
   private readonly listsId: string;
   private readonly sectionsId: string;
   private readonly annotationsId: string;
+  private readonly commentsId: string;
   /** 커서가 지운 글자에 붙어 있던 주석: 가져오기가 끝난 뒤 살아 있는 글자로 다시 쓴다 */
   private rewrites = new Set<string>();
   /** 마지막으로 내보낸 시점의 버전 (그 사이 가져온 원격 연산 포함) */
@@ -132,6 +134,8 @@ export class SyncBridge {
     this.listsId = loro.getMap(LISTS).id;
     this.sectionsId = loro.getMap(SECTIONS).id;
     this.annotationsId = loro.getMap(ANNOTATIONS).id;
+    this.commentsId = loro.getMap(COMMENTS).id;
+    for (const [k, v] of Object.entries(readCmts(loro))) this.document.applyRemoteComment(k, v);
     // 주석 (14 §2): Loro 상태에서 (스토리는 필요하면 연다)
     for (const id of annIdsInLoro(loro)) {
       const w = readAnn(loro, id);
@@ -231,8 +235,9 @@ export class SyncBridge {
 
   // ── 로컬 → Loro ───────────────────────────────────────
 
-  private onLocal(story: string | null, c: RawChange | TableChange | AnnotationChange): void {
-    if (c.kind === 'annKey') writeAnnKey(this.loro, c.id, c.key, c.value);
+  private onLocal(story: string | null, c: RawChange | TableChange | AnnotationChange | CommentChange): void {
+    if (c.kind === 'cmt') writeCmt(this.loro, c.key, c.value);
+    else if (c.kind === 'annKey') writeAnnKey(this.loro, c.id, c.key, c.value);
     else if (c.kind === 'annRange') writeAnnRange(this.loro, c.id, c.story, annRangeToU16(this.document, c));
     else if (c.kind === 'tableList' || c.kind === 'tableMap') writeTable(this.loro, c);
     else (story === null ? this.writer : this.stories.get(story)!.writer).apply(c);
@@ -256,6 +261,10 @@ export class SyncBridge {
     for (const ev of e.events) {
       if (ev.target === this.annotationsId) {
         if (ev.diff.type === 'map') for (const id of annIdsOf(Object.keys(ev.diff.updated))) anns.add(id);
+        continue;
+      }
+      if (ev.target === this.commentsId) {
+        if (ev.diff.type === 'map') for (const k of Object.keys(ev.diff.updated)) this.document.applyRemoteComment(k, readCmt(this.loro, k));
         continue;
       }
       const tm = TABLE_CONTAINER.exec(String(ev.target));
