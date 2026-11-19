@@ -14,6 +14,7 @@ import type { LoroDoc } from 'loro-crdt';
 import { LoroWriter, docFromLoro, documentFromLoro, initLoro, insertChunked, newLoro, readTable, storyIdsOf, storyNames, tableIdsOf, writeFormats, writeTable, writeTableRecord, type PeerId } from './shape';
 import type { Document } from '@quire/model';
 import { writeAnnKey, writeAnnRange } from './annotations';
+import { writeCmt } from './comments';
 
 export const META = 'meta';
 
@@ -74,6 +75,8 @@ export function compactDocument(document: Document, epoch: string, peer: PeerId)
       }
     }
   }
+  // 댓글 키 (14 §3): 그대로
+  for (const [k, v] of document.commentKeys()) writeCmt(loro, k, v);
   loro.commit();
   return loro;
 }

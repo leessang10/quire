@@ -30,6 +30,8 @@ export type LocalChange = (
   | { kind: 'sel'; anchor: number; head: number }
   /** 주석 키 (14 §2.2, 위치 없음) */
   | { kind: 'annKey'; id: string; key: 'type' | 'story' | 'data'; value: unknown }
+  /** 댓글 키 (14 §3, value null = 지움) */
+  | { kind: 'cmt'; key: string; value: unknown }
   /** 주석 범위: 첫 글자·마지막 글자의 UTF-16 (그 스토리 텍스트, story) */
   | { kind: 'annRange'; id: string; start: number | null; last: number | null }
 ) & { story?: string };
@@ -156,7 +158,7 @@ function pair(a: LocalChange, b: RemoteOp): [LocalChange[], RemoteOp[]] {
 
 function pairSame(a: LocalChange, b: RemoteOp): [LocalChange[], RemoteOp[]] {
   if (a.kind === 'sel') return [[{ kind: 'sel', anchor: mapPos(a.anchor, b), head: mapPos(a.head, b) }], [b]];
-  if (a.kind === 'annKey') return [[a], [b]];
+  if (a.kind === 'annKey' || a.kind === 'cmt') return [[a], [b]];
   if (a.kind === 'annRange') {
     // 글자 위치: 앞(같은 자리 포함)에 들어온 삽입만큼 밀리고, 지워졌으면 그 글자가 있던 자리
     const ch = (p: number | null) => {

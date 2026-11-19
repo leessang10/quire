@@ -11,7 +11,7 @@
  * - 새 판 (09 §9): Worker가 hold를 보내면 보낸 묶음이 끝난 뒤 held로 답하고 그 뒤로는 보내지 않는다. 그때의 화면 텍스트를
  *   기억해 두었다가 reset을 받으면 새 Doc을 만들고, held 뒤에 한 로컬 변경(텍스트 차이)을 새 Doc에 다시 적용한다.
  */
-import { Doc, Document, type AnnotationChange, type Position, type RawChange, type SegState, type TableChange, type TableRecord } from '@quire/model';
+import { Doc, Document, type AnnotationChange, type CommentChange, type Position, type RawChange, type SegState, type TableChange, type TableRecord } from '@quire/model';
 import { annFromWire, annRangeToU16, type AnnWire } from './annotations';
 import { applyHunks, diffText, rebaseHunks } from './epoch';
 import { mapPosThrough, opToDelta, transform, type LocalChange } from './ot';
@@ -40,6 +40,7 @@ const isTail = (c: LocalChange) => c.kind === 'tail';
 /** 표 레코드 변경 (Worker의 표 레코드는 통째로 오므로 미룬다) */
 const tableOf = (c: LocalChange) => (c.kind === 'tableList' || c.kind === 'tableMap' ? c.table : null);
 const annOf = (c: LocalChange) => (c.kind === 'annKey' || c.kind === 'annRange' ? c.id : null);
+const cmtOf = (c: LocalChange) => (c.kind === 'cmt' ? c.key : null);
 
 export class SyncClient {
   private current: Doc;
@@ -50,6 +51,7 @@ export class SyncClient {
   private deferredTails = new Map<string, Record<string, unknown>>();
   private deferredTables = new Map<string, TableRecord>();
   private deferredAnns = new Map<string, AnnWire | null>();
+  private deferredCmts = new Map<string, unknown>();
   private readonly opts: ClientOptions;
   /** 받은 H 항목 수 */
   private rev = 0;
@@ -95,6 +97,7 @@ export class SyncClient {
     stories?: Record<string, StoryInit>;
     tables?: Record<string, TableRecord>;
     anns?: Record<string, AnnWire | null>;
+    cmts?: Record<string, unknown>;
   }): Doc {
     const doc = Doc.fromRaw(init.raw, init.keys, init.state, init.peer);
     applyFormats(doc, init.formats);
@@ -116,8 +119,10 @@ export class SyncClient {
     document.takeDirtyTables();
     // 주석 (14 §2.2): Worker가 푼 범위
     for (const [id, w] of Object.entries(init.anns ?? {})) if (w) document.applyRemoteAnnotation(id, annFromWire(document, id, w));
-    document.observe((story: string | null, c: RawChange | TableChange | AnnotationChange) => {
-      if (c.kind === 'annKey') this.buffer.push({ kind: 'annKey', id: c.id, key: c.key, value: c.value });
+    for (const [k, v] of Object.entries(init.cmts ?? {})) document.applyRemoteComment(k, v);
+    document.observe((story: string | null, c: RawChange | TableChange | AnnotationChange | CommentChange) => {
+      if (c.kind === 'cmt') this.buffer.push({ kind: 'cmt', key: c.key, value: c.value === undefined ? null : c.value });
+      else if (c.kind === 'annKey') this.buffer.push({ kind: 'annKey', id: c.id, key: c.key, value: c.value });
       else if (c.kind === 'annRange') {
         const u = annRangeToU16(document, c);
         this.buffer.push({ kind: 'annRange', id: c.id, start: u.start, last: u.last, ...(c.story !== null ? { story: c.story } : {}) });
@@ -154,6 +159,7 @@ export class SyncClient {
         this.takeTables(msg.tables ?? {});
         this.takeAnns(msg.anns ?? {});
         if (msg.annsResync) this.resyncAnns(msg.annsResync);
+        this.takeCmts(msg.cmts ?? {});
         this.send();
         break;
       case 'remote': {
@@ -168,6 +174,7 @@ export class SyncClient {
         if (msg.tables) this.takeTables(msg.tables);
         if (msg.anns) this.takeAnns(msg.anns);
         if (msg.annsResync) this.resyncAnns(msg.annsResync);
+        if (msg.cmts) this.takeCmts(msg.cmts);
         this.opts.onRemoteChange?.();
         break;
       }
@@ -242,6 +249,7 @@ export class SyncClient {
     this.deferredTails.clear();
     this.deferredTables.clear();
     this.deferredAnns.clear();
+    this.deferredCmts.clear();
     this.remotePos.clear();
     this.cache = null;
     this.presenceVersion++;
@@ -309,6 +317,21 @@ export class SyncClient {
       }
       this.deferredTables.delete(id);
       this.currentDocument.applyRemoteTable(t);
+    }
+  }
+
+  /** Worker의 댓글 키 (14 §3): 그 키의 로컬 변경이 아직 가는 중이면 미룬다 */
+  private takeCmts(cmts: Record<string, unknown>): void {
+    const pendingList = [...(this.outstanding ?? []), ...this.buffer];
+    const keys = new Set([...Object.keys(cmts), ...this.deferredCmts.keys()]);
+    for (const k of keys) {
+      const v = k in cmts ? cmts[k] : this.deferredCmts.get(k);
+      if (pendingList.some((c) => cmtOf(c) === k)) {
+        this.deferredCmts.set(k, v);
+        continue;
+      }
+      this.deferredCmts.delete(k);
+      this.currentDocument.applyRemoteComment(k, v);
     }
   }
 

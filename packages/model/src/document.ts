@@ -7,6 +7,7 @@
  */
 import { Doc, OBJ, type ElementId, type ObjAttrs, type Op, type Position, type RawChange, type SegState } from './doc';
 import type { Annotation, AnnotationChange, AnnotationRange } from './annotations';
+import { threadsFromKeys, type CommentAuthor, type CommentChange, type CommentThread } from './comments';
 import {
   DEFAULT_COL_WIDTH,
   cellKey,
@@ -23,7 +24,7 @@ export type StoryId = string;
 const EMPTY_STATE: SegState = { order: [], hidden: [], placeholder: [], used: [] };
 
 /** 문서 변경 기록: 스토리의 원소 열 변경 (story = null이면 본문) 또는 표 레코드 변경 */
-export type DocumentListener = (story: StoryId | null, c: RawChange | TableChange | AnnotationChange) => void;
+export type DocumentListener = (story: StoryId | null, c: RawChange | TableChange | AnnotationChange | CommentChange) => void;
 
 export class Document {
   private readonly map = new Map<StoryId, Doc>();
@@ -33,6 +34,13 @@ export class Document {
   /** 주석이 바뀔 때마다 (범위 목록 캐시) */
   private annVersion = 0;
   private annCache: { key: string; list: AnnotationRange[] } | null = null;
+  /** 댓글 키 표 (14 §3) */
+  private readonly cmtMap = new Map<string, unknown>();
+  private cmtCache: CommentThread[] | null = null;
+  private cmtIndex: Map<string, CommentThread> | null = null;
+  private cmtIndexOf: readonly CommentThread[] | null = null;
+  /** 댓글이 바뀔 때마다 (창 다시 그리기) */
+  commentVersion = 0;
   private listener: DocumentListener | null = null;
   /** 표 레코드가 바뀐 표 (편집기가 그 표 문단을 다시 조판한다) */
   private dirtyTables = new Set<string>();
@@ -162,12 +170,100 @@ export class Document {
   apply(op: Op): void {
     if (op.type === 'story') {
       // 스토리 Doc의 삭제가 돌려준 주석 연산은 Document 것이다
-      if (op.op.type === 'annotation') this.apply(op.op);
+      if (op.op.type === 'annotation' || op.op.type === 'comment') this.apply(op.op);
       else this.story(op.story).apply(op.op);
     }
     else if (op.type === 'tableMap') this.writeTableMap(op.table, op.map, op.key, op.after);
     else if (op.type === 'annotation') this.writeAnnotation(op.id, op.after, true);
+    else if (op.type === 'comment') this.writeComment(op.key, op.after, true);
     else this.body.apply(op);
+  }
+
+  // ── 댓글 (14 §3) ─────────────────────────────────────
+
+  /** 댓글 키 하나 쓰기 (실행 취소 연산). value undefined = 지움 */
+  setComment(key: string, value: unknown): Op[] {
+    const before = this.cmtMap.get(key);
+    if (before === value || (before !== undefined && value !== undefined && JSON.stringify(before) === JSON.stringify(value))) return [];
+    this.writeComment(key, value, true);
+    return [{ type: 'comment', key, before, after: value }];
+  }
+
+  private writeComment(key: string, value: unknown, local: boolean): void {
+    if (value === undefined) this.cmtMap.delete(key);
+    else this.cmtMap.set(key, value);
+    this.cmtCache = null;
+    this.commentVersion++;
+    if (local) this.listener?.(null, { kind: 'cmt', key, value });
+  }
+
+  /** 원격 댓글 키 (기록 없음, 알리지 않음). null·undefined = 지움 */
+  applyRemoteComment(key: string, value: unknown): void {
+    const v = value === null ? undefined : value;
+    const cur = this.cmtMap.get(key);
+    if (cur === v || (cur !== undefined && v !== undefined && JSON.stringify(cur) === JSON.stringify(v))) return;
+    this.writeComment(key, v, false);
+  }
+
+  commentValue(key: string): unknown {
+    return this.cmtMap.get(key);
+  }
+
+  /** 모든 댓글 키 (정본·새 판) */
+  commentKeys(): ReadonlyMap<string, unknown> {
+    return this.cmtMap;
+  }
+
+  /** 스레드들 (ID 순, 지운 것 포함). 키가 바뀔 때까지 캐시 */
+  threads(): readonly CommentThread[] {
+    return (this.cmtCache ??= threadsFromKeys(this.cmtMap));
+  }
+
+  thread(id: string): CommentThread | undefined {
+    if (!this.cmtIndex || this.cmtIndexOf !== this.threads()) {
+      this.cmtIndexOf = this.threads();
+      this.cmtIndex = new Map(this.cmtIndexOf.map((t) => [t.id, t]));
+    }
+    return this.cmtIndex.get(id);
+  }
+
+  /** 새 스레드: 범위에 댓글 주석을 걸고 첫 메시지를 쓴다 (실행 취소 연산) */
+  addThread(a: { thread: string; annotation: string; story: StoryId | null; from: number; to: number; message: string; author: CommentAuthor; text: string; time: number }): Op[] {
+    const ops = this.annotate({ id: a.annotation, type: 'comment', story: a.story, from: a.from, to: a.to, data: { thread: a.thread } });
+    ops.push(...this.setComment(`${a.thread}|anchor`, a.annotation));
+    ops.push(...this.addMessage(a.thread, { id: a.message, author: a.author, time: a.time, text: a.text }));
+    return ops;
+  }
+
+  /** 메시지 넣기 (답글) */
+  addMessage(thread: string, m: { id: string; author: CommentAuthor; time: number; text: string }): Op[] {
+    const p = `${thread}|m|${m.id}|`;
+    return [...this.setComment(p + 'author', m.author), ...this.setComment(p + 'time', m.time), ...this.setComment(p + 'text', m.text)];
+  }
+
+  /** 메시지 고치기 */
+  editMessage(thread: string, message: string, text: string, time: number): Op[] {
+    const p = `${thread}|m|${message}|`;
+    return [...this.setComment(p + 'text', text), ...this.setComment(p + 'edited', time)];
+  }
+
+  /** 메시지 지우기 (표시만: 차례·이력을 지킨다) */
+  deleteMessage(thread: string, message: string): Op[] {
+    return this.setComment(`${thread}|m|${message}|deleted`, true);
+  }
+
+  /** 해결 / 다시 열기 */
+  resolveThread(thread: string, on: boolean): Op[] {
+    return this.setComment(`${thread}|resolved`, on ? true : undefined);
+  }
+
+  /** 스레드 지우기: 댓글 주석을 지우고 스레드는 지운 표시만 한다 */
+  deleteThread(thread: string): Op[] {
+    const t = this.thread(thread);
+    const ops: Op[] = [];
+    if (t?.anchor) ops.push(...this.unannotate(t.anchor));
+    ops.push(...this.setComment(`${thread}|deleted`, true));
+    return ops;
   }
 
   // ── 주석 (14 §2) ─────────────────────────────────────

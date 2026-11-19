@@ -63,6 +63,8 @@ export function invertOp(op: Op): Op {
       return { ...op, before: op.after, after: op.before };
     case 'annotation':
       return { type: 'annotation', id: op.id, before: op.after, after: op.before };
+    case 'comment':
+      return { type: 'comment', key: op.key, before: op.after, after: op.before };
   }
 }
 

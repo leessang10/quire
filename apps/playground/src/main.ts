@@ -1,4 +1,5 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
+import { CommentsPane } from './comments-pane';
 import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
@@ -329,6 +330,7 @@ const fonts =
           { name: 'Pretendard', manifest: '/fonts/pretendard/manifest.json', bold: { manifest: '/fonts/pretendard-bold/manifest.json' } },
           { name: 'Noto Sans KR', manifest: '/fonts/noto-sans-kr/manifest.json' },
         ];
+let pane: CommentsPane | null = null;
 const editor = new Editor({
   host,
   text: SAMPLE,
@@ -336,6 +338,7 @@ const editor = new Editor({
   onChange: () => {
     showStats();
     showMarks();
+    pane?.update();
     const t = (document.querySelector('.tbl-tools') as HTMLElement | null);
     const ts = editor?.tableState();
     if (t) t.hidden = !ts?.inTable;
@@ -471,6 +474,9 @@ document.getElementById('col-break')!.addEventListener('click', () => {
   editor.insertColumnBreak();
   editor.focus();
 });
+
+// 댓글 창 (4-2)
+pane = new CommentsPane(document.getElementById('comments')!, editor);
 
 // 주석 레이어 (4-1)
 document.getElementById('ann-add')!.addEventListener('click', () => {

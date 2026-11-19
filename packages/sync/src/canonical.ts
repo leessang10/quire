@@ -30,6 +30,9 @@ import {
   type SectionProps,
   type Style,
   type TableRecord,
+  type CommentMessage,
+  type CommentThread,
+  keysOfThread,
 } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
 import { readRaw, readState } from './shape';
@@ -69,6 +72,8 @@ export interface QuireDoc {
   sections: Array<Record<string, unknown>>;
   stories: { body: Array<QuireParagraph | QuireTable> } & Record<string, unknown>;
   annotations: unknown[];
+  /** 댓글 스레드 (14 §3). 없으면 빈 것 */
+  threads?: unknown[];
 }
 
 export const SCHEMA_VERSION = 1;
@@ -258,6 +263,9 @@ export function quireFromDocument(document: Document): QuireDoc {
     anns.push(e);
   }
   q.annotations = anns;
+  // 댓글 스레드 (14 §3): 메시지는 시각 순
+  const threads = document.threads();
+  if (threads.length) q.threads = threads.map((t) => structuredClone(t));
   return q;
 }
 
@@ -327,6 +335,16 @@ export function documentFromQuire(q: QuireDoc, peer?: string): { document: Docum
       const to = Math.max(from, Math.min(d.maxCaret, e.end.offset));
       document.applyRemoteAnnotation(e.id, { ...base, ...document.rangePositions(story, from, to) });
     } else document.applyRemoteAnnotation(e.id, { ...base, start: null, end: null });
+  }
+  // 댓글 스레드 (14 §3)
+  for (const raw of Array.isArray(q.threads) ? q.threads : []) {
+    const t = raw as Partial<CommentThread>;
+    if (typeof t.id !== 'string' || t.id.includes('|')) continue;
+    const messages = (Array.isArray(t.messages) ? t.messages : []).filter(
+      (m): m is CommentMessage => !!m && typeof m.id === 'string' && !m.id.includes('|') && typeof m.time === 'number' && !!m.author,
+    );
+    const thread: CommentThread = { id: t.id, anchor: typeof t.anchor === 'string' ? t.anchor : null, resolved: t.resolved === true, deleted: t.deleted === true, messages };
+    for (const [k, v] of keysOfThread(thread)) document.applyRemoteComment(k, structuredClone(v));
   }
   return { document, notes };
 }

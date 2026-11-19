@@ -10,6 +10,8 @@ export type { Op, Selection, Transaction } from './history';
 export { Document } from './document';
 export { newAnnotationId } from './annotations';
 export type { Annotation, AnnotationChange, AnnotationKey, AnnotationRange } from './annotations';
+export { newThreadId, newMessageId, threadOfKey, threadsFromKeys, keysOfThread } from './comments';
+export type { CommentAuthor, CommentMessage, CommentThread, CommentChange } from './comments';
 export { isNoteStory, noteRefs, noteStoryId } from './notes';
 export type { NoteRefAt } from './notes';
 export type { StoryId } from './document';

@@ -118,6 +118,7 @@ function makePeer(k: number, client: WorkerClient) {
   const editor = new Editor({
     host,
     document: client.document,
+    user: { id: `peer${k}`, ...USERS[k]! },
     onChange: () => {
       showRemotes(k);
       status();
