@@ -1,7 +1,7 @@
 export { Editor } from './editor';
 export { HttpAssets, MemoryAssets, assetId } from './assets';
 export type { AssetStore } from './assets';
-export type { EditorOptions, EditorStats, FontSource, HeaderFooterInfo, RemoteCaret, SuggestionView, ThreadView, ViewMode } from './editor';
+export type { EditorOptions, EditorStats, FindStatus, FontSource, HeaderFooterInfo, RemoteCaret, SuggestionView, ThreadView, ViewMode } from './editor';
 export { TextareaInput } from './input';
 export type { InputBackend, InputIntent, InputLogEntry, InputMode } from './input';
 export { EditContextInput, editContextSupported } from './edit-context';

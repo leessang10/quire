@@ -42,6 +42,12 @@ import {
   type SectionProps,
   type SectionStart,
   type Style,
+  FindCache,
+  compileFind,
+  findInDocument,
+  replaceMatches,
+  type FindMatch,
+  type FindQuery,
 } from '@quire/model';
 import {
   LayoutCache,
@@ -68,6 +74,14 @@ import { dateText, layoutHF, pageHF } from './headers';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 
+/** 찾기 상태 (15 §3.1): 결과 수, 지금 결과 번호(-1이면 없음), 상한에 닿았나, 틀린 조건 */
+export interface FindStatus {
+  count: number;
+  current: number;
+  truncated: boolean;
+  error?: string;
+}
+
 export interface EditorOptions {
   host: HTMLElement;
   text?: string;
@@ -93,6 +107,8 @@ export interface EditorOptions {
   onChange?: (editor: Editor) => void;
   /** 선택 영역(캐럿)이 바뀌었을 때 (프레즌스 전송용). 그 스토리의 화면 오프셋, story = 셀·머리말·각주 (14 §7), page = 머리말의 쪽 */
   onSelectionChange?: (anchor: number, head: number, story?: string, page?: number) => void;
+  /** Ctrl+F(replace = false)·Ctrl+H(true): 앱이 찾기 막대를 연다 (15 §3.1). 없으면 브라우저 기본 동작 */
+  onFindRequest?: (replace: boolean) => void;
   /** 이미지 원본 저장소 (11 §2.2). 없으면 메모리 */
   assets?: AssetStore;
   /** 댓글 작성자 (14 §3.1: 4단계는 접속할 때의 사용자 정보). 없으면 "나" */
@@ -205,6 +221,9 @@ const COLORS = {
   desk: '#e9e9ec',
   /** 단 구분선 */
   columnRule: '#9a9aa2',
+  /** 찾기 결과 (15 §3.2): 모두, 지금 것 */
+  find: 'rgba(255, 214, 0, 0.45)',
+  findCurrent: 'rgba(255, 140, 0, 0.6)',
   /** 주석 범위 (14 §2.4): 댓글, 그 밖, 고른 것 */
   annComment: 'rgba(255, 196, 0, 0.28)',
   annOther: 'rgba(80, 150, 255, 0.2)',
@@ -387,6 +406,18 @@ export class Editor {
   private note: ActiveNote | null = null;
   /** 진하게 칠할 주석 */
   private focusAnn: string | null = null;
+  /** 찾기 상태 (15 §3): 결과는 글자 판(contentKey)이 바뀌면 다시 구한다 */
+  private findState: {
+    query: FindQuery;
+    cache: FindCache;
+    regex: RegExp | null;
+    key: string;
+    document: Document;
+    matches: FindMatch[];
+    byStory: Map<string, FindMatch[]>;
+    truncated: boolean;
+    current: number;
+  } | null = null;
   /** 지금 그리는 머리말·꼬리말의 필드 값 */
   private drawFields: FieldValues | null = null;
   /** 다음 붙여넣기는 글자만 (Ctrl+Shift+V) */
@@ -717,6 +748,12 @@ export class Editor {
   }
 
   // ── 공개 API ──────────────────────────────────────────
+
+  /** 선택한 글 (편집 중인 스토리, 개체 글자는 U+FFFC) */
+  selectedText(): string {
+    const [a, b] = this.range();
+    return this.doc.slice(a, b);
+  }
 
   focus(): void {
     this.input.focus();
@@ -1053,6 +1090,8 @@ export class Editor {
     // 해결한 댓글 스레드의 범위는 칠하지 않는다 (14 §3.2)
     const anns = storyId === undefined ? [] : this.document.annotationRanges().filter((a) => (a.story ?? null) === storyId && !a.orphan && a.to > a.from && !this.hiddenAnn(a));
     const sugg = anns.filter((a) => a.type === 'suggestion');
+    // 찾기 결과 (15 §3.2)
+    const finds = storyId === undefined ? null : this.findMatchesIn(storyId);
     // 화면 영역이 아직 배치되지 않았으면 시간 예산 안에서만 배치한다 (스크롤바로 멀리 이동한 경우 등).
     // 못 끝낸 부분은 자리표시로 그리고 다음 프레임에 이어서 한다.
     const ready = isBody ? layout.ensureThroughY(top + h, RENDER_LAYOUT_BUDGET_MS) : true;
@@ -1106,6 +1145,7 @@ export class Editor {
       if (para.layout.fmt) this.drawHighlights(para.layout, ln, px, baseY, sty);
       // 주석 범위 칠 (겹치면 진해진다)
       if (anns.length) this.drawAnnotations(anns, para, ln, X, y);
+      if (finds) this.drawFindMatches(finds, para, ln, X, y);
 
       // 선택 영역
       for (const [selFrom, selTo] of ranges) {
@@ -1343,6 +1383,32 @@ export class Editor {
         if (a.data.kind !== 'insert' && a.id !== this.focusAnn) continue;
         ctx.fillStyle = a.id === this.focusAnn ? COLORS.annFocus : withAlpha(suggestionColor(a), 0.1);
       } else ctx.fillStyle = a.id === this.focusAnn ? COLORS.annFocus : a.type === 'comment' ? COLORS.annComment : COLORS.annOther;
+      ctx.fillRect(sx, y, ex - sx, ln.height);
+    }
+  }
+
+  /** 줄에 걸친 찾기 결과를 칠한다 (15 §3.2). 결과는 시작 순이라 이분 탐색으로 줄 앞까지 건너뛴다 */
+  private drawFindMatches(list: { matches: FindMatch[]; current: FindMatch | null }, para: PlacedPara, ln: PlacedLine, X: (d: number) => number, y: number): void {
+    const { ctx } = this;
+    const ms = list.matches;
+    const lineFrom = displayToDoc(para, ln.start);
+    const lineEnd = displayToDoc(para, ln.end);
+    let lo = 0;
+    let hi = ms.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (ms[mid]!.to <= lineFrom) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = lo; i < ms.length; i++) {
+      const m = ms[i]!;
+      if (m.from >= lineEnd) break;
+      const sd = Math.max(ln.start, docToDisplay(para, Math.max(m.from, lineFrom)));
+      const ed = Math.min(ln.end, docToDisplay(para, Math.min(m.to, lineEnd)));
+      const sx = X(sd);
+      const ex = X(ed);
+      if (ex <= sx) continue;
+      ctx.fillStyle = m === list.current ? COLORS.findCurrent : COLORS.find;
       ctx.fillRect(sx, y, ex - sx, ln.height);
     }
   }
@@ -1593,6 +1659,225 @@ export class Editor {
     this.scrollCaretIntoView();
     this.render();
     this.opts.onChange?.(this);
+  }
+
+  // ── 찾기·바꾸기 (15 §3) ───────────────────────────────
+
+  /**
+   * 모두 찾고 캐럿 뒤 첫 결과를 지금 결과로 고른다 (선택하지는 않는다: 찾기 막대에서 Enter로 간다).
+   * 조건이 틀리면(빈 글자, 틀린 정규식) 결과 없이 error.
+   */
+  find(query: FindQuery): FindStatus {
+    const c = compileFind(query);
+    if ('error' in c) {
+      this.findState = null;
+      this.render();
+      return { count: 0, current: -1, truncated: false, error: c.error };
+    }
+    this.findState = {
+      query,
+      cache: new FindCache(c.matcher),
+      regex: query.regex ? c.regex : null,
+      key: '',
+      document: this.document,
+      matches: [],
+      byStory: new Map(),
+      truncated: false,
+      current: -1,
+    };
+    this.refreshFind();
+    const s = this.findState!;
+    s.current = this.matchAfterCaret();
+    this.render();
+    return this.findStatus()!;
+  }
+
+  /** 찾기 상태 (찾는 중이 아니면 null) */
+  findStatus(): FindStatus | null {
+    const s = this.findState;
+    if (!s) return null;
+    this.refreshFind();
+    return { count: s.matches.length, current: s.current, truncated: s.truncated };
+  }
+
+  /** 다음(dir = 1)·앞(-1) 결과로 가서 선택한다 (끝에서 처음으로 돈다) */
+  findNext(dir: 1 | -1 = 1): FindStatus | null {
+    const s = this.findState;
+    if (!s) return null;
+    this.refreshFind();
+    const n = s.matches.length;
+    if (!n) return this.findStatus();
+    const cur = s.matches[s.current];
+    // 지금 결과가 선택돼 있으면 그다음, 아니면 캐럿에서 가까운 것
+    const selected = cur && this.isSelected(cur);
+    if (selected || s.current < 0) s.current = selected ? (s.current + dir + n) % n : dir > 0 ? Math.max(0, this.matchAfterCaret()) : (this.matchAfterCaret() - 1 + n) % n;
+    this.goToMatch(s.matches[s.current]!);
+    return this.findStatus();
+  }
+
+  /** 찾기를 끝낸다 (칠한 것을 지운다) */
+  clearFind(): void {
+    if (!this.findState) return;
+    this.findState = null;
+    this.render();
+  }
+
+  /**
+   * 지금 결과를 바꾸고 다음 결과로 간다. 지금 결과가 선택돼 있지 않으면 거기로 가기만 한다 (Word와 같다).
+   * 바꿨으면 true
+   */
+  replace(text: string): boolean {
+    const s = this.findState;
+    if (!s || !this.canEditText) return false;
+    this.refreshFind();
+    const m = s.matches[s.current];
+    if (!m || !this.isSelected(m)) {
+      this.findNext(1);
+      return false;
+    }
+    const before: Selection = { ...this.sel };
+    const { ops, count } = replaceMatches(this.document, [m], s.cache.matcher, s.regex, text);
+    if (!count) {
+      this.findNext(1);
+      return false;
+    }
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.history.seal();
+    this.refreshFind();
+    // 바꾼 자리 뒤 첫 결과
+    const at = s.matches.findIndex((x) => this.matchOrder(x, m) > 0 || (x.story === m.story && x.from >= m.from + Array.from(text).length));
+    s.current = at;
+    if (at >= 0) this.goToMatch(s.matches[at]!);
+    else this.render();
+    return true;
+  }
+
+  /** 모든 결과를 바꾼다: 한 트랜잭션 (실행 취소 한 번). 바꾼 수 */
+  replaceAll(text: string): number {
+    const s = this.findState;
+    if (!s || !this.canEditText) return 0;
+    this.input.commitComposition();
+    this.refreshFind();
+    if (!s.matches.length) return 0;
+    const before: Selection = { ...this.sel };
+    const { ops, count } = replaceMatches(this.document, s.matches, s.cache.matcher, s.regex, text);
+    if (!count) return 0;
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.history.seal();
+    this.refreshFind();
+    s.current = -1;
+    this.render();
+    return count;
+  }
+
+  /** 본문 글자를 바꿀 수 있는가 (읽기 전용 보기·보기·댓글 역할이면 아니다) */
+  private get canEditText(): boolean {
+    return this.role === 'edit' && !this.readOnly;
+  }
+
+  /** 글자 판이 바뀌었으면 결과를 다시 구한다 (바뀌지 않은 문단은 캐시). 지금 결과는 같은 자리에 가까운 것으로 */
+  private refreshFind(): void {
+    const s = this.findState;
+    if (!s) return;
+    const key = this.document.contentKey();
+    if (s.key === key && s.document === this.document) return;
+    const cur = s.matches[s.current];
+    const r = findInDocument(this.document, s.cache, { stories: s.query.stories });
+    s.key = key;
+    s.document = this.document;
+    s.matches = r.matches;
+    s.truncated = r.truncated;
+    s.byStory = new Map();
+    for (const m of r.matches) {
+      const k = m.story ?? '';
+      let l = s.byStory.get(k);
+      if (!l) s.byStory.set(k, (l = []));
+      l.push(m);
+    }
+    if (cur) {
+      const i = r.matches.findIndex((m) => this.matchOrder(m, cur) >= 0);
+      s.current = i;
+    } else if (s.current >= r.matches.length) s.current = -1;
+  }
+
+  /** 한 스토리의 결과들 (그리기용, 시작 순)과 지금 결과 */
+  private findMatchesIn(story: string | null): { matches: FindMatch[]; current: FindMatch | null } | null {
+    const s = this.findState;
+    if (!s) return null;
+    this.refreshFind();
+    const matches = s.byStory.get(story ?? '');
+    if (!matches) return null;
+    return { matches, current: s.matches[s.current] ?? null };
+  }
+
+  /** 문서 순서 비교 (같은 스토리 안에서만 오프셋으로, 다른 스토리면 결과 목록 순) */
+  private matchOrder(a: FindMatch, b: FindMatch): number {
+    if (a.story === b.story) return a.from - b.from;
+    const ms = this.findState!.matches;
+    return ms.indexOf(a) - ms.indexOf(b);
+  }
+
+  /** 캐럿 자리(편집 중인 스토리) 뒤 첫 결과의 번호 (없으면 다음 스토리의 첫 결과, 그것도 없으면 0, 결과가 없으면 -1) */
+  private matchAfterCaret(): number {
+    const ms = this.findState!.matches;
+    if (!ms.length) return -1;
+    const story = this.storyId;
+    const at = this.range()[0];
+    const first = ms.findIndex((m) => m.story === story);
+    if (first < 0) return 0;
+    for (let i = first; i < ms.length && ms[i]!.story === story; i++) if (ms[i]!.from >= at) return i;
+    // 같은 스토리 안에 캐럿 뒤 결과가 없다: 그 스토리의 결과 다음 것
+    let i = first;
+    while (i < ms.length && ms[i]!.story === story) i++;
+    return i < ms.length ? i : 0;
+  }
+
+  private isSelected(m: FindMatch): boolean {
+    if (this.storyId !== m.story) return false;
+    const [a, b] = this.range();
+    return a === m.from && b === m.to;
+  }
+
+  /** 결과로 간다: 그 스토리로 들어가(셀·각주·머리말) 범위를 고르고 보이게 스크롤 */
+  private goToMatch(m: FindMatch): void {
+    this.input.commitComposition();
+    const story = m.story;
+    if (story !== this.storyId) {
+      if (this.hf) this.leaveHF(true);
+      if (this.note) this.leaveNote(true);
+      if (this.cell) this.leaveCellKeep();
+      if (story !== null) {
+        if (isNoteStory(story)) this.enterNote(story.slice(3), null);
+        else if (isHFStory(story)) {
+          const page = this.pageOfHF(story);
+          if (page === null) return;
+          this.enterHF(page, story.startsWith('hdr|') ? 'header' : 'footer');
+        } else {
+          const [table, row, col] = story.split('|') as [string, string, string];
+          if (!this.enterCell(table, row, col)) return;
+        }
+      }
+      this.relayout();
+    }
+    this.setSelection(m.from, m.to);
+    // 결과는 화면 위 1/3쯤에 (가장자리에 붙으면 찾기 막대에 가린다)
+    const r = this.layout.caretRect(this.headOffset());
+    const sc = this.scroller;
+    if (r.y < sc.scrollTop + sc.clientHeight / 4 || r.y + r.height > sc.scrollTop + (sc.clientHeight * 3) / 4) sc.scrollTop = Math.max(0, r.y - sc.clientHeight / 3);
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 머리말·꼬리말 스토리를 쓰는 첫 쪽 (없으면 null) */
+  private pageOfHF(story: string): number | null {
+    const L = this.bodyLayout;
+    for (let p = 0; p < L.pageCount; p++) {
+      const info = pageHF(this.fmt, L, p, this.today);
+      if (info.header.story === story || info.footer.story === story) return p;
+    }
+    return null;
   }
 
   // ── 제안 모드 (14 §4) ─────────────────────────────────
@@ -4291,6 +4576,18 @@ export class Editor {
 
     if (e.altKey && shift && !mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       this.moveParagraphs(e.key === 'ArrowUp' ? -1 : 1);
+      e.preventDefault();
+      return;
+    }
+    // 찾기·바꾸기 (15 §3.1): Ctrl+F, Ctrl+H. 앱이 막대를 열지 않으면 브라우저 기본 동작
+    if (mod && !shift && !e.altKey && (e.code === 'KeyF' || e.code === 'KeyH') && this.opts.onFindRequest) {
+      this.input.commitComposition();
+      this.opts.onFindRequest(e.code === 'KeyH');
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'F3' && this.findState) {
+      this.findNext(shift ? -1 : 1);
       e.preventDefault();
       return;
     }

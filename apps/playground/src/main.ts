@@ -1,5 +1,6 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
 import { CommentsPane } from './comments-pane';
+import { FindBar } from './find-bar';
 import { documentFromQuire, quireFromDocument } from '@quire/sync';
 import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
 
@@ -332,6 +333,7 @@ const fonts =
           { name: 'Noto Sans KR', manifest: '/fonts/noto-sans-kr/manifest.json' },
         ];
 let pane: CommentsPane | null = null;
+let findBar: FindBar | null = null;
 const editor = new Editor({
   host,
   // 보기 모드 (14 §4.3): 최종본·원본은 정본 왕복으로 복제한 파생 문서
@@ -349,7 +351,10 @@ const editor = new Editor({
       b.setAttribute('aria-pressed', String(!!ts?.[b.dataset.tbl as 'header' | 'cantSplit'])),
     );
     showHeaderFooter();
+    findBar?.update();
   },
+  // 찾기 막대 (15 §3.1)
+  onFindRequest: (replace) => findBar?.open(replace),
   input: inputMode,
   fonts,
   onFontsReady: (_e, err) => {
@@ -359,6 +364,7 @@ const editor = new Editor({
 });
 editor.focus();
 showStats();
+findBar = new FindBar(() => editor, host);
 
 document.querySelectorAll<HTMLButtonElement>('[data-doc]').forEach((btn) => {
   btn.addEventListener('click', () => {

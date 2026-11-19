@@ -22,3 +22,5 @@ export type { CellAttrs, GridCell, RowAttrs, TableAttrs, TableChange, TableGrid,
 export type { DocumentListener } from './document';
 export { DEFAULT_HF_DISTANCE, DEFAULT_SECTION, LAST_SECTION, PAPER_SIZES, SECTION_KEYS, formatPageNumber, fullSection, hfKindOf, hfStoryId, isHFStory, resolveHF } from './sections';
 export type { HFKind, HFPart, SectionKey, SectionProps, SectionStart } from './sections';
+export { FindCache, compileFind, findInDocument, replaceMatches, replacementFor, storiesInOrder } from './find';
+export type { FindMatch, FindQuery, Matcher } from './find';
