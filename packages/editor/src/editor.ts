@@ -105,7 +105,7 @@ export interface EditorOptions {
 }
 
 /** 보기 모드 (14 §4.3): 제안 포함(편집) / 최종본(모두 수락) / 원본(모두 거부), 뒤 둘은 읽기 전용 */
-export type ViewMode = 'suggestions' | 'final' | 'original';
+export type ViewMode = 'suggestions' | 'final' | 'original' | 'preview';
 
 /** 제안 창에 놓을 제안 (14 §4.4): 범위, 화면 y, 요약 */
 export interface SuggestionView extends AnnotationRange {
@@ -801,7 +801,7 @@ export class Editor {
    */
   docChanged(): void {
     // 최종본·원본을 보는 중: 살아 있는 문서가 바뀌었으면 파생 문서를 다시 만든다 (잠시 모아서)
-    if (this.live && this.viewTimer === null) {
+    if (this.live && (this.mode === 'final' || this.mode === 'original') && this.viewTimer === null) {
       this.viewTimer = setTimeout(() => {
         this.viewTimer = null;
         if (this.live) this.showDerived();
@@ -1429,9 +1429,28 @@ export class Editor {
     return this.mode;
   }
 
+  /**
+   * 다른 문서를 읽기 전용으로 본다 (버전 보기, 14 §5.2: 최종본 보기와 같은 길). null이면 살아 있는 문서로 돌아간다.
+   * 보는 동안 살아 있는 문서는 그대로 편집·동기화된다 (보이지 않을 뿐)
+   */
+  previewDocument(document: Document | null): void {
+    if (document === null) {
+      this.setViewMode('suggestions');
+      return;
+    }
+    if (this.mode === 'suggestions') this.live = { document: this.document, history: this.history };
+    this.mode = 'preview';
+    if (this.viewTimer !== null) clearTimeout(this.viewTimer);
+    this.viewTimer = null;
+    this.readOnly = true;
+    this.setDocument(document);
+    this.opts.onChange?.(this);
+  }
+
   /** 보기 모드 바꾸기. 최종본·원본은 지금 문서를 복제해 모두 수락·거부한 파생 문서를 따로 조판한다 (읽기 전용) */
   setViewMode(mode: ViewMode): void {
     if (mode === this.mode) return;
+    if (mode === 'preview') throw new Error('setViewMode: use previewDocument');
     if (mode !== 'suggestions' && !this.opts.cloneDocument) throw new Error('setViewMode: cloneDocument option is required');
     if (this.mode === 'suggestions') this.live = { document: this.document, history: this.history };
     this.mode = mode;

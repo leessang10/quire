@@ -215,6 +215,19 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .live { flex: 1; min-height: 0; display: flex; }
 .live-editor { flex: 1; min-width: 0; min-height: 0; }
 .live-status { color: var(--muted); font-size: 13px; }
+/* 버전 기록 (14 §5) */
+.versions { width: 260px; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.vs-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px; }
+.vs-head h2 { font-size: 13px; margin: 0; color: var(--muted); font-weight: 600; }
+.vs-head button { padding: 2px 8px; font-size: 12px; }
+.vs-banner { margin: 0 12px 6px; padding: 4px 8px; font-size: 12px; background: #eef2ff; color: #3730a3; border-radius: 4px; }
+.vs-list { list-style: none; margin: 0; padding: 0 8px 8px; overflow: auto; flex: 1; min-height: 0; }
+.vs-list li button { display: grid; width: 100%; text-align: left; gap: 1px; padding: 6px 8px; border: 1px solid transparent; background: none; border-radius: 6px; font-size: 12.5px; }
+.vs-list li button:hover { background: #f4f4f6; }
+.vs-list li.is-on button { border-color: var(--accent); background: #eef4ff; }
+.vs-meta { color: var(--muted); font-size: 11px; }
+.vs-who { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 11.5px; }
+.vs-who i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
 .live-status[data-state='online'] { color: #1a7f37; }
 .live-status[data-state='offline'] { color: #b45309; }
 .live-note { margin: 0; padding: 6px 16px; font-size: 13px; background: #fff7ed; color: #9a3412; border-top: 1px solid #fed7aa; }
