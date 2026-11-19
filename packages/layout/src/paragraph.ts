@@ -111,6 +111,15 @@ export interface TableSpec {
   width: number;
   /** 행마다 높이 (1개 이상) */
   rows: readonly number[];
+  /** 행마다 (12 §8): 제목 행(표 맨 위에서 이어진 것만 반복), 행 나누지 않음, 여러 행 병합에 걸림(쪼개지 않는다) */
+  flags?: ReadonlyArray<{ header?: boolean; cantSplit?: boolean; merged?: boolean } | undefined>;
+  /**
+   * 행 쪼개기 (12 §8): 행 r의 셀 내용을 조각 내용 용량들(caps, 여백 뺀 높이)에 줄 단위로 흘렸을 때 조각마다 쓴 높이 (셀마다 가장
+   * 큰 것). 내용이 있는 셀의 첫 줄이 첫 조각에 들어가지 않으면 null (쪼개지 않고 다음 프레임으로)
+   */
+  split?: (row: number, caps: readonly number[]) => number[] | null;
+  /** 셀 안쪽 여백 (위·아래, px) */
+  pad?: number;
 }
 
 export interface Measurer {

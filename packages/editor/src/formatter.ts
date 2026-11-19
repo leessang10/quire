@@ -553,7 +553,23 @@ export class Formatter {
     const pre = this.cellPreedit && this.cellPreedit.story.startsWith(`${id}|`) ? this.cellPreedit : null;
     const measure = this.tables.measure(input, this.setup.lineHeight + CELL_PAD * 2, pre);
     this.tableViews.set(id, { id, grid, input, measure, at: document.body.positionAt(start) });
-    return { width: measure.width, rows: measure.rows };
+    // 행 속성 (12 §8): 제목 행, 행 나누지 않음, 여러 행 병합에 걸린 행 (쪼개지 않는다)
+    const merged = new Set<number>();
+    grid.cells.forEach((row, y) => row.forEach((c) => {
+      if (c && c.span[0] > 1) for (let k = y; k < y + c.span[0]; k++) merged.add(k);
+    }));
+    const flags = grid.rows.map((r, y) => {
+      const a = rec.rowAttrs[r];
+      return a?.header || a?.cantSplit || merged.has(y) ? { ...(a?.header ? { header: true } : {}), ...(a?.cantSplit ? { cantSplit: true } : {}), ...(merged.has(y) ? { merged: true } : {}) } : undefined;
+    });
+    const tables = this.tables;
+    return {
+      width: measure.width,
+      rows: measure.rows,
+      ...(flags.some(Boolean) ? { flags } : {}),
+      pad: CELL_PAD,
+      split: (row: number, caps: readonly number[]) => tables.splitRow(input, measure, row, caps),
+    };
   }
 }
 

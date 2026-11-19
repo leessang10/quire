@@ -200,6 +200,10 @@ export interface PlacedLine {
   adj: Float32Array | null;
   /** adj가 글자 사이에 나눠졌다 (공백 없는 줄): 그리기를 글자마다 나눠야 한다 */
   adjChars: boolean;
+  /** 표 문단의 줄 = 행 조각 (12 §8): 행 번호, 그 행의 몇 번째 조각, 다음 프레임 맨 위에 다시 그린 제목 행 */
+  row?: number;
+  part?: number;
+  repeat?: boolean;
 }
 
 /** 줄 안 표시 인덱스 d의 x (쪽 왼쪽 기준): 줄 시작 x + 셰이핑 위치 + 양쪽 맞춤 추가 폭 */
@@ -563,16 +567,7 @@ export class PlacedPara {
     const src = this.layout.lines;
     const tbl = this.layout.table;
     if (tbl) {
-      if (!first && y > 0) y += box ? box.before : setup.paraSpacing;
-      // 표: 행마다 (쪽은 행 사이에서만 나눈다)
-      for (const rh of tbl.rows) {
-        if (y + rh > H(page) - ns.fn && y > 0) {
-          page++;
-          y = 0;
-          ns = nextFrame(ns);
-        }
-        y += rh;
-      }
+      [page, y, ns] = this.tableFlow(page, y, ns, null);
       if (box && box.after > 0) y += box.after;
       this.exclSig = reg.sig(this, this.pageBefore, page);
       this.pageAfter = page;
@@ -874,27 +869,88 @@ export class PlacedPara {
     this._notes = null;
   }
 
-  /** 표 문단의 행 = 줄 (표시 인덱스는 모두 [0, 1): 표 원소 하나) */
+  /** 표 문단의 행 조각 = 줄 (표시 인덱스는 모두 [0, 1): 표 원소 하나) */
   private tableLines(): PlacedLine[] {
+    const out: PlacedLine[] = [];
+    this.tableFlow(this.p0, this.y0, this.ns0, out);
+    return out;
+  }
+
+  /**
+   * 표 행을 프레임에 흘린다 (12 §8, 배치와 줄 위치가 같은 흐름). 들어가면 통째로, 아니면:
+   * - 쪼갤 수 있는 행 (행 나누지 않음·제목 행·여러 행 병합이 아님): 셀 내용을 줄 단위로 조각들에 나눈다 (TableSpec.split).
+   *   첫 조각에 각 셀의 첫 줄이 들어가지 않으면 다음 프레임으로.
+   * - 행 나누지 않음: 다음 프레임으로. 빈 프레임보다 크면 쪼갠다 (넘치게 두지 않는다).
+   * - 표가 다음 프레임으로 이어지면 맨 위에 제목 행들(표 맨 위에서 이어진 header 행)을 다시 놓는다.
+   */
+  private tableFlow(page: number, y: number, ns: NoteState, out: PlacedLine[] | null): [number, number, NoteState] {
     const { setup, frames } = this.geo;
     const H = this.geo.h;
     const tbl = this.layout.table!;
     const box = this.layout.box;
-    let page = this.p0;
-    let y = this.y0;
+    const rows = tbl.rows;
+    const flags = tbl.flags;
+    const pad = tbl.pad ?? 0;
     if (!this.first && y > 0) y += box ? box.before : setup.paraSpacing;
-    return tbl.rows.map((rh, k) => {
-      if (y + rh > H(page) && y > 0) {
-        page++;
-        y = 0;
+    let nh = 0;
+    while (nh < rows.length - 1 && flags?.[nh]?.header) nh++;
+    let headerH = 0;
+    for (let k = 0; k < nh; k++) headerH += rows[k]!;
+    /** 이 프레임에 표 행이 (다시 그린 제목 행 말고) 아직 없다 */
+    let fresh = y === 0;
+    const push = (row: number, part: number, h: number, repeat = false) => {
+      if (out) {
+        const fr = frames.frame(page);
+        const free = Math.max(0, fr.width - (box?.left ?? 0) - (box?.right ?? 0) - tbl.width);
+        const x = fr.x + (box?.left ?? 0) + (box?.align === 'center' ? free / 2 : box?.align === 'right' ? free : 0);
+        const top = fr.top + y;
+        out.push({ index: out.length, start: 0, end: 1, page: fr.page, x, y: top, height: h, baseline: top + h, adj: null, adjChars: false, row, part, ...(repeat ? { repeat } : {}) });
       }
-      const fr = frames.frame(page);
-      const free = Math.max(0, fr.width - (box?.left ?? 0) - (box?.right ?? 0) - tbl.width);
-      const x = fr.x + (box?.left ?? 0) + (box?.align === 'center' ? free / 2 : box?.align === 'right' ? free : 0);
-      const top = fr.top + y;
-      y += rh;
-      return { index: k, start: 0, end: 1, page: fr.page, x, y: top, height: rh, baseline: top + rh, adj: null, adjChars: false };
-    });
+      y += h;
+    };
+    const nextFrame_ = (r: number) => {
+      page++;
+      y = 0;
+      ns = nextFrame(ns);
+      fresh = true;
+      // 제목 행 다시 놓기 (표가 이 프레임으로 이어진다: 제목 행 뒤의 행부터)
+      if (nh > 0 && r >= nh && headerH < H(page) / 2) for (let k = 0; k < nh; k++) push(k, 0, rows[k]!, true);
+    };
+    for (let r = 0; r < rows.length; r++) {
+      const rh = rows[r]!;
+      const avail = H(page) - ns.fn - y;
+      if (rh <= avail) {
+        push(r, 0, rh);
+        fresh = false;
+        continue;
+      }
+      const f = flags?.[r];
+      const repeatH = nh > 0 && r >= nh && headerH < H(page + 1) / 2 ? headerH : 0;
+      const empty = H(page + 1) - repeatH;
+      const canSplit = !!tbl.split && !f?.merged && r >= nh && (!f?.cantSplit || rh > empty);
+      if (canSplit) {
+        const caps = [avail - 2 * pad];
+        for (let j = 1; j < 64; j++) caps.push(H(page + j) - repeatH - 2 * pad);
+        const used = caps[0]! > 0 ? tbl.split!(r, caps) : null;
+        if (used && used.length > 1) {
+          used.forEach((u, j) => {
+            if (j > 0) nextFrame_(r + 1);
+            push(r, j, u + 2 * pad);
+          });
+          fresh = false;
+          continue;
+        }
+      }
+      if (!fresh) {
+        nextFrame_(r);
+        r--;
+        continue;
+      }
+      // 빈 프레임에도 들어가지 않고 쪼갤 수 없다: 넘친다
+      push(r, 0, rh);
+      fresh = false;
+    }
+    return [page, y, ns];
   }
 
   get lines(): PlacedLine[] {
@@ -1101,7 +1157,7 @@ function formatKey(f: ParaFormat): string {
     (f.objs && f.objs.size ? `|o${[...f.objs].map(([k, o]) => `${k}:${o.w}x${o.h}`).join(',')}` : '') +
     (f.floats && f.floats.size ? `|f${JSON.stringify([...f.floats])}` : '') +
     (f.notes && f.notes.size ? `|n${[...f.notes].map(([k, n]) => `${k}:${n.id}:${n.lines.join('/')}`).join(',')}` : '') +
-    (f.table ? `|t${f.table.width}:${f.table.rows.join(',')}` : '');
+    (f.table ? `|t${f.table.width}:${f.table.rows.join(',')}${f.table.flags ? `:${f.table.flags.map((g) => (g ? `${g.header ? 'h' : ''}${g.cantSplit ? 'c' : ''}${g.merged ? 'm' : ''}` : '')).join(',')}` : ''}` : '');
   return `${out}¶${f.mark}${bk}${f.key ? `|${f.key}` : ""}`;
 }
 

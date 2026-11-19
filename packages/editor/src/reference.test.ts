@@ -47,6 +47,8 @@ interface Summary {
   headers?: string[];
   /** 각주가 있는 문서: 쪽마다 각주 영역의 "번호[줄 from,to)" (+는 앞 쪽에서 이어 씀, 12 §6) */
   notes?: string[];
+  /** 행이 쪼개지거나 제목 행을 다시 그린 표가 있는 문서: 쪽마다 표 행 조각 ("h0"은 다시 그린 제목 행, "5.1"은 5행의 둘째 조각, 12 §8) */
+  tableRows?: string[];
 }
 
 function summarize(document: Document, { layout, fmt }: ReturnType<typeof compose>): Summary {
@@ -86,8 +88,8 @@ function summarize(document: Document, { layout, fmt }: ReturnType<typeof compos
           if (!c) continue;
           const cell = fmt.tables.cells.get(c.story);
           if (!cell) continue;
-          for (let q = 0; q < cell.layout.paras.length; q++)
-            for (const ln of cell.layout.para(q).lines) {
+          for (let q = 0; q < cell.view.paras.length; q++)
+            for (const ln of cell.view.para(q).lines) {
               mix(ln.start);
               mix(ln.end);
               mixF(ln.x);
@@ -107,6 +109,18 @@ function summarize(document: Document, { layout, fmt }: ReturnType<typeof compos
       return `${hf.kind}|${text(hf.header.story, hf)}|${text(hf.footer.story, hf)}`;
     });
   }
+  // 표 행 조각 (12 §8)
+  const rowsByPage: string[][] = Array.from({ length: layout.pageCount }, () => []);
+  let splitTables = false;
+  for (let i = 0; i < n; i++) {
+    const pp = layout.para(i);
+    if (!pp.layout.table) continue;
+    for (const ln of pp.lines) {
+      if (ln.repeat || (ln.part ?? 0) > 0) splitTables = true;
+      rowsByPage[ln.page]!.push(`${ln.repeat ? 'h' : ''}${ln.row}${ln.part ? `.${ln.part}` : ''}`);
+    }
+  }
+  if (splitTables) out.tableRows = rowsByPage.map((r) => r.join(' '));
   if (fmt.noteList().length)
     out.notes = Array.from({ length: layout.pageCount }, (_, p) =>
       layout
