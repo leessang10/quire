@@ -96,4 +96,6 @@ export type ToMain =
   /** 새 판의 문서. 메인은 Doc을 새로 만들고, held 뒤에 한 로컬 변경을 다시 적용한다. lost: 옛 판의 로컬 변경을 살리지 못함 */
   | { t: 'reset'; raw: string; keys: SegId[]; state: SegState; peer: string; formats: FormatState; stories?: Record<string, StoryInit>; tables?: Record<string, TableRecord>; anns?: Record<string, AnnWire | null>; cmts?: Record<string, unknown>; lost: boolean }
   /** 연결 상태 (WebSocket 모드) */
-  | { t: 'status'; online: boolean; detail?: string };
+  | { t: 'status'; online: boolean; detail?: string }
+  /** 서버가 알린 이 연결의 역할 (14 §6) */
+  | { t: 'role'; role: 'edit' | 'comment' | 'view' };

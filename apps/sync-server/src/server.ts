@@ -18,6 +18,7 @@
  *                                 만들기 = 1이면 방이 비어 있으니 이 클라이언트가 처음 내용을 만든다
  *                      3 UPDATE / 4 PRESENCE  다른 클라이언트의 것
  *                      5 GONE    [키 utf8] 연결이 끊긴 클라이언트
+ *                      7 ROLE    [역할 utf8] 이 연결의 역할 (edit/comment/view, 14 §6). SYNC 바로 뒤
  *                      6 REBASE  클라이언트의 판이 지났다 (ws.ts parseRebase):
  *                                 [다음 판][옛 판 마지막 VV][옛 판에서 클라이언트에 없는 업데이트][다음 판 처음 상태]
  *                                 클라이언트는 새 판으로 옮긴 뒤 HELLO를 다시 보낸다
@@ -33,6 +34,10 @@
  *                             새 변경으로 모든 클라이언트에 간다. 복원 직전 상태를 자동 버전으로 남긴다 (되돌리기)
  *   GET /<방>/history/<판>    그 판의 이력 전체 스냅샷 (비교 14 §5.3: 클라이언트가 두 버전의 frontiers로 diff, O-34). 첫 판은 '_'
  *
+ * 권한 (14 §6): 방에 access.json(토큰 → 역할)이 있으면 연결·HTTP의 ?token=으로 역할을 정한다 (모르는 토큰은 거부). 없으면
+ * 모두 편집이다. view의 업데이트는 모두, comment의 업데이트는 임시 포크에 넣어 바뀐 컨테이너가 댓글(comments 맵·댓글 주석)
+ * 밖이면 거부한다. 거부하면 그 연결에 서버 상태를 통째로 보내(모르는 판의 REBASE) 클라이언트가 로컬 변경을 버리게 한다.
+ *
  * 버전 (14 §5.1): 편집이 멈춘 뒤 versionIdleMs(기본 10분), 방이 빌 때, 새 판 압축 직전에 자동 버전을 남긴다 (앞 버전 뒤로
  * 바뀐 것이 있을 때만). 작성자는 그사이 버전 벡터가 늘어난 피어이고, 피어 → 사용자는 프레즌스(이름·색)에서 배운다.
  */
@@ -41,9 +46,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Duplex } from 'node:stream';
 import { LoroDoc, VersionVector } from 'loro-crdt';
 import { assetIdOf, assetIdsOf, canonicalJson, compactDocument, documentFromLoro, documentFromQuire, openQuire, packQuire, quireFromDocument, quireFromText, readEpoch, restoreInto, type QuireAsset } from '@quire/sync';
-import { fileStorage, memoryStorage, type PeerUser, type RoomStore, type Storage, type VersionRecord } from './store';
+import { fileStorage, memoryStorage, type PeerUser, type Role, type RoomStore, type Storage, type VersionRecord } from './store';
 
-export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6 } as const;
+export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6, ROLE: 7 } as const;
 
 interface Conn {
   socket: Duplex;
@@ -54,6 +59,8 @@ interface Conn {
   buf: Buffer;
   /** 조각난 메시지 */
   parts: Buffer[];
+  /** 역할 (14 §6) */
+  role: Role;
 }
 
 export interface Room {
@@ -111,6 +118,8 @@ export interface SyncServer {
   version(name: string, opts?: { name?: string; auto?: boolean; time?: number }): VersionRecord | null;
   /** 버전으로 복원 (없으면 false) */
   restore(name: string, id: string): boolean;
+  /** 시험·벤치용: 거부한 업데이트 수, 댓글 역할 검사에 쓴 시간(ms) 목록 */
+  stats: { denied: number; checkMs: number[] };
 }
 
 const randomEpoch = () => randomBytes(6).toString('hex');
@@ -131,6 +140,42 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
   const checkpointEvery = opts.checkpointEvery ?? 200;
   const versionIdleMs = opts.versionIdleMs === undefined ? 10 * 60 * 1000 : opts.versionIdleMs;
   const versionRetentionMs = opts.versionRetentionMs ?? 30 * 24 * 60 * 60 * 1000;
+  const stats = { denied: 0, checkMs: [] as number[] };
+
+  /** 토큰의 역할 (권한 설정이 없으면 edit, 모르는 토큰이면 null) */
+  const roleOf = (room: Room, token: string | null): Role | null => {
+    const access = room.store.access();
+    if (!access) return 'edit';
+    return token !== null && Object.hasOwn(access, token) ? access[token]! : null;
+  };
+  const tokenOf = (req: IncomingMessage): string | null => new URL(req.url ?? '/', 'http://x').searchParams.get('token');
+
+  /**
+   * 댓글 역할의 업데이트 검사 (14 §6): 임시 포크에 넣고 바뀐 컨테이너를 본다. comments 맵, 그리고 바꾸기 전·뒤 모두 댓글 종류인
+   * 주석의 키만 허용한다
+   */
+  function commentOnly(room: Room, update: Uint8Array): boolean {
+    const t0 = performance.now();
+    try {
+      return commentOnlyUpdate(room.doc, update);
+    } finally {
+      stats.checkMs.push(performance.now() - t0);
+    }
+  }
+
+  function allowed(conn: Conn, update: Uint8Array): boolean {
+    if (conn.role === 'edit') return true;
+    if (conn.role === 'view') return false;
+    return commentOnly(conn.room, update);
+  }
+
+  /** 거부: 그 연결에 서버 상태를 통째로 보낸다 (모르는 판의 REBASE: 클라이언트는 로컬 변경을 버리고 새로 맞춘다) */
+  function deny(conn: Conn, why: string): void {
+    stats.denied++;
+    log(`x ${conn.room.name}: ${conn.key} (${conn.role}) ${why} 거부`);
+    conn.ready = false;
+    sendRebase(conn, '\u0000denied', new Uint8Array(0));
+  }
   const maxAutoVersions = opts.maxAutoVersions ?? 500;
 
   const roomOf = (name: string): Room => {
@@ -307,6 +352,11 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
 
   function onVersions(req: IncomingMessage, res: ServerResponse, name: string, id: string | undefined, action?: string): void {
     const room = roomOf(name);
+    const role = roleOf(room, tokenOf(req));
+    if (!role || (req.method !== 'GET' && role !== 'edit')) {
+      reply(res, 403, 'forbidden');
+      return;
+    }
     if (action === 'restore') {
       if (req.method !== 'POST' || !id) reply(res, 405, 'method not allowed');
       else if (!restoreVersion(room, id)) reply(res, 404, 'no such version');
@@ -413,6 +463,11 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
   function onAsset(req: IncomingMessage, res: ServerResponse, name: string, id: string): void {
     const room = roomOf(name);
     const store = room.store;
+    const role = roleOf(room, tokenOf(req));
+    if (!role || (req.method === 'PUT' && role !== 'edit')) {
+      reply(res, 403, 'forbidden');
+      return;
+    }
     if (req.method === 'GET') {
       const a = store.getAsset(id);
       if (!a) reply(res, 404, 'no such asset');
@@ -473,6 +528,10 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     const hm = /^(.+)\/history\/([0-9a-f]+|_)$/.exec(path);
     if (hm && req.method === 'GET') {
       const room = roomOf(hm[1]!);
+      if (!roleOf(room, tokenOf(req))) {
+        reply(res, 403, 'forbidden');
+        return;
+      }
       const h = epochHistory(room, hm[2] === '_' ? '' : hm[2]!);
       if (!h) reply(res, 404, 'no such epoch');
       else reply(res, 200, h, 'application/octet-stream');
@@ -492,6 +551,10 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     const name = m[1]!;
     const ext = m[2]!;
     if (req.method === 'PUT' && ext === 'quire') {
+      if (roleOf(roomOf(name), tokenOf(req)) !== 'edit') {
+        reply(res, 403, 'forbidden');
+        return;
+      }
       const chunks: Buffer[] = [];
       req.on('data', (c: Buffer) => chunks.push(c));
       req.on('end', () => {
@@ -506,6 +569,10 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       return;
     }
     const room = roomOf(name);
+    if (!roleOf(room, tokenOf(req))) {
+      reply(res, 403, 'forbidden');
+      return;
+    }
     if (ext === 'json') {
       reply(res, 200, documentJson(room.doc), 'application/json; charset=utf-8');
       idle(room);
@@ -559,11 +626,19 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     );
     const name = decodeURIComponent((req.url ?? '/').split('?')[0]!.replace(/^\/+/, '')) || 'default';
     const room = roomOf(name);
+    const role = roleOf(room, tokenOf(req));
+    if (!role) {
+      // 모르는 토큰: 닫는다 (1008 정책 위반)
+      log(`x ${name}: 모르는 토큰`);
+      socket.end(wsFrame(0x8, Buffer.from([0x03, 0xf0])));
+      setTimeout(() => socket.destroy(), 100);
+      return;
+    }
     if (room.idle !== null) {
       clearTimeout(room.idle);
       room.idle = null;
     }
-    const conn: Conn = { socket, room, key: null, ready: false, presence: null, buf: Buffer.alloc(0), parts: [] };
+    const conn: Conn = { socket, room, key: null, ready: false, presence: null, buf: Buffer.alloc(0), parts: [], role };
     room.conns.add(conn);
     all.add(conn);
     log(`+ ${name} (${room.conns.size})`);
@@ -640,6 +715,10 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     } else if (type === MSG.UPDATE) {
       if (!conn.ready) return;
       const update = new Uint8Array(body);
+      if (!allowed(conn, update)) {
+        deny(conn, '업데이트');
+        return;
+      }
       room.doc.import(update);
       room.store.append(update);
       room.changedSinceBase = true;
@@ -672,6 +751,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     head[0] = create ? 1 : 0;
     head.writeUInt32BE(server.length, 1);
     send(conn, frame(MSG.SYNC, Buffer.concat([head, Buffer.from(server), Buffer.from(update)])));
+    send(conn, frame(MSG.ROLE, Buffer.from(conn.role, 'utf8')));
     conn.ready = true;
     // 다른 클라이언트의 마지막 프레즌스
     for (const c of conn.room.conns) if (c !== conn && c.presence) send(conn, frame(MSG.PRESENCE, Buffer.from(c.presence)));
@@ -741,6 +821,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
         restore(name, id) {
           return restoreVersion(roomOf(name), id);
         },
+        stats,
         dropAll() {
           for (const c of [...all]) c.socket.destroy();
         },
@@ -756,6 +837,37 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       });
     });
   });
+}
+
+/**
+ * 댓글 역할이 보낸 업데이트가 댓글만 바꾸는가 (14 §6): 임시 포크에 넣고 바뀐 컨테이너를 본다. comments 맵, 그리고 바꾸기 전·뒤
+ * 모두 댓글 종류인 주석의 키만 허용한다. 읽을 수 없는 업데이트도 거부한다
+ */
+export function commentOnlyUpdate(doc: LoroDoc, update: Uint8Array): boolean {
+  try {
+    const fork = doc.fork();
+    const before = fork.frontiers();
+    fork.import(update);
+    const after = fork.frontiers();
+    const comments = String(fork.getMap('comments').id);
+    const anns = String(fork.getMap('annotations').id);
+    for (const [cid, diff] of fork.diff(before, after, false)) {
+      if (String(cid) === comments) continue;
+      if (String(cid) === anns && diff.type === 'map') {
+        for (const key of Object.keys(diff.updated)) {
+          const id = key.slice(0, key.indexOf('|'));
+          const was = doc.getMap('annotations').get(`${id}|type`);
+          const now = fork.getMap('annotations').get(`${id}|type`);
+          if ((was !== undefined && was !== 'comment') || (now !== undefined && now !== 'comment')) return false;
+        }
+        continue;
+      }
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function frame(type: number, body: Uint8Array): Buffer {

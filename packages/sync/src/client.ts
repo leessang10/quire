@@ -30,6 +30,8 @@ export interface ClientOptions {
   onStatus?: (online: boolean, detail?: string) => void;
   /** 문서가 새 판으로 바뀌었다: client.doc이 새 Doc이다 (편집기에 setDoc). lost: 옛 판의 로컬 변경을 살리지 못함 */
   onReset?: (lost: boolean) => void;
+  /** 서버가 알린 역할 (14 §6: 편집기를 읽기 전용·댓글 전용으로) */
+  onRole?: (role: 'edit' | 'comment' | 'view') => void;
 }
 
 const isSeg = (c: LocalChange) => c.kind === 'order' || c.kind === 'list' || c.kind === 'hidden' || c.kind === 'flag';
@@ -52,6 +54,8 @@ export class SyncClient {
   private deferredTables = new Map<string, TableRecord>();
   private deferredAnns = new Map<string, AnnWire | null>();
   private deferredCmts = new Map<string, unknown>();
+  /** 서버가 알린 역할 (WebSocket 모드, 기본 edit) */
+  role: 'edit' | 'comment' | 'view' = 'edit';
   private readonly opts: ClientOptions;
   /** 받은 H 항목 수 */
   private rev = 0;
@@ -183,6 +187,10 @@ export class SyncClient {
         break;
       case 'status':
         this.opts.onStatus?.(msg.online, msg.detail);
+        break;
+      case 'role':
+        this.role = msg.role;
+        this.opts.onRole?.(msg.role);
         break;
       case 'hold':
         this.holding = true;

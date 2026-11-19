@@ -12,6 +12,11 @@ import { VersionsPane } from './versions-pane';
 const params = new URLSearchParams(location.search);
 const room = params.get('room') || 'demo';
 const server = params.get('server') || `ws://${location.hostname}:8787`;
+// 권한 토큰 (14 §6): 방에 access.json이 있으면 역할을 정한다
+const token = params.get('token');
+const q = token ? `?token=${encodeURIComponent(token)}` : '';
+const ROLE_LABEL = { edit: '편집', comment: '댓글만', view: '보기만' } as const;
+let role: keyof typeof ROLE_LABEL = 'edit';
 const statusEl = document.getElementById('live-status')!;
 const host = document.getElementById('editor')!;
 const noteEl = document.getElementById('live-note')!;
@@ -24,7 +29,7 @@ function note(text: string | null) {
 
 // .quire 내려받기·열기 (07): 서버가 지금 문서로 파일을 만들고, 올린 파일로 새 방을 만든다
 const download = document.getElementById('download') as HTMLAnchorElement;
-download.href = `${httpBase}/${encodeURIComponent(room)}.quire`;
+download.href = `${httpBase}/${encodeURIComponent(room)}.quire${q}`;
 download.download = `${room}.quire`;
 const fileInput = document.getElementById('open-file') as HTMLInputElement;
 document.getElementById('open')!.addEventListener('click', () => fileInput.click());
@@ -64,7 +69,7 @@ const TEXT = `이 문서는 중계 서버의 "${room}" 방에 있습니다. 같�
 서버를 끄면 위에 "다시 연결 중"이 보이고, 그동안에도 편집할 수 있습니다. 서버를 다시 켜면 끊긴 동안의 편집이 합쳐집니다.`;
 
 function setStatus(online: boolean, detail?: string) {
-  statusEl.textContent = online ? `● 연결됨 · ${user.name}` : `○ ${detail ?? '연결 끊김'}`;
+  statusEl.textContent = online ? `● 연결됨 · ${user.name} · ${ROLE_LABEL[role]}` : `○ ${detail ?? '연결 끊김'}`;
   statusEl.dataset.state = online ? 'online' : 'offline';
 }
 
@@ -73,11 +78,16 @@ void (async () => {
   const worker = new Worker(new URL('./sync-worker.ts', import.meta.url), { type: 'module' });
   const client = await startSyncWorker(
     worker,
-    { mode: 'ws', peer, user, url: `${server}/${encodeURIComponent(room)}`, text: TEXT },
+    { mode: 'ws', peer, user, url: `${server}/${encodeURIComponent(room)}${q}`, text: TEXT },
     {
       onRemoteChange: () => editor?.docChanged(),
       onPresence: () => editor?.setRemoteCarets(client.remotes()),
       onStatus: setStatus,
+      onRole: (r) => {
+        role = r;
+        editor?.setAccess(r);
+        setStatus(true);
+      },
       onReset: (lost) => {
         editor?.setDocument(client.document);
         note(
@@ -97,9 +107,11 @@ void (async () => {
     // 이미지 원본은 서버의 자산 저장소 (11 §2.2)
     assets: new HttpAssets(`${server.replace(/^ws/, 'http')}/${encodeURIComponent(room)}/assets/`),
   });
+  editor.setAccess(client.role);
+  setStatus(true);
   editor.focus();
   // 버전 기록 (14 §5)
-  new VersionsPane(document.getElementById('versions')!, editor, `${httpBase}/${encodeURIComponent(room)}`);
+  new VersionsPane(document.getElementById('versions')!, editor, `${httpBase}/${encodeURIComponent(room)}`, q);
   addEventListener('pagehide', () => client.close());
   Object.assign(window, { client, editor });
 })();

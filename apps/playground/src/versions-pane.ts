@@ -37,6 +37,8 @@ export class VersionsPane {
     root: HTMLElement,
     private readonly editor: Editor,
     private readonly base: string,
+    /** 권한 토큰 (14 §6): '?token=…' 또는 '' */
+    private readonly q = '',
   ) {
     root.replaceChildren();
     const head = document.createElement('div');
@@ -63,7 +65,7 @@ export class VersionsPane {
 
   async refresh(): Promise<void> {
     try {
-      const res = await fetch(`${this.base}/versions`);
+      const res = await fetch(`${this.base}/versions${this.q}`);
       if (!res.ok) return;
       this.items = (await res.json()) as Item[];
       this.render();
@@ -75,7 +77,7 @@ export class VersionsPane {
   private async nameNow(): Promise<void> {
     const label = prompt('버전 이름');
     if (!label?.trim()) return;
-    await fetch(`${this.base}/versions`, { method: 'POST', body: JSON.stringify({ name: label }) });
+    await fetch(`${this.base}/versions${this.q}`, { method: 'POST', body: JSON.stringify({ name: label }) });
     await this.refresh();
   }
 
@@ -87,7 +89,7 @@ export class VersionsPane {
       this.render();
       return;
     }
-    const res = await fetch(`${this.base}/versions/${id}`);
+    const res = await fetch(`${this.base}/versions/${id}${this.q}`);
     if (!res.ok) return;
     const doc = documentFromSnapshot(new Uint8Array(await res.arrayBuffer()));
     this.viewing = id;
@@ -105,7 +107,7 @@ export class VersionsPane {
 
   /** 비교 (14 §5.3): 그 판의 이력을 받아 두 frontiers 사이의 차이를 제안 표시로 (읽기 전용) */
   private async compare(v: Item, against: 'prev' | 'now'): Promise<void> {
-    const res = await fetch(`${this.base}/history/${v.epoch || '_'}`);
+    const res = await fetch(`${this.base}/history/${v.epoch || '_'}${this.q}`);
     if (!res.ok) return;
     const loro = new LoroDoc();
     loro.import(new Uint8Array(await res.arrayBuffer()));
@@ -127,7 +129,7 @@ export class VersionsPane {
       return;
     }
     this.armed = false;
-    const res = await fetch(`${this.base}/versions/${v.id}/restore`, { method: 'POST' });
+    const res = await fetch(`${this.base}/versions/${v.id}/restore${this.q}`, { method: 'POST' });
     if (res.ok) await this.view(null);
     await this.refresh();
   }

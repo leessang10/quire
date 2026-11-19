@@ -13,7 +13,10 @@ import { VersionVector, type LoroDoc } from 'loro-crdt';
 import type { NetOut } from './core';
 import { readEpoch, type RebaseInfo } from './epoch';
 
-export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6 } as const;
+export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6, ROLE: 7 } as const;
+
+/** 서버가 알린 이 연결의 역할 (14 §6) */
+export type Role = 'edit' | 'comment' | 'view';
 
 export interface WsLinkHandlers {
   /**
@@ -27,6 +30,8 @@ export interface WsLinkHandlers {
   /** 서버가 새 판으로 바뀌었다: 옛 판 문서(이쪽 변경 포함)를 새 판으로 옮겨 그 문서를 돌려준다 */
   onRebase(info: RebaseInfo): Promise<LoroDoc>;
   onStatus?(online: boolean, detail?: string): void;
+  /** 서버가 알린 역할 (SYNC 바로 뒤) */
+  onRole?(role: Role): void;
 }
 
 export interface WsLinkOptions {
@@ -159,6 +164,9 @@ export class WsLink implements NetOut {
       this.h.onPresence(body.slice());
     } else if (type === MSG.GONE) {
       this.h.onGone(decoder.decode(body));
+    } else if (type === MSG.ROLE) {
+      const r = decoder.decode(body);
+      if (r === 'edit' || r === 'comment' || r === 'view') this.h.onRole?.(r);
     }
   }
 

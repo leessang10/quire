@@ -1420,6 +1420,37 @@ export class Editor {
 
   /** 읽기 전용 (최종본·원본 보기) */
   private readOnly = false;
+  /** 권한 (14 §6): view는 읽기 전용, comment는 댓글 명령만 */
+  private role: 'edit' | 'comment' | 'view' = 'edit';
+  /** 댓글 명령의 커밋 중 (comment 역할에서 허용) */
+  private commentCommit = false;
+
+  /** 권한 (서버가 알린 역할). edit가 아니면 제안 모드를 끈다 (제안도 본문 변경이다) */
+  setAccess(role: 'edit' | 'comment' | 'view'): void {
+    if (role !== 'edit' && this.role === 'edit') this.history = new History(); // 앞의 본문 편집을 되돌리면 서버가 거부한다
+    this.role = role;
+    if (role !== 'edit' && this.document.suggesting) this.document.setSuggesting(null);
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  get access(): 'edit' | 'comment' | 'view' {
+    return this.role;
+  }
+
+  /** 댓글을 쓸 수 있는가 (보기 모드가 아니고 view 역할이 아님) */
+  private get canComment(): boolean {
+    return this.role !== 'view' && !this.readOnly;
+  }
+
+  private commentCommitRaw(ops: Op[], before: Selection): void {
+    this.commentCommit = true;
+    try {
+      this.commitRaw(ops, before);
+    } finally {
+      this.commentCommit = false;
+    }
+  }
   /** 최종본·원본을 보는 동안 살아 있는 문서와 실행 취소 기록 */
   private live: { document: Document; history: History } | null = null;
   private mode: ViewMode = 'suggestions';
@@ -1539,6 +1570,7 @@ export class Editor {
 
   /** 제안 모드 켜기·끄기 (이 편집기의 상태: 켜면 편집이 작성자의 제안으로 기록된다) */
   setSuggesting(on: boolean): void {
+    if (on && this.role !== 'edit') return;
     this.document.setSuggesting(on ? { author: this.author } : null);
     this.render();
     this.opts.onChange?.(this);
@@ -1570,7 +1602,7 @@ export class Editor {
   addComment(text: string): string | null {
     this.input.commitComposition();
     const [from, to] = this.range();
-    if (from === to || !text.trim()) return null;
+    if (from === to || !text.trim() || !this.canComment) return null;
     const thread = newThreadId();
     const before: Selection = { ...this.sel };
     this.history.seal();
@@ -1578,14 +1610,14 @@ export class Editor {
       thread, annotation: newAnnotationId(), story: this.storyId, from, to, message: newMessageId(), author: this.author, text, time: Date.now(),
     });
     this.focusAnn = this.document.thread(thread)?.anchor ?? null;
-    this.commitRaw(ops, before);
+    this.commentCommitRaw(ops, before);
     this.history.seal();
     return thread;
   }
 
   /** 답글 (실행 취소 기록 없음: 댓글 대화는 문서 편집이 아니다) */
   replyComment(thread: string, text: string): string | null {
-    if (!text.trim() || !this.document.thread(thread)) return null;
+    if (!text.trim() || !this.document.thread(thread) || !this.canComment) return null;
     const id = newMessageId();
     this.document.addMessage(thread, { id, author: this.author, time: Date.now(), text });
     this.commentChanged();
@@ -1594,13 +1626,14 @@ export class Editor {
 
   /** 메시지 고치기 (기록 없음) */
   editComment(thread: string, message: string, text: string): void {
-    if (!text.trim()) return;
+    if (!text.trim() || !this.canComment) return;
     this.document.editMessage(thread, message, text, Date.now());
     this.commentChanged();
   }
 
   /** 메시지 지우기 (지운 표시, 기록 없음). 첫 메시지를 지우면 스레드를 지운다 */
   deleteComment(thread: string, message: string): void {
+    if (!this.canComment) return;
     const t = this.document.thread(thread);
     if (t && t.messages[0]?.id === message) return this.deleteThread(thread);
     this.document.deleteMessage(thread, message);
@@ -1609,6 +1642,7 @@ export class Editor {
 
   /** 해결 / 다시 열기 (기록 없음) */
   resolveThread(thread: string, on: boolean): void {
+    if (!this.canComment) return;
     this.document.resolveThread(thread, on);
     if (on && this.focusAnn === this.document.thread(thread)?.anchor) this.focusAnn = null;
     this.commentChanged();
@@ -1616,11 +1650,12 @@ export class Editor {
 
   /** 스레드 지우기: 주석을 지우고 스레드는 지운 표시 (실행 취소 한 단계: 글을 지운 것처럼 되돌릴 수 있다) */
   deleteThread(thread: string): void {
+    if (!this.canComment) return;
     const ops = this.document.deleteThread(thread);
     if (!ops.length) return;
     const before: Selection = { ...this.sel };
     this.history.seal();
-    this.commitRaw(ops, before);
+    this.commentCommitRaw(ops, before);
     this.history.seal();
   }
 
@@ -3301,7 +3336,7 @@ export class Editor {
 
   /** 문서 연산 그대로 기록 (본문 연산, 표 레코드 연산, 이미 감싼 스토리 연산) */
   private commitRaw(ops: Op[], before: Selection, mergeKey?: string): void {
-    if (this.readOnly) {
+    if (this.readOnly || (this.role !== 'edit' && !this.commentCommit)) {
       // 읽기 전용 (보기 모드 최종본·원본): 명령이 바꾼 것을 바로 되돌린다 (모든 편집 경로가 여기를 지난다)
       for (const op of [...ops].reverse()) this.document.apply(invertOp(op));
       this.sel = before;
