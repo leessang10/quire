@@ -123,6 +123,7 @@ export function serveSyncWorker(scope: PortLike): void {
         post({ t: 'status', online, detail });
         if (online) core?.announce();
       },
+      onRole: (role) => post({ t: 'role', role }),
     });
     link = l;
   }

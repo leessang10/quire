@@ -11,6 +11,7 @@
  *   assets/<ID>           자산(이미지 원본, 11 §2.2). 파일 이름 = 내용 해시, assets/<ID>.type = MIME
  *   versions.json         버전 목록 (14 §5.1). 새 판 압축이 지우지 않는다
  *   peers.json            Loro 피어 ID → 사용자 (프레즌스에서 배운다)
+ *   access.json           토큰 → 역할 (14 §6). 없으면 모두 편집 (개발용)
  *
  * 첫 판의 ID는 ''이고 디렉터리 이름은 '_'이다. 쓰기는 임시 파일에 쓴 뒤 이름을 바꾼다 (중간에 죽어도 반쪽 파일이 남지 않음).
  * 로그 끝의 잘린 레코드(덧붙이다 죽음)는 버린다.
@@ -33,6 +34,9 @@ export interface VersionRecord {
   name?: string;
   auto: boolean;
 }
+
+/** 역할 (14 §6, 05 O-14) */
+export type Role = 'edit' | 'comment' | 'view';
 
 /** 피어의 사용자 (4단계: 프레즌스의 이름·색) */
 export interface PeerUser {
@@ -63,6 +67,9 @@ export interface RoomStore {
   putVersions(list: VersionRecord[]): void;
   peers(): Record<string, PeerUser>;
   putPeers(map: Record<string, PeerUser>): void;
+  /** 토큰 → 역할 (null이면 권한 설정 없음: 모두 편집) */
+  access(): Record<string, Role> | null;
+  putAccess(map: Record<string, Role> | null): void;
 }
 
 export interface Storage {
@@ -192,6 +199,14 @@ class FileRoom implements RoomStore {
   putPeers(map: Record<string, PeerUser>): void {
     this.write(JSON.stringify(map), 'peers.json');
   }
+
+  access(): Record<string, Role> | null {
+    return this.json<Record<string, Role> | null>('access.json', null);
+  }
+
+  putAccess(map: Record<string, Role> | null): void {
+    this.write(JSON.stringify(map), 'access.json');
+  }
 }
 
 /** 메모리 저장소 (서버 프로세스가 사는 동안만) */
@@ -258,5 +273,12 @@ class MemoryRoom implements RoomStore {
   }
   putPeers(map: Record<string, PeerUser>) {
     this.pmap = { ...map };
+  }
+  private amap: Record<string, Role> | null = null;
+  access() {
+    return this.amap ? { ...this.amap } : null;
+  }
+  putAccess(map: Record<string, Role> | null) {
+    this.amap = map ? { ...map } : null;
   }
 }
