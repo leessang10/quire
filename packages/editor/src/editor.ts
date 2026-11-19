@@ -161,6 +161,8 @@ const SECTION_LABELS: Record<SectionStart, string> = { nextPage: '다음 쪽', c
 
 const COLORS = {
   desk: '#e9e9ec',
+  /** 단 구분선 */
+  columnRule: '#9a9aa2',
   /** 머리말·꼬리말을 편집할 때 필드 바탕 */
   field: '#e4e4ea',
   page: '#ffffff',
@@ -289,6 +291,8 @@ interface NoteSlot {
   to: number;
   h: number;
   cont: boolean;
+  /** 그 프레임(단) 각주 영역의 첫 조각 (구분선을 그 위에) */
+  first: boolean;
 }
 
 /** 편집 중인 머리말·꼬리말의 상태 (도구 막대) */
@@ -909,6 +913,21 @@ export class Editor {
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
 
+    // 단 구분선 (12 §7.1)
+    if (layout.frames.multi?.())
+      for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
+        if (layout.pageBox(p).top - top > h) break;
+        const cols = layout.frames.columnsOn?.(p) ?? [];
+        ctx.fillStyle = COLORS.columnRule;
+        for (let i = 1; i < cols.length; i++) {
+          const a = cols[i - 1]!;
+          const b = cols[i]!;
+          if (!b.sep || b.frame.column === 0 || a.frame.top !== b.frame.top) continue;
+          const x = (a.frame.x + a.frame.width + b.frame.x) / 2;
+          ctx.fillRect(px + x - 0.5, b.frame.top - top, 1, b.frame.height);
+        }
+      }
+
     // 머리말·꼬리말 (12 §5): 쪽마다 그 쪽의 필드 값으로
     for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
       if (layout.pageBox(p).top - top > h) break;
@@ -980,11 +999,17 @@ export class Editor {
       return r.para + 1 < validCount ? { para: r.para + 1, line: 0 } : null;
     };
     let ref: { para: number; line: number } | null = layout.firstLineBelow(top, false);
+    // 다단 (12 §7): 앞 단의 줄이 화면 아래로 가도 뒤 단의 줄이 화면에 있을 수 있다. 화면의 마지막 쪽을 지나면 멈춘다
+    const multi = isBody && !!layout.frames.multi?.();
+    const lastPage = multi ? layout.pageAt(top + h) : 0;
     for (; ref; ref = nextRef(ref)) {
       const para = layout.paras[ref.para]!;
       const ln = para.lines[ref.line]!;
       const y = ln.y - top;
-      if (y > h) break;
+      if (y > h) {
+        if (!multi || ln.page > lastPage) break;
+        continue;
+      }
       if (y + ln.height < 0) continue;
       visibleParas?.add(ref.para);
       if (para.layout.table) {
@@ -1163,12 +1188,14 @@ export class Editor {
     const slots = this.noteSlots(p);
     if (!slots.length) return;
     const { ctx } = this;
-    const s0 = slots[0]!;
     const sep = this.setup.noteSeparator ?? 16;
     ctx.save();
     ctx.fillStyle = COLORS.text;
-    const lineW = s0.cont ? s0.width + NOTE_INDENT : Math.min(160, (s0.width + NOTE_INDENT) / 3);
-    ctx.fillRect(px + s0.x, s0.y - sep / 2 - top, lineW, 0.75);
+    for (const s0 of slots) {
+      if (!s0.first) continue;
+      const lineW = s0.cont ? s0.width + NOTE_INDENT : Math.min(160, (s0.width + NOTE_INDENT) / 3);
+      ctx.fillRect(px + s0.x, s0.y - sep / 2 - top, lineW, 0.75);
+    }
     ctx.restore();
     for (const s of slots) {
       const editing = this.note !== null && this.note.id === s.id && this.note.page === p;
@@ -1192,21 +1219,26 @@ export class Editor {
     }
   }
 
-  /** 쪽 p의 각주 영역에 놓인 각주들 (문서 좌표). 영역은 본문 프레임 맨 아래에 붙는다 */
+  /** 쪽 p의 각주 영역에 놓인 각주들 (문서 좌표). 영역은 프레임(다단이면 단)마다 그 맨 아래에 붙는다 (12 §6.2, O-26) */
   private noteSlots(p: number): NoteSlot[] {
     const L = this.bodyLayout;
     const places = L.notesOnPage(p);
     if (!places.length) return [];
-    const info = pageHF(this.fmt, L, p, this.today);
     const sep = this.setup.noteSeparator ?? 16;
-    const area = sep + places.reduce((a, n) => a + n.h, 0);
-    let y = info.bodyBottom - area + sep;
-    const width = Math.max(1, info.header.width - NOTE_INDENT);
-    return places.map((n) => {
-      const s: NoteSlot = { id: n.id, num: this.fmt.noteNumber(n.id), x: info.header.x, y, width, from: n.from, to: n.to, h: n.h, cont: n.cont };
-      y += n.h;
-      return s;
-    });
+    const out: NoteSlot[] = [];
+    const frames = [...new Set(places.map((n) => n.frame))];
+    for (const k of frames) {
+      const mine = places.filter((n) => n.frame === k);
+      const fr = L.frames.frame(k);
+      const area = sep + mine.reduce((a, n) => a + n.h, 0);
+      let y = fr.top + fr.height - area + sep;
+      const width = Math.max(1, fr.width - NOTE_INDENT);
+      mine.forEach((n, i) => {
+        out.push({ id: n.id, num: this.fmt.noteNumber(n.id), x: fr.x, y, width, from: n.from, to: n.to, h: n.h, cont: n.cont, first: i === 0 });
+        y += n.h;
+      });
+    }
+    return out;
   }
 
   /** 각주 조각의 레이아웃: 줄 from이 조각 위쪽에 오도록 원점을 둔다 */
@@ -1229,6 +1261,7 @@ export class Editor {
     }
     const next = this.bodyLayout.paras[i + 1];
     if (next?.layout.box?.keep?.breakBefore) return '쪽 나눔';
+    if (next?.layout.box?.keep?.column) return '단 나눔';
     return null;
   }
 
@@ -1918,6 +1951,23 @@ export class Editor {
     this.history.seal();
   }
 
+  /** 단 나누기 (Ctrl+Shift+Enter, 12 §7.1): 캐럿에서 문단을 나누고 뒤쪽 문단을 앞에서 단 나눔으로 (문단 처음이면 그 문단에) */
+  insertColumnBreak(): void {
+    this.input.commitComposition();
+    if (!this.inBody || this.extras.length) return;
+    const [from, to] = this.range();
+    const pi = this.doc.paragraphIndexAt(from);
+    const p = this.doc.paragraphs()[pi]!;
+    if (p.objs?.get(0)?.kind === 'table') return;
+    this.history.seal();
+    if (from === to && from === p.start && pi > 0) {
+      const before: Selection = { ...this.sel };
+      const ops = this.doc.setParaAttr(pi, 'columnBreakBefore', true);
+      if (ops.length) this.commit(ops, before);
+    } else this.replaceSelection('\n', undefined, () => this.doc.setParaAttr(pi + 1, 'columnBreakBefore', true));
+    this.history.seal();
+  }
+
   /** 선택한 문단들의 쪽 나눔 제어 키를 켜거나 끈다 (모두 켜져 있으면 끈다). 스타일 값(제목의 다음 문단과 함께)도 본다 */
   toggleParagraphKeep(key: 'pageBreakBefore' | 'keepWithNext' | 'keepTogether'): void {
     const on = this.paragraphState().attrs[key] === true && !this.paragraphState().mixed.has(key);
@@ -2051,9 +2101,11 @@ export class Editor {
     const restyle = next !== undefined && next !== name;
     // 앞에서 쪽 나눔은 나뉜 앞쪽 문단에만 (뒤쪽이 또 새 쪽에서 시작하지 않게, 12 §4)
     const pbb = p.attrs.pageBreakBefore === true;
-    this.replaceSelection('\n', undefined, restyle || pbb ? () => [
+    const cbb = p.attrs.columnBreakBefore === true;
+    this.replaceSelection('\n', undefined, restyle || pbb || cbb ? () => [
       ...(restyle ? this.doc.setParaAttr(pi + 1, 'style', next === BODY_STYLE ? undefined : next) : []),
       ...(pbb ? this.doc.setParaAttr(pi + 1, 'pageBreakBefore', undefined) : []),
+      ...(cbb ? this.doc.setParaAttr(pi + 1, 'columnBreakBefore', undefined) : []),
     ] : undefined);
   }
 
@@ -3550,6 +3602,12 @@ export class Editor {
       e.preventDefault();
       return;
     }
+    // 단 나누기 (12 §7.1): Ctrl+Shift+Enter
+    if (mod && !e.altKey && shift && e.key === 'Enter') {
+      this.insertColumnBreak();
+      e.preventDefault();
+      return;
+    }
     // 쪽 나누기 (12 §4): Ctrl+Enter
     if (mod && !e.altKey && !shift && e.key === 'Enter') {
       this.insertPageBreak();
@@ -3667,7 +3725,8 @@ export class Editor {
           if (this.caretAtListStart()) this.outdentListItem(this.caretAtListStart()!.i, true); // 목록 첫머리: 번호부터 지운다
           else if (from !== to) this.deleteRange(from, to);
           else if (this.inBody && head > 0 && this.tableAtOffset(head - 1)) this.moveTo(head - 1, false); // 표 뒤 문단 처음: 표와 합치지 않고 표로
-          else if (this.inBody && this.pageBreakAtCaret(head)) this.setParagraphAttr('pageBreakBefore', undefined); // 쪽 나눔부터 지운다
+          else if (this.inBody && this.pageBreakAtCaret(head))
+            this.setParagraphAttr(this.doc.paraAttrs(this.doc.paragraphIndexAt(head)).pageBreakBefore === true ? 'pageBreakBefore' : 'columnBreakBefore', undefined); // 쪽·단 나눔부터 지운다
           else if (head > 0) this.deleteRange(this.layout.prevStop(head), head, 'delete');
           break;
         case 'Delete':
@@ -4291,7 +4350,8 @@ export class Editor {
   /** 캐럿이 앞에서 쪽 나눔(직접 속성) 문단의 처음인가 (첫 문단 제외) */
   private pageBreakAtCaret(head: number): boolean {
     const i = this.doc.paragraphIndexAt(head);
-    return i > 0 && this.doc.paragraphs()[i]!.start === head && this.doc.paraAttrs(i).pageBreakBefore === true;
+    const a = this.doc.paraAttrs(i);
+    return i > 0 && this.doc.paragraphs()[i]!.start === head && (a.pageBreakBefore === true || a.columnBreakBefore === true);
   }
 
   /** 오프셋 자리의 본문 폭 (px): 구역 여백, 셀이면 셀 폭 */

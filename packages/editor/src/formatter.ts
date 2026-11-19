@@ -35,6 +35,7 @@ import {
   LayoutCache,
   PLAIN_STYLE,
   PagedLayout,
+  columnWidth,
   TableLayouter,
   geomKey,
   type FloatSpec,
@@ -186,7 +187,9 @@ export class Formatter {
     const f = fullSection(def);
     const px = (v: number) => Math.round(pt(v));
     const [t, r, b, l] = f.page.margin;
-    const g = { width: px(f.page.width), height: px(f.page.height), top: px(t), right: px(r), bottom: px(b), left: px(l), start: f.start };
+    // 다단 (12 §7): 단이 둘 이상일 때만 (한 단이면 지금까지와 같은 모양·키)
+    const cols = f.columns && f.columns.count > 1 ? { cols: Math.min(8, Math.round(f.columns.count)), gap: px(f.columns.gap), sep: !!f.columns.separator } : {};
+    const g = { width: px(f.page.width), height: px(f.page.height), top: px(t), right: px(r), bottom: px(b), left: px(l), start: f.start, ...cols };
     const geom = { ...g, key: geomKey(g) };
     this.geoms.set(id, { def, geom });
     return geom;
@@ -235,7 +238,8 @@ export class Formatter {
         const top = hh > 0 ? Math.max(base.top, Math.ceil(pt(f.headerDistance ?? DEFAULT_HF_DISTANCE) + hh)) : base.top;
         const bottom = fh > 0 ? Math.max(base.bottom, Math.ceil(pt(f.footerDistance ?? DEFAULT_HF_DISTANCE) + fh)) : base.bottom;
         if (top !== base.top || bottom !== base.bottom) {
-          const g = { width: base.width, height: base.height, top, right: base.right, bottom, left: base.left, start: base.start };
+          const g = { ...base, top, bottom, key: undefined };
+          delete g.key;
           geom = { ...g, key: geomKey(g) };
         }
       }
@@ -303,8 +307,7 @@ export class Formatter {
   /** 본문 문단 i의 각주 영역 폭 (px): 그 구역 본문 폭 − 번호 자리 */
   noteWidth(i: number): number {
     const s = this.body.sectionOf(i);
-    const g = this.sectionAt(s.index, s.id).geom;
-    return Math.max(1, g.width - g.left - g.right - NOTE_INDENT);
+    return Math.max(1, columnWidth(this.sectionAt(s.index, s.id).geom) - NOTE_INDENT);
   }
 
   /** 각주 내용의 줄 높이들 (px, 폭 width로 조판, 합 = 각주 높이) */
@@ -511,7 +514,15 @@ export class Formatter {
   /** 문단 속성(스타일 사슬 → 직접 속성)을 px 상자로. 레이아웃에 영향이 없으면 null (기본 문단과 같은 빠른 경로) */
   paraBox(attrs: ParaAttrs, rs: ResolvedStyle, label: ListLabel | null = null): ParaBox | null {
     const a = hasKeys(rs.para) ? mergeParaAttrs(rs.para, attrs) : attrs;
-    const keep = a.pageBreakBefore || a.keepWithNext || a.keepTogether ? { ...(a.pageBreakBefore ? { breakBefore: true as const } : {}), ...(a.keepWithNext ? { next: true as const } : {}), ...(a.keepTogether ? { together: true as const } : {}) } : undefined;
+    const keep =
+      a.pageBreakBefore || a.keepWithNext || a.keepTogether || a.columnBreakBefore
+        ? {
+            ...(a.pageBreakBefore ? { breakBefore: true as const } : {}),
+            ...(a.keepWithNext ? { next: true as const } : {}),
+            ...(a.keepTogether ? { together: true as const } : {}),
+            ...(a.columnBreakBefore ? { column: true as const } : {}),
+          }
+        : undefined;
     if (!a.align && !a.indent && !a.space && !a.line && !label && !keep) return null;
     // 목록 문단: 왼쪽 들여쓰기는 목록 수준의 값, 첫 줄은 본문과 나란히 (번호는 내어쓴 자리에, 10 §4)
     const lv = label ? label.def.levels[label.level]! : null;

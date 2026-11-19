@@ -19,6 +19,6 @@ export type {
   NotePlace,
 } from './document';
 export { TableLayouter, CELL_PAD } from './table';
-export { SectionFrames, geomKey } from './sections';
+export { SectionFrames, columnWidth, geomKey } from './sections';
 export type { SectionGeom, SectionSource } from './sections';
 export type { TableCellInput, TableGridInput, StorySource, CellBox, TableMeasure, PreeditAt } from './table';

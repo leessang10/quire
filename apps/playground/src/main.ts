@@ -131,6 +131,31 @@ function sectionsSample(): Document {
 }
 
 /**
+ * 다단 예제 (12 §7): 제목 띠(1단) → 이어서 2단(구분선) → 이어서 3단 → 이어서 1단. 다단 구역 끝은 단 높이를 맞춘다(균형)
+ */
+function columnsSample(): Doc {
+  const body = '다단 구역에서는 글이 첫 단을 채운 뒤 다음 단으로 흐르고, 마지막 단을 채우면 다음 쪽 첫 단으로 갑니다. 단 나누기(Ctrl+Shift+Enter)로 다음 단에서 시작할 수 있습니다.';
+  const pa = (attrs: ParaAttrs, text: string) => ({ attrs, runs: [{ text, marks: {} as MarkSet }] });
+  const doc = Doc.fromParagraphRuns([
+    pa({ style: 'h1', align: 'center' }, '다단 예제'),
+    pa({ align: 'center', section: 'title' }, '제목은 한 단, 본문은 같은 쪽에서 이어지는 두 단과 세 단입니다.'),
+    ...Array.from({ length: 9 }, (_, k) => pa({ align: 'justify' }, `${k + 1}. ${body}`)),
+    pa({ align: 'justify', section: 'two' }, '두 단 구역의 끝입니다. 뒤 구역이 같은 쪽에서 이어지므로 두 단의 높이를 맞춥니다.'),
+    ...Array.from({ length: 7 }, (_, k) => pa({ align: 'justify' }, `세 단 ${k + 1}. ${body}`)),
+    pa({ align: 'justify', section: 'three' }, '세 단 구역의 끝입니다.'),
+    pa({ style: 'h2' }, '다시 한 단'),
+    pa({ align: 'justify' }, '세 단 구역 아래에서 한 단으로 이어집니다. ' + body),
+  ]);
+  const mm = (v: number) => Math.round((v * 72000) / 25.4);
+  doc.setSection('title', fullSection(undefined));
+  doc.setSection('two', { ...fullSection(undefined), start: 'continuous', columns: { count: 2, gap: mm(8), separator: true } });
+  doc.setSection('three', { ...fullSection(undefined), start: 'continuous', columns: { count: 3, gap: mm(6) } });
+  doc.setSection(LAST_SECTION, { ...fullSection(undefined), start: 'continuous' });
+  doc.takeParagraphChanges();
+  return doc;
+}
+
+/**
  * 각주 예제 (12 §6): 문단마다 각주 참조. 쪽 끝 근처의 참조는 줄과 각주가 함께 다음 쪽으로 가고, 긴 각주는 쪽 사이에서 나뉘어 이어진다
  */
 function notesSample(): Document {
@@ -313,6 +338,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-doc]').forEach((btn) => {
       });
       return;
     }
+    if (kind === 'columns') {
+      editor.setDoc(columnsSample());
+      editor.focus();
+      showStats();
+      return;
+    }
     if (kind === 'notes') {
       editor.setDocument(notesSample());
       editor.focus();
@@ -400,6 +431,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-tbl]').forEach((b) =>
   }),
 );
 let fillOn = false;
+
+// 다단 (3-6)
+document.getElementById('col-break')!.addEventListener('click', () => {
+  editor.insertColumnBreak();
+  editor.focus();
+});
 
 // 각주 (3-5)
 document.getElementById('footnote')!.addEventListener('click', () => {
@@ -489,6 +526,9 @@ function fillPageForm(p: SectionProps): void {
   for (const el of pageForm.querySelectorAll<HTMLInputElement>('input[name="orient"]')) el.checked = el.value === (width > height ? 'landscape' : 'portrait');
   ['mt', 'mr', 'mb', 'ml'].forEach((n, k) => (field(n).value = String(toMm(margin[k]!))));
   field<HTMLSelectElement>('start').value = p.start;
+  field<HTMLSelectElement>('cols').value = String(p.columns?.count ?? 1);
+  field('colGap').value = String(toMm(p.columns?.gap ?? fromMm(12.5)));
+  field('colSep').checked = !!p.columns?.separator;
   field('pnStart').value = p.pageNumber?.start !== undefined ? String(p.pageNumber.start) : '';
   field<HTMLSelectElement>('pnFormat').value = p.pageNumber?.format ?? 'decimal';
 }
@@ -556,6 +596,9 @@ pageForm.addEventListener('submit', (e) => {
   };
   if (Object.keys(pageNumber).length) next.pageNumber = pageNumber;
   else delete next.pageNumber;
+  const cols = Number(field<HTMLSelectElement>('cols').value);
+  if (cols > 1) next.columns = { count: cols, gap: fromMm(Math.max(0, Number(field('colGap').value) || 0)), ...(field('colSep').checked ? { separator: true } : {}) };
+  else delete next.columns;
   editor.setSectionProps(next);
 });
 pageDialog.addEventListener('close', () => editor.focus());

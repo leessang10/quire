@@ -117,6 +117,21 @@ describe('headers, footers and fields (12 §5)', () => {
   });
 });
 
+describe('columns (12 §7)', () => {
+  it('sends column settings and column breaks, and round-trips them through the canonical JSON', () => {
+    const { a, b, settle } = bridges(['가', '나', '다'].join(NL));
+    const cols: SectionProps = { ...fullSection(undefined), start: 'continuous', columns: { count: 3, gap: 14173, separator: true } };
+    a.doc.setSection(LAST_SECTION, cols);
+    a.doc.setParaAttr(2, 'columnBreakBefore', true);
+    settle();
+    expect(b.doc.sectionDef(LAST_SECTION)).toEqual(cols);
+    expect(b.doc.paraAttrs(2)).toEqual({ columnBreakBefore: true });
+    const q = quireFromDoc(b.doc);
+    expect(q.sections.at(-1)!.columns).toEqual({ count: 3, gap: 14173, separator: true });
+    expect(canonicalJson(quireFromDoc(docFromQuire(JSON.parse(canonicalJson(q))).doc))).toBe(canonicalJson(q));
+  });
+});
+
 describe('footnotes (12 §6)', () => {
   it('sends note references and note stories; numbers follow the reference order on both peers', () => {
     const { a, b, settle } = bridges(['첫 문단', '둘째 문단'].join(NL));

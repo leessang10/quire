@@ -248,6 +248,8 @@ export interface Frame {
   top: number;
   width: number;
   height: number;
+  /** 쪽 맨 위가 아닌 띠의 프레임 (12 §7.2): 앞에서 쪽 나눔은 여기서도 다음 쪽으로 */
+  band?: boolean;
 }
 
 /** 쪽 상자 (문서 좌표): 그리기·스크롤 */
@@ -279,6 +281,14 @@ export interface FrameSource {
   stable?(): boolean;
   /** 모두 배치했다 */
   done?(): void;
+  /** 다단 프레임이 있다 (12 §7): 줄 y가 문서 순서로 늘지 않으므로 찾기·멈춤을 쪽 단위로 */
+  multi?(): boolean;
+  /** 쪽 p의 프레임들 (단·띠) */
+  columnsOn?(p: number): Array<{ frame: Frame; k: number; sep: boolean }>;
+  /** 단 균형 (12 §7.2): 문단 m이 새 구역을 시작할 때 앞 구역 끝 쪽의 균형을 맞추거나 풀 대상 */
+  balanceTarget?(m: number, frame: number): { run: number; page: number; full: number; balance: boolean } | null;
+  /** 구역 run의 쪽 page 프레임 높이 상한 (null이면 푼다) */
+  setCap?(run: number, page: number | null, h?: number): void;
 }
 
 /**
@@ -524,8 +534,15 @@ export class PlacedPara {
     this.floats = NO_FLOATS;
     const box = this.layout.box;
     const keep = box?.keep;
-    // 앞에서 쪽 나눔·다음 문단과 함께: 새 프레임 맨 위로 (이미 맨 위면 그대로, 12 §4)
-    if ((keep?.breakBefore || toNext) && y > 0) {
+    // 앞에서 쪽 나눔: 다음 쪽 첫 단 맨 위로 (이미 쪽 첫 단 맨 위면 그대로, 12 §4). 앞에서 단 나눔·다음 문단과 함께: 다음 프레임(단)
+    const F = this.geo.frames;
+    if (keep?.breakBefore && (y > 0 || F.frame(page).column > 0 || F.frame(page).band)) {
+      do {
+        page++;
+        ns = nextFrame(ns);
+      } while (F.frame(page).column !== 0);
+      y = 0;
+    } else if ((keep?.column || toNext) && y > 0) {
       page++;
       y = 0;
       ns = nextFrame(ns);
@@ -1296,7 +1313,11 @@ export class PagedLayout {
   get validBottom(): number {
     if (!this.pending) return Infinity;
     const v = this.validCount;
-    return v === 0 ? 0 : this.paras[v - 1]!.bottom;
+    if (v === 0) return 0;
+    const last = this.paras[v - 1]!;
+    // 다단: 마지막 문단이 든 쪽의 위까지만 (그 쪽 뒤 단은 아직일 수 있다)
+    if (this.frames.multi?.()) return this.frames.page(this.frames.frame(last.pageAfter).page).top;
+    return last.bottom;
   }
 
   /** 문단 p까지 배치를 끝낸다 */
@@ -1364,6 +1385,7 @@ export class PagedLayout {
   firstLineBelow(y: number, ensure = true): LineRef | null {
     if (ensure) this.ensureThroughY(y);
     else if (y >= this.validBottom || this.validCount === 0) return null;
+    if (this.frames.multi?.()) return this.firstLineBelowPaged(y);
     const ps = this.paras;
     let lo = 0;
     let hi = this.validCount - 1;
@@ -1376,6 +1398,77 @@ export class PagedLayout {
     let k = 0;
     while (k < lines.length - 1 && lines[k]!.y + lines[k]!.height <= y) k++;
     return { para: lo, line: k };
+  }
+
+  /** 다단 (12 §7): y가 든 쪽에서 문서 순서로 처음 y 아래에 걸친 줄 (뒤 단의 줄은 그 뒤에 온다) */
+  private firstLineBelowPaged(y: number): LineRef {
+    const F = this.frames;
+    const ps = this.paras;
+    const n = this.validCount;
+    const P = this.pageAt(y);
+    const pageOf = (k: number) => F.frame(k).page;
+    let lo = 0;
+    let hi = n - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pageOf(ps[mid]!.pageAfter) < P) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = lo; i < n; i++) {
+      const lines = ps[i]!.lines;
+      for (let k = 0; k < lines.length; k++) {
+        const ln = lines[k]!;
+        if (ln.page > P || (ln.page === P && ln.y + ln.height > y)) return { para: i, line: k };
+      }
+    }
+    const last = n - 1;
+    return { para: last, line: ps[last]!.lines.length - 1 };
+  }
+
+  /** 다단: 쪽에서 x가 든 단(가장 가까운 단)의 줄 중 y에 가장 가까운 줄 */
+  private lineAtPoint(x: number, y: number): LineRef | null {
+    const F = this.frames;
+    const P = this.pageAt(y);
+    const cols = F.columnsOn?.(P) ?? [];
+    if (!cols.length) return null;
+    // 단: y가 든 띠 안에서 x가 가장 가까운 단
+    // 띠가 겹치면 (앞 구역 프레임은 쪽 끝까지 이어진다) 가장 아래에서 시작한 띠
+    let inBand = cols.filter((c) => y >= c.frame.top && y < c.frame.top + c.frame.height);
+    if (inBand.length) {
+      const top = Math.max(...inBand.map((c) => c.frame.top));
+      inBand = inBand.filter((c) => c.frame.top === top);
+    }
+    const pool = inBand.length ? inBand : cols;
+    const dist = (c: (typeof cols)[0]) => (x < c.frame.x ? c.frame.x - x : x > c.frame.x + c.frame.width ? x - c.frame.x - c.frame.width : 0);
+    const col = pool.reduce((a, b) => (dist(b) < dist(a) ? b : a));
+    const f = col.frame;
+    const ps = this.paras;
+    const n = this.validCount;
+    const pageOf = (k: number) => F.frame(k).page;
+    let lo = 0;
+    let hi = n - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pageOf(ps[mid]!.pageAfter) < P) lo = mid + 1;
+      else hi = mid;
+    }
+    let best: LineRef | null = null;
+    let bestD = Infinity;
+    for (let i = lo; i < n; i++) {
+      const pp = ps[i]!;
+      if (pageOf(pp.pageBefore) > P) break;
+      const lines = pp.lines;
+      for (let k = 0; k < lines.length; k++) {
+        const ln = lines[k]!;
+        if (ln.page !== P || ln.x < f.x - 1 || ln.x > f.x + f.width || ln.y < f.top - 1 || ln.y >= f.top + f.height) continue;
+        const d = y < ln.y ? ln.y - y : y > ln.y + ln.height ? y - ln.y - ln.height : 0;
+        if (d < bestD) {
+          bestD = d;
+          best = { para: i, line: k };
+        }
+      }
+    }
+    return best;
   }
 
   caretRect(offset: number): CaretRect {
@@ -1409,6 +1502,11 @@ export class PagedLayout {
 
   /** 문서 좌표 (쪽 왼쪽 기준 x, 문서 y) → 캐럿 오프셋 */
   hitTest(x: number, y: number): number {
+    if (this.frames.multi?.()) {
+      this.ensureThroughY(y);
+      const at = this.lineAtPoint(x, y);
+      if (at) return this.offsetInLine(at, x);
+    }
     let ref = this.firstLineBelow(y);
     const cur = this.line(ref);
     if (y < cur.y) {
@@ -1522,6 +1620,59 @@ export class PagedLayout {
     return y + need > H(page) - fn && need <= H(page + 1);
   }
 
+  /**
+   * 단 균형 (12 §7.2): 앞 구역 끝 쪽의 단 높이 상한을 이분 탐색으로 정한다 (그 쪽에 다 들어가는 가장 작은 높이). 그 쪽에 줄이 있는
+   * 문단들만 다시 놓는다 (비용은 띠 크기 × 탐색 횟수). balance가 false면 지난 균형을 풀기만 한다
+   */
+  private balance(m: number, t: { run: number; page: number; full: number; balance: boolean }): void {
+    const fs = this.frames;
+    const paras = this.paras;
+    const pageOf = (k: number) => fs.frame(k).page;
+    const firstOn = (p: number) => {
+      let i = m - 1;
+      while (i > 0 && !fs.startsSection?.(i) && pageOf(paras[i - 1]!.pageAfter) >= p) i--;
+      return i;
+    };
+    const replace = (i0: number) => {
+      const s = paras[i0]!;
+      let page = s.pageBefore;
+      let y = s.yBefore;
+      let ns = s.nsBefore;
+      for (let i = i0; i < m; i++) {
+        const pp = paras[i]!;
+        pp.placeAt(page, y, i === 0, this.keepNext(i, pp.layout, page, y, ns.fn), ns, false);
+        this.counts.repositioned++;
+        page = pp.pageAfter;
+        y = pp.yAfter;
+        ns = pp.nsAfter;
+      }
+      return page;
+    };
+    // 지난 균형을 풀고 다시 놓아 앞 구역이 실제로 끝나는 쪽을 찾는다
+    fs.setCap!(t.run, null);
+    let i0 = firstOn(t.page);
+    const end = replace(i0);
+    const P = pageOf(end);
+    if (!t.balance) return;
+    // 위 끝: 그 쪽 프레임 높이 (띠면 띠 아래)
+    const full = fs.frame(end).height;
+    if (P !== t.page) i0 = firstOn(P);
+    const fits = (h: number) => {
+      fs.setCap!(t.run, P, h);
+      return pageOf(replace(i0)) === P;
+    };
+    // 아래 끝: 그 쪽에서 가장 높은 줄 (프레임 맨 위 줄은 프레임보다 높아도 놓이므로 그보다 낮으면 "들어간다"고 잘못 본다)
+    let lo = 0;
+    for (let i = i0; i < m; i++) for (const ln of paras[i]!.lines) if (ln.page === P) lo = Math.max(lo, Math.ceil(ln.height));
+    let hi = Math.max(lo, Math.ceil(full));
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (fits(mid)) hi = mid;
+      else lo = mid + 1;
+    }
+    fits(hi);
+  }
+
   /** 문단 j의 줄 나눔 (미리 보기용: 배치된 것이 맞으면 그것, 아니면 캐시) */
   private layoutFor(j: number): ParaLayout {
     const info = this.model[j]!;
@@ -1543,9 +1694,20 @@ export class PagedLayout {
         this.frames.done?.();
         break;
       }
-      if (stop(m, this.geo.frames.frame(page).top + y)) break;
-
       const fs = this.frames;
+      const fr = fs.frame(page);
+      // 다단이면 쪽 위쪽으로 멈춘다 (앞 단의 아래가 화면 밖이어도 뒤 단의 위는 화면 안일 수 있다)
+      if (stop(m, fs.multi?.() ? fs.page(fr.page).top : fr.top + y)) break;
+
+      // 단 균형 (12 §7.2): 이어지는 구역 앞에서 앞 구역 끝 쪽의 단 높이를 맞춘다
+      const bt = fs.balanceTarget?.(m, page);
+      if (bt) {
+        this.balance(m, bt);
+        const last = paras[m - 1]!;
+        page = last.pageAfter;
+        y = last.yAfter;
+        ns = last.nsAfter;
+      }
       if (fs.enter) {
         // 구역 첫 문단: 그 구역의 첫 프레임으로 (12 §3.3)
         const e = fs.enter(m, page, y);
