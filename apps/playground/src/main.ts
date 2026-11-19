@@ -1,6 +1,7 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
 import { CommentsPane } from './comments-pane';
 import { FindBar } from './find-bar';
+import { DemoChecker, SpellContextMenu } from './spell-demo';
 import { documentFromQuire, quireFromDocument } from '@quire/sync';
 import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
 
@@ -12,7 +13,9 @@ const SAMPLE = `Quire 0단계 프로토타입
 
 줄바꿈은 어절 단위입니다. 아주긴단어가한줄보다길어지면글자단위로끊기는데이때마침표나쉼표같은닫는문장부호는줄의맨앞에오지않도록한글자를당겨서함께넘깁니다.이렇게요.그리고이모지👩‍💻도한글자로취급되어커서가중간에멈추지않습니다.
 
-단축키: Ctrl+Z 실행 취소, Ctrl+Shift+Z 또는 Ctrl+Y 다시 실행, Ctrl+A 전체 선택, Ctrl+←/→ 단어 이동, Shift+방향키 선택 확장, 두 번 클릭 단어 선택, 세 번 클릭 문단 선택.`;
+단축키: Ctrl+Z 실행 취소, Ctrl+Shift+Z 또는 Ctrl+Y 다시 실행, Ctrl+A 전체 선택, Ctrl+←/→ 단어 이동, Shift+방향키 선택 확장, 두 번 클릭 단어 선택, 세 번 클릭 문단 선택.
+
+맞춤법 검사: 금새 끝날 줄 알았는데 몇일이 걸렸어요. 이렇게 하면 되요? 이 speling misteak 같은 낱말에 물결 밑줄이 생기고, 오른쪽 클릭으로 고칠 말을 고릅니다.`;
 
 /** 서식 예제 (10 §4, 2-3·2-4): 굵게·기울임·크기·색·밑줄·취소선·형광펜·첨자, 줄마다 높이 */
 function formatSample(): Doc {
@@ -295,6 +298,7 @@ function showStats() {
       ['입력 층', editor.inputKind === 'editcontext' ? 'A. EditContext' : 'B. 숨긴 textarea'],
       ['선택', sel.anchor === sel.head ? `${sel.head}` : `${sel.anchor} → ${sel.head}`],
       ['실행 취소', editor.history.canUndo ? '가능' : '-'],
+      ['맞춤법 검사', editor.spellSession ? `${editor.spellSession.stats.checked.toLocaleString()} 문단 (그만둠 ${editor.spellSession.stats.aborted})` : '꺼짐'],
     ];
     statsEl.replaceChildren(
       ...rows.flatMap(([k, v]) => {
@@ -334,6 +338,8 @@ const fonts =
         ];
 let pane: CommentsPane | null = null;
 let findBar: FindBar | null = null;
+const spellMenu = new SpellContextMenu(() => editor);
+const spellChecker = new DemoChecker();
 const editor = new Editor({
   host,
   // 보기 모드 (14 §4.3): 최종본·원본은 정본 왕복으로 복제한 파생 문서
@@ -355,6 +361,9 @@ const editor = new Editor({
   },
   // 찾기 막대 (15 §3.1)
   onFindRequest: (replace) => findBar?.open(replace),
+  // 맞춤법 (15 §4): 데모 검사기, 오류 위 오른쪽 클릭 메뉴
+  spellChecker,
+  onContextMenu: (e, spell) => spellMenu.open(e, spell),
   input: inputMode,
   fonts,
   onFontsReady: (_e, err) => {
@@ -498,6 +507,13 @@ viewSel.addEventListener('change', () => {
 
 // 제안 모드 (4-3)
 const suggestBtn = document.getElementById('suggest')!;
+const spellBtn = document.getElementById('spell')!;
+spellBtn.addEventListener('click', () => {
+  const on = spellBtn.getAttribute('aria-pressed') !== 'true';
+  spellBtn.setAttribute('aria-pressed', String(on));
+  editor.setSpellChecker(on ? spellChecker : null);
+  editor.focus();
+});
 suggestBtn.addEventListener('click', () => {
   editor.setSuggesting(!editor.suggesting);
   suggestBtn.setAttribute('aria-pressed', String(editor.suggesting));

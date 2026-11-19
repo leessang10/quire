@@ -313,6 +313,14 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .ck-editor { height: 260px; }
 }
 
+/* ── 맞춤법 메뉴 (15 §4.3) ── */
+.ctx-menu { position: fixed; z-index: 50; min-width: 160px; max-width: min(320px, calc(100vw - 8px)); padding: 4px; display: flex; flex-direction: column; background: var(--panel, #fff); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.16); font-size: 13px; }
+.ctx-menu[hidden] { display: none; }
+.ctx-head { padding: 4px 8px 6px; color: #6b6b75; font-size: 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.ctx-menu button { text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: 4px; }
+.ctx-menu button:hover:not(:disabled), .ctx-menu button:focus-visible { background: var(--line); }
+.ctx-menu button.fix { font-weight: 600; }
+
 /* ── 셰이핑 검증 (shaping.html) ── */
 .sh-main { padding: 16px; overflow: auto; }
 .sh-main h2 { font-size: 15px; margin: 20px 0 6px; }
