@@ -21,7 +21,10 @@
     </header>
     <main class="live">
       <div class="live-editor" id="editor" aria-label="편집기"></div>
-      <aside class="versions" id="versions" aria-label="버전 기록"></aside>
+      <aside class="side">
+        <section class="people" id="people" aria-label="접속자"></section>
+        <section class="versions" id="versions" aria-label="버전 기록"></section>
+      </aside>
     </main>
     <p class="live-note" id="live-note" role="status" hidden></p>
     <script type="module" src="/src/live.ts"></script>

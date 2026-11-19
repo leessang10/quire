@@ -120,3 +120,71 @@ describe('accept and reject (05 §5 rows)', () => {
     expect(fn.text()).toBe('각주 내용\n');
   });
 });
+
+
+describe('block move and table structure suggestions (14 §4.5)', () => {
+  const author = { id: 'ua', name: '가영', color: '#2563eb' };
+
+  it('moving paragraphs: accept keeps the new order, reject moves them back; both undo', () => {
+    for (const accept of [true, false]) {
+      const d = new Document(Doc.fromText('하나\n둘\n셋\n넷'));
+      const doc = d.body;
+      const original = doc.text();
+      d.setSuggesting({ author, now: () => 1 });
+      const ops = doc.moveParagraphs(0, 0, 3); // 하나를 셋 뒤로
+      expect(ops.length).toBe(1);
+      const all = [...ops, ...d.recordSuggestions(null, doc, ops)];
+      d.setSuggesting(null);
+      expect(doc.text()).toBe('둘\n셋\n하나\n넷\n');
+      expect(d.annotationRanges().map((r) => r.data.kind).sort()).toEqual(['move', 'moveFrom']);
+      const cps = Array.from(doc.text());
+      expect(d.annotationRanges().filter((r) => r.data.kind === 'move').map((r) => cps.slice(r.from, r.to).join(''))).toEqual(['하나\n']);
+      const h = new History();
+      const pos = { anchor: doc.positionAt(0), head: doc.positionAt(0) };
+      h.record({ ops: all, before: pos, after: pos, time: 0 });
+      h.seal();
+      h.record({ ops: d.resolveAll(accept), before: pos, after: pos, time: 0 });
+      expect(doc.text()).toBe(accept ? '둘\n셋\n하나\n넷\n' : original);
+      expect(d.annotationRanges()).toEqual([]);
+      h.undo(d);
+      expect(doc.text()).toBe('둘\n셋\n하나\n넷\n');
+      h.undo(d);
+      expect(doc.text()).toBe(original);
+    }
+  });
+
+  it('moving the last paragraph block: reject puts it back at the end', () => {
+    const d = new Document(Doc.fromText('하나\n둘\n셋'));
+    const doc = d.body;
+    d.setSuggesting({ author, now: () => 1 });
+    const ops = doc.moveParagraphs(2, 2, 0);
+    d.recordSuggestions(null, doc, ops);
+    d.setSuggesting(null);
+    expect(doc.text()).toBe('셋\n하나\n둘\n');
+    d.resolveAll(false);
+    expect(doc.text()).toBe('하나\n둘\n셋\n');
+  });
+
+  it('table rows and columns: an inserted row is marked, a deleted row stays until accepted', () => {
+    const d = new Document(Doc.fromText('표 앞'));
+    const { id: table } = d.insertTable(0, 2, 2, 200000);
+    const [r1, r2] = d.table(table)!.rows as [string, string];
+    d.setSuggesting({ author, now: () => 1 });
+    const { id: r3, ops: ins } = d.addRow(table, r2);
+    d.recordSuggestions(null, d.body, ins);
+    const del = d.deleteRowOrCol(table, r1);
+    d.recordSuggestions(null, d.body, del);
+    d.setSuggesting(null);
+    // 지우기는 미뤘다: 아직 보인다
+    expect(d.table(table)!.gone[r1]).toBeUndefined();
+    const sugg = d.annotationRanges().filter((r) => r.data.kind === 'table');
+    const name = (id: unknown) => (id === r3 ? 'r3' : id === r1 ? 'r1' : '?');
+    expect(sugg.map((r) => `${r.data.op}:${r.data.axis}:${name(r.data.id)}`).sort()).toEqual(['delete:row:r1', 'insert:row:r3']);
+    // 넣은 행 거부 → 지운 표시, 지운 행 수락 → 지운 표시
+    d.resolveSuggestion(sugg.find((r) => r.data.op === 'insert')!.id, false);
+    d.resolveSuggestion(sugg.find((r) => r.data.op === 'delete')!.id, true);
+    expect(d.table(table)!.gone[r3]).toBe(true);
+    expect(d.table(table)!.gone[r1]).toBe(true);
+    expect(d.annotationRanges().filter((r) => r.type === 'suggestion')).toEqual([]);
+  });
+});

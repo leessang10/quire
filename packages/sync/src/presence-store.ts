@@ -9,13 +9,17 @@ export interface PresenceState {
   /** 인코딩한 Loro 커서 */
   anchor: Uint8Array;
   head: Uint8Array;
+  /** 커서가 있는 스토리 (14 §7: 셀·머리말·각주, 없으면 본문) */
+  story?: string | null;
+  /** 머리말·꼬리말이면 편집 중인 쪽 */
+  page?: number;
 }
 
 /** 전송 단위: 키, 일련번호, 상태(null = 떠남) */
 interface Entry {
   k: string;
   s: number;
-  v: { name: string; color: string; a: number[]; h: number[] } | null;
+  v: { name: string; color: string; a: number[]; h: number[]; st?: string; pg?: number } | null;
 }
 
 const encoder = new TextEncoder();
@@ -59,7 +63,9 @@ export class PresenceStore {
     const e: Entry = {
       k: this.key,
       s: this.seq,
-      v: s ? { name: s.name, color: s.color, a: Array.from(s.anchor), h: Array.from(s.head) } : null,
+      v: s
+        ? { name: s.name, color: s.color, a: Array.from(s.anchor), h: Array.from(s.head), ...(s.story ? { st: s.story } : {}), ...(s.page !== undefined ? { pg: s.page } : {}) }
+        : null,
     };
     return encoder.encode(JSON.stringify([e]));
   }
@@ -78,7 +84,14 @@ export class PresenceStore {
       if (e.k === this.key || !(e.s > (this.seqs.get(e.k) ?? -1))) continue;
       this.seqs.set(e.k, e.s);
       if (e.v) {
-        this.states.set(e.k, { name: e.v.name, color: e.v.color, anchor: Uint8Array.from(e.v.a), head: Uint8Array.from(e.v.h) });
+        this.states.set(e.k, {
+          name: e.v.name,
+          color: e.v.color,
+          anchor: Uint8Array.from(e.v.a),
+          head: Uint8Array.from(e.v.h),
+          ...(typeof e.v.st === 'string' ? { story: e.v.st } : {}),
+          ...(typeof e.v.pg === 'number' ? { page: e.v.pg } : {}),
+        });
         this.seen.set(e.k, now);
       } else {
         this.states.delete(e.k);

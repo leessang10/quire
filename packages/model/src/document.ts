@@ -187,6 +187,43 @@ export class Document {
       items.sort((p, q) => p[0] - q[0]);
       for (const [a, b, v] of valueRuns(items)) out.push(...this.markBefore(story, 'format', a, b, op.key, v));
     }
+    // 블록 이동 (14 §4.5): 옮긴 범위에 move, 원래 자리 뒤 첫 글자에 moveFrom (끝이었으면 마지막 ¶에 end)
+    for (const op of ops) {
+      if (op.type !== 'move' || this.suggestSkip.has(op)) continue;
+      const range = d.segmentsRange(op.segs);
+      if (!range) continue;
+      const [a, b] = range;
+      // 이미 내가 옮긴 블록을 또 옮기면 원래 자리 표시를 그대로 둔다 (move 범위는 원소를 따라온다)
+      if (this.suggestionRanges(story, 'move').some((r) => this.mine(r) && r.from <= a && r.to >= b)) continue;
+      const moveId = newAnnotationId();
+      const fromId = newAnnotationId();
+      const time = this.now();
+      const author = this.suggester.author;
+      let fs: number;
+      let end = false;
+      if (op.back !== null && d.isAlive(op.back)) fs = d.resolve({ anchor: op.back, side: 'before' });
+      else {
+        fs = d.maxCaret - 1;
+        end = true;
+      }
+      out.push(...this.annotate({ id: moveId, type: 'suggestion', story, from: a, to: b, data: { kind: 'move', author, time, pair: fromId } }));
+      out.push(...this.annotate({ id: fromId, type: 'suggestion', story, from: fs, to: fs + 1, data: { kind: 'moveFrom', author, time, pair: moveId, ...(end ? { end: true } : {}) } }));
+    }
+    // 표 행·열 (14 §4.5): 넣기는 표시만, 지우기는 미루고(지운 표시를 되돌림) 표시한다. 표 개체 글자(본문)에 건다
+    for (const op of ops) {
+      if (op.type !== 'tableMap' || op.map !== 'gone' || this.suggestSkip.has(op)) continue;
+      const at = this.tableOffsetOf(op.table);
+      if (at === null) continue;
+      const ins = op.before === true && op.after === undefined;
+      const del = op.after === true && op.before === undefined;
+      if (!ins && !del) continue;
+      if (del) {
+        this.writeTableMap(op.table, 'gone', op.key, undefined);
+        out.push({ type: 'tableMap', table: op.table, map: 'gone', key: op.key, before: true, after: undefined });
+      }
+      const data = { kind: 'table', author: this.suggester.author, time: this.now(), op: ins ? 'insert' : 'delete', table: op.table, id: op.key, axis: op.key.startsWith('r') ? 'row' : 'col' };
+      out.push(...this.annotate({ id: newAnnotationId(), type: 'suggestion', story: null, from: at, to: at + 1, data }));
+    }
     // 문단 속성: ¶ 하나
     for (const op of ops) {
       if (op.type !== 'para' || this.suggestSkip.has(op)) continue;
@@ -223,11 +260,27 @@ export class Document {
   /**
    * 제안들을 한꺼번에: 범위는 처음에 한 번 풀고, 서식·문단 되돌리기(오프셋이 바뀌지 않음) → 지우기(스토리마다 합친 구간을 뒤에서부터)
    */
-  private resolveSuggestions(list: readonly AnnotationRange[], accept: boolean, mergeAttrs = true): Op[] {
+  private resolveSuggestions(all: readonly AnnotationRange[], accept: boolean, mergeAttrs = true): Op[] {
     const saved = this.suggester;
     if (saved) this.setSuggesting(null);
     const ops: Op[] = [];
     try {
+      // 블록 이동·표: 하나씩 (이동은 오프셋을 바꾸므로 처리할 때 새로 푼다)
+      const done = new Set<string>();
+      for (const r0 of all) {
+        const kind = r0.data.kind;
+        if (kind !== 'move' && kind !== 'moveFrom' && kind !== 'table') continue;
+        if (done.has(r0.id)) continue;
+        const r = this.annotationRanges().find((x) => x.id === r0.id);
+        if (!r) continue;
+        done.add(r.id);
+        if (typeof r.data.pair === 'string') done.add(r.data.pair);
+        ops.push(...this.resolveStructural(r, accept));
+      }
+      const fresh = new Set(this.annotationRanges().map((x) => x.id));
+      const list = all
+        .filter((r) => r.data.kind !== 'move' && r.data.kind !== 'moveFrom' && r.data.kind !== 'table' && fresh.has(r.id))
+        .map((r) => (done.size ? this.annotationRanges().find((x) => x.id === r.id)! : r));
       const byStory = new Map<StoryId | null, AnnotationRange[]>();
       for (const r of list) {
         const k = r.story ?? null;
@@ -258,6 +311,42 @@ export class Document {
     } finally {
       if (saved) this.setSuggesting(saved);
     }
+    return ops;
+  }
+
+  /** 표 개체 글자의 본문 오프셋 (없으면 null) */
+  tableOffsetOf(table: string): number | null {
+    const paras = this.body.paragraphs();
+    for (const p of paras) {
+      if (!p.objs) continue;
+      for (const [k, o] of p.objs) if (o.kind === 'table' && o.table === table) return p.start + k;
+    }
+    return null;
+  }
+
+  /** 블록 이동·표 제안 하나 처리 (오프셋이 바뀌므로 하나씩 새로 푼다) */
+  private resolveStructural(r: AnnotationRange, accept: boolean): Op[] {
+    const data = r.data as unknown as SuggestionData;
+    const ops: Op[] = [];
+    if (data.kind === 'table') {
+      ops.push(...this.unannotate(r.id));
+      if ((data.op === 'insert' && !accept) || (data.op === 'delete' && accept)) ops.push(...this.setMap(data.table!, 'gone', data.id!, true));
+      return ops;
+    }
+    const move = data.kind === 'move' ? r : this.annotationRanges().find((x) => x.id === data.pair);
+    const from = data.kind === 'moveFrom' ? r : this.annotationRanges().find((x) => x.id === data.pair);
+    if (move) ops.push(...this.unannotate(move.id));
+    if (from) ops.push(...this.unannotate(from.id));
+    if (accept || !move || move.orphan || move.to <= move.from) return ops;
+    // 거부: 옮긴 블록을 원래 자리(moveFrom 앞, 끝이었으면 맨 뒤)로 되돌려 옮긴다
+    const story = move.story ?? null;
+    const d = this.docOf(story);
+    const i = d.paragraphIndexAt(move.from);
+    const j = d.paragraphIndexAt(Math.max(move.from, move.to - 1));
+    const toEnd = !from || from.orphan || (from.data as unknown as SuggestionData).end === true;
+    const to = toEnd ? d.paragraphs().length : d.paragraphIndexAt(from.from);
+    const sub = d.moveParagraphs(i, j, to);
+    ops.push(...(story === null ? sub : Document.tag(story, sub)));
     return ops;
   }
 

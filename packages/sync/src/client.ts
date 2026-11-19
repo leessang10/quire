@@ -66,7 +66,7 @@ export class SyncClient {
   private deferredState: SegState | null = null;
   /** 로컬 정의 변경이 아직 Worker에 닿지 않아 미룬 정의 상태 */
   private deferredDefs: Defs | null = null;
-  private readonly remotePos = new Map<string, { name: string; color: string; anchor: Position; head: Position }>();
+  private readonly remotePos = new Map<string, { name: string; color: string; anchor: Position; head: Position; story?: string; page?: number }>();
   private presenceVersion = 0;
   private cache: { docVersion: number; presenceVersion: number; list: RemoteSelection[] } | null = null;
   /** hold를 받음 / held를 보냄 (그때의 화면 텍스트) */
@@ -143,8 +143,13 @@ export class SyncClient {
   }
 
   /** 이 피어의 선택 영역 (화면 오프셋). Worker가 Loro 커서로 만들어 다른 피어에게 보낸다 */
-  setSelection(anchor: number, head: number): void {
-    const sel: LocalChange = { kind: 'sel', anchor: this.current.u16OfOffset(anchor), head: this.current.u16OfOffset(head) };
+  /** 이쪽 선택 (프레즌스). story: 셀·머리말·각주 스토리 (14 §7), page: 머리말·꼬리말이면 그 쪽 */
+  setSelection(anchor: number, head: number, story?: string | null, page?: number): void {
+    const d = story ? this.currentDocument.story(story) : this.current;
+    const sel: LocalChange = {
+      kind: 'sel', anchor: d.u16OfOffset(anchor), head: d.u16OfOffset(head),
+      ...(story ? { story } : {}), ...(page !== undefined ? { page } : {}),
+    };
     // 아직 보내지 않은 옛 선택은 버린다
     this.buffer = this.buffer.filter((c) => c.kind !== 'sel');
     this.buffer.push(sel);
@@ -210,9 +215,14 @@ export class SyncClient {
     if (c && c.docVersion === this.current.version && c.presenceVersion === this.presenceVersion) return c.list;
     const list: RemoteSelection[] = [];
     for (const [key, r] of this.remotePos) {
-      list.push({ key, name: r.name, color: r.color, anchor: this.current.resolve(r.anchor), head: this.current.resolve(r.head) });
+      const d = r.story ? this.currentDocument.story(r.story) : this.current;
+      list.push({
+        key, name: r.name, color: r.color, anchor: d.resolve(r.anchor), head: d.resolve(r.head),
+        ...(r.story ? { story: r.story } : {}), ...(r.page !== undefined ? { page: r.page } : {}),
+      });
     }
-    this.cache = { docVersion: this.current.version, presenceVersion: this.presenceVersion, list };
+    // 스토리 캐럿은 그 스토리의 판이 바뀌어도 풀어야 하므로 캐시하지 않는다 (피어 수만큼이라 싸다)
+    this.cache = list.some((r) => r.story) ? null : { docVersion: this.current.version, presenceVersion: this.presenceVersion, list };
     return list;
   }
 
@@ -418,8 +428,13 @@ export class SyncClient {
         if (prev) this.remotePos.set(r.key, { ...prev, name: r.name, color: r.color });
         continue;
       }
-      const at = (u: number) => this.current.positionAt(Math.min(max, this.current.offsetOfU16(mapPosThrough(u, pending))));
-      this.remotePos.set(r.key, { name: r.name, color: r.color, anchor: at(r.anchor), head: at(r.head) });
+      const d = r.story ? this.currentDocument.story(r.story) : this.current;
+      const dmax = r.story ? d.maxCaret : max;
+      const at = (u: number) => d.positionAt(Math.min(dmax, d.offsetOfU16(mapPosThrough(u, pending, r.story))));
+      this.remotePos.set(r.key, {
+        name: r.name, color: r.color, anchor: at(r.anchor), head: at(r.head),
+        ...(r.story ? { story: r.story } : {}), ...(r.page !== undefined ? { page: r.page } : {}),
+      });
     }
     for (const k of [...this.remotePos.keys()]) if (!keys.has(k)) this.remotePos.delete(k);
     this.presenceVersion++;
