@@ -1,5 +1,6 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
 import { CommentsPane } from './comments-pane';
+import { documentFromQuire, quireFromDocument } from '@quire/sync';
 import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
@@ -333,6 +334,8 @@ const fonts =
 let pane: CommentsPane | null = null;
 const editor = new Editor({
   host,
+  // 보기 모드 (14 §4.3): 최종본·원본은 정본 왕복으로 복제한 파생 문서
+  cloneDocument: (d) => documentFromQuire(quireFromDocument(d)).document,
   text: SAMPLE,
   onInputLog,
   onChange: () => {
@@ -477,6 +480,15 @@ document.getElementById('col-break')!.addEventListener('click', () => {
 
 // 댓글 창 (4-2)
 pane = new CommentsPane(document.getElementById('comments')!, editor);
+
+// 보기 모드 (4-4)
+const viewSel = document.getElementById('view-mode') as HTMLSelectElement;
+viewSel.addEventListener('change', () => {
+  const t = performance.now();
+  editor.setViewMode(viewSel.value as 'suggestions' | 'final' | 'original');
+  viewSel.title = `${Math.round(performance.now() - t)} ms`;
+  suggestBtn.toggleAttribute('disabled', editor.viewMode !== 'suggestions');
+});
 
 // 제안 모드 (4-3)
 const suggestBtn = document.getElementById('suggest')!;

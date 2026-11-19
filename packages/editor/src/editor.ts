@@ -7,6 +7,7 @@ import {
   Doc,
   Document,
   History,
+  invertOp,
   type TableGrid,
   MARK_KEYS,
   MAX_LIST_LEVEL,
@@ -96,6 +97,21 @@ export interface EditorOptions {
   assets?: AssetStore;
   /** 댓글 작성자 (14 §3.1: 4단계는 접속할 때의 사용자 정보). 없으면 "나" */
   user?: CommentAuthor;
+  /**
+   * 문서 복제 (보기 모드 최종본·원본의 파생 문서, 14 §4.3). 편집기는 동기화·정본을 모르므로 바깥에서 준다 (정본 왕복 등).
+   * 없으면 보기 모드를 바꿀 수 없다
+   */
+  cloneDocument?: (document: Document) => Document;
+}
+
+/** 보기 모드 (14 §4.3): 제안 포함(편집) / 최종본(모두 수락) / 원본(모두 거부), 뒤 둘은 읽기 전용 */
+export type ViewMode = 'suggestions' | 'final' | 'original';
+
+/** 제안 창에 놓을 제안 (14 §4.4): 범위, 화면 y, 요약 */
+export interface SuggestionView extends AnnotationRange {
+  y: number | null;
+  /** "‘…’ 넣음" 같은 요약 */
+  summary: string;
 }
 
 /** 댓글 창에 놓을 스레드 (14 §3.2): 범위와 그 화면 y (문서 좌표, 고아면 null) */
@@ -784,6 +800,13 @@ export class Editor {
    * 실행 취소 기록에는 들어가지 않는다.
    */
   docChanged(): void {
+    // 최종본·원본을 보는 중: 살아 있는 문서가 바뀌었으면 파생 문서를 다시 만든다 (잠시 모아서)
+    if (this.live && this.viewTimer === null) {
+      this.viewTimer = setTimeout(() => {
+        this.viewTimer = null;
+        if (this.live) this.showDerived();
+      }, 300);
+    }
     this.tablesAllDirty = true;
     this.relayout();
     this.render();
@@ -1391,6 +1414,106 @@ export class Editor {
     if (this.focusAnn === id) return;
     this.focusAnn = id;
     this.scheduleRender();
+  }
+
+  // ── 수락·거부, 보기 모드 (14 §4.2–4.4) ────────────────
+
+  /** 읽기 전용 (최종본·원본 보기) */
+  private readOnly = false;
+  /** 최종본·원본을 보는 동안 살아 있는 문서와 실행 취소 기록 */
+  private live: { document: Document; history: History } | null = null;
+  private mode: ViewMode = 'suggestions';
+  private viewTimer: ReturnType<typeof setTimeout> | null = null;
+
+  get viewMode(): ViewMode {
+    return this.mode;
+  }
+
+  /** 보기 모드 바꾸기. 최종본·원본은 지금 문서를 복제해 모두 수락·거부한 파생 문서를 따로 조판한다 (읽기 전용) */
+  setViewMode(mode: ViewMode): void {
+    if (mode === this.mode) return;
+    if (mode !== 'suggestions' && !this.opts.cloneDocument) throw new Error('setViewMode: cloneDocument option is required');
+    if (this.mode === 'suggestions') this.live = { document: this.document, history: this.history };
+    this.mode = mode;
+    if (mode === 'suggestions') {
+      const live = this.live!;
+      this.live = null;
+      this.readOnly = false;
+      if (this.viewTimer !== null) clearTimeout(this.viewTimer);
+      this.viewTimer = null;
+      this.setDocument(live.document);
+      this.history = live.history;
+      this.opts.onChange?.(this);
+      return;
+    }
+    this.showDerived();
+  }
+
+  private showDerived(): void {
+    const live = this.live!;
+    const d = this.opts.cloneDocument!(live.document);
+    d.resolveAll(this.mode === 'final');
+    this.readOnly = true;
+    this.setDocument(d);
+    this.opts.onChange?.(this);
+  }
+
+  /** 제안 하나 수락·거부 (보통 편집: 실행 취소 한 단계, 제안 모드에서도 새 제안이 되지 않는다) */
+  acceptSuggestion(id: string): void {
+    this.resolve(this.document.resolveSuggestion(id, true));
+  }
+
+  rejectSuggestion(id: string): void {
+    this.resolve(this.document.resolveSuggestion(id, false));
+  }
+
+  /** 모두 수락·거부 (authorId를 주면 그 작성자의 것만) */
+  acceptAll(authorId?: string): void {
+    this.resolve(this.document.resolveAll(true, authorId));
+  }
+
+  rejectAll(authorId?: string): void {
+    this.resolve(this.document.resolveAll(false, authorId));
+  }
+
+  private resolve(ops: Op[]): void {
+    if (!ops.length) return;
+    const before: Selection = { ...this.sel };
+    this.history.seal();
+    if (this.focusAnn && !this.document.annotation(this.focusAnn)) this.focusAnn = null;
+    this.commitRaw(ops, before);
+    this.history.seal();
+  }
+
+  /** 제안 목록 (14 §4.4): 범위가 있는 것은 y 순, 요약 포함 */
+  suggestionViews(): SuggestionView[] {
+    const out: SuggestionView[] = [];
+    const LABEL: Record<string, string> = {
+      bold: '굵게', italic: '기울임', underline: '밑줄', strike: '취소선', size: '크기', color: '색', highlight: '형광펜', font: '글꼴',
+      sup: '위 첨자', sub: '아래 첨자', link: '링크', align: '정렬', style: '스타일', list: '목록', indent: '들여쓰기', spacing: '줄 간격',
+    };
+    for (const a of this.suggestions()) {
+      if (a.orphan || a.to <= a.from) continue;
+      const text = Array.from(this.document.docOf(a.story).text()).slice(a.from, a.to).join('').replace(/\n/g, '¶').replace(/\uFFFC/g, '▣');
+      const short = text.length > 24 ? `${text.slice(0, 24)}…` : text;
+      const keys = Object.keys((a.data.before as Record<string, unknown> | undefined) ?? {}).map((k) => LABEL[k] ?? k).join(', ');
+      const summary =
+        a.data.kind === 'insert' ? `‘${short}’ 넣음` : a.data.kind === 'delete' ? `‘${short}’ 지움` : a.data.kind === 'format' ? `서식: ${keys} (‘${short}’)` : `문단: ${keys}`;
+      out.push({ ...a, y: this.storyY(a.story ?? null, a.from), summary });
+    }
+    out.sort((x, y) => (x.y ?? Infinity) - (y.y ?? Infinity) || x.from - y.from);
+    return out;
+  }
+
+  /** 제안 하나를 고르고 그 범위로 간다 */
+  revealSuggestion(id: string): void {
+    const s = this.suggestions().find((a) => a.id === id);
+    this.focusAnnotation(id);
+    if (!s || s.orphan || (s.story ?? null) !== null || this.storyId !== null) return;
+    this.setSelection(s.from, s.to);
+    this.scrollCaretIntoView();
+    this.render();
+    this.opts.onChange?.(this);
   }
 
   // ── 제안 모드 (14 §4) ─────────────────────────────────
@@ -3159,6 +3282,13 @@ export class Editor {
 
   /** 문서 연산 그대로 기록 (본문 연산, 표 레코드 연산, 이미 감싼 스토리 연산) */
   private commitRaw(ops: Op[], before: Selection, mergeKey?: string): void {
+    if (this.readOnly) {
+      // 읽기 전용 (보기 모드 최종본·원본): 명령이 바꾼 것을 바로 되돌린다 (모든 편집 경로가 여기를 지난다)
+      for (const op of [...ops].reverse()) this.document.apply(invertOp(op));
+      this.sel = before;
+      this.afterChange();
+      return;
+    }
     this.history.record({ ops, before, after: this.fullSel(), mergeKey, time: Date.now() });
     this.afterChange();
   }

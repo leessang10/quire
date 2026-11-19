@@ -127,6 +127,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cm-actions button { padding: 2px 8px; font-size: 12px; }
 .cm-actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .cm-card:not(.is-focus) .cm-actions .primary:not(.cm-composer *) { display: none; }
+.cm-review { display: flex; gap: 4px; padding: 0 12px 6px; }
+.cm-review button { padding: 2px 8px; font-size: 12px; }
+.cm-sugg { border-left: 3px solid #9ca3af; }
+.cm-sugg.is-insert { border-left-color: #16a34a; }
+.cm-sugg.is-delete { border-left-color: #dc2626; }
+.cm-track .cm-card.cm-sugg .cm-sugg-actions.cm-actions .primary.primary { display: inline-block; }
 .cm-rest { border-top: 1px solid var(--line); padding: 6px 10px; max-height: 40%; overflow: auto; }
 .cm-rest summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 .cm-rest-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }

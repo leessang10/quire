@@ -2,7 +2,7 @@
  * 댓글 창 (14 §3.2): 편집기 밖의 DOM. 범위가 있는 열린 스레드는 범위 시작의 y(문서 y - 스크롤)에 맞추어 놓고 겹치면 아래로 민다.
  * 해결한 스레드와 고아 스레드(글이 지워짐)는 아래 목록에 모은다. 캐럿이 댓글 범위에 들어가면 그 스레드를 고른다.
  */
-import type { Editor, ThreadView } from '@quire/editor';
+import type { Editor, SuggestionView, ThreadView } from '@quire/editor';
 
 const GAP = 8;
 
@@ -23,8 +23,11 @@ export class CommentsPane {
   private readonly rest: HTMLElement;
   private readonly restList: HTMLElement;
   private readonly countEl: HTMLElement;
+  private readonly reviewEl: HTMLElement;
   private cards = new Map<string, HTMLElement>();
   private views: ThreadView[] = [];
+  /** 제안 (14 §4.4): 카드 키는 "s:" + 주석 ID */
+  private sviews: SuggestionView[] = [];
   /** 데이터가 바뀌었을 때만 다시 만든다 (쓰는 중인 답글을 지키려고) */
   private key = '';
   /** 쓰다 만 글 (스레드·메시지별) */
@@ -49,13 +52,21 @@ export class CommentsPane {
     add.title = '선택 범위에 댓글을 단다 (Ctrl+Alt+M)';
     add.addEventListener('click', () => this.openComposer());
     head.append(add);
+    // 제안 모두 수락·거부 (14 §4.4)
+    const review = el('div', 'cm-review');
+    const accAll = el('button', undefined, '모두 수락');
+    accAll.addEventListener('click', () => this.editor.acceptAll());
+    const rejAll = el('button', undefined, '모두 거부');
+    rejAll.addEventListener('click', () => this.editor.rejectAll());
+    review.append(accAll, rejAll);
+    this.reviewEl = review;
     this.track = el('div', 'cm-track');
     this.rest = el('details', 'cm-rest');
     const sum = el('summary', undefined, '해결함 · 글이 지워진 댓글');
     this.rest.append(sum);
     this.restList = el('div', 'cm-rest-list');
     this.rest.append(this.restList);
-    root.append(head, this.track, this.rest);
+    root.append(head, review, this.track, this.rest);
     editor.scrollElement.addEventListener('scroll', () => this.place(), { passive: true });
     new ResizeObserver(() => this.place()).observe(this.track);
     window.addEventListener('keydown', (e) => {
@@ -70,13 +81,20 @@ export class CommentsPane {
   /** 편집기가 바뀌었을 때 (onChange) */
   update(): void {
     this.views = this.editor.threads();
+    this.sviews = this.editor.suggestionViews();
+    this.reviewEl.hidden = this.sviews.length === 0 || this.editor.viewMode !== 'suggestions';
     // 캐럿이 댓글 범위에 들어가면 그 스레드를 고른다 (Google Docs처럼)
     const at = this.editor.threadsAtCaret()[0] ?? null;
     if (at !== this.lastCaretThread) {
       this.lastCaretThread = at;
       if (at) this.setFocus(at, false);
     }
-    const key = JSON.stringify(this.views.map((v) => [v.id, v.resolved, v.orphan, v.messages])) + (this.composer ? 'c' : '') + this.editing;
+    const key =
+      JSON.stringify(this.views.map((v) => [v.id, v.resolved, v.orphan, v.messages])) +
+      JSON.stringify(this.sviews.map((s) => [s.id, s.summary])) +
+      (this.composer ? 'c' : '') +
+      this.editing +
+      this.editor.viewMode;
     if (key !== this.key) {
       this.key = key;
       this.build();
@@ -95,7 +113,7 @@ export class CommentsPane {
     this.restList.replaceChildren();
     const open = this.views.filter((v) => this.open(v));
     const rest = this.views.filter((v) => !this.open(v));
-    this.countEl.textContent = this.views.length ? `${open.length}개 열림` : '';
+    this.countEl.textContent = this.views.length || this.sviews.length ? `${open.length}개 열림${this.sviews.length ? ` · 제안 ${this.sviews.length}` : ''}` : '';
     if (this.composer) this.track.append(this.composerCard());
     for (const v of open) {
       const c = this.card(v);
@@ -103,6 +121,12 @@ export class CommentsPane {
       this.track.append(c);
     }
     for (const v of rest) this.restList.append(this.card(v));
+    if (this.editor.viewMode === 'suggestions')
+      for (const s of this.sviews) {
+        const c = this.suggestionCard(s);
+        this.cards.set(`s:${s.id}`, c);
+        this.track.append(c);
+      }
     this.rest.hidden = rest.length === 0;
     if (keepFocus) {
       const t = this.root.querySelector<HTMLTextAreaElement>(`textarea[data-draft="${CSS.escape(keepFocus)}"]`);
@@ -125,6 +149,10 @@ export class CommentsPane {
       const e = this.cards.get(v.id);
       if (e && v.y !== null) items.push({ e, y: v.y - top, id: v.id });
     }
+    for (const s of this.sviews) {
+      const e = this.cards.get(`s:${s.id}`);
+      if (e && s.y !== null) items.push({ e, y: s.y - top, id: `s:${s.id}` });
+    }
     items.sort((a, b) => a.y - b.y);
     const ys = items.map((it) => it.y);
     const hs = items.map((it) => it.e.offsetHeight);
@@ -142,7 +170,10 @@ export class CommentsPane {
     this.focused = id;
     for (const [k, c] of this.cards) c.classList.toggle('is-focus', k === id);
     for (const c of this.restList.children) (c as HTMLElement).classList.toggle('is-focus', (c as HTMLElement).dataset.thread === id);
-    if (id && reveal) this.editor.revealThread(id);
+    if (id?.startsWith('s:')) {
+      if (reveal) this.editor.revealSuggestion(id.slice(2));
+      else this.editor.focusAnnotation(id.slice(2));
+    } else if (id && reveal) this.editor.revealThread(id);
     else this.editor.focusThread(id);
     this.place();
   }
@@ -218,6 +249,30 @@ export class CommentsPane {
     if (id) this.focused = id;
     this.key = '';
     this.update();
+  }
+
+  /** 제안 카드: 작성자·시각·요약, 수락·거부 */
+  private suggestionCard(s: SuggestionView): HTMLElement {
+    const c = el('article', `cm-card cm-sugg is-${String(s.data.kind)}`);
+    const key = `s:${s.id}`;
+    c.classList.toggle('is-focus', key === this.focused);
+    c.addEventListener('mousedown', (e) => {
+      if ((e.target as HTMLElement).closest('button')) return;
+      this.setFocus(key, true);
+    });
+    const author = s.data.author as { name?: string; color?: string } | undefined;
+    const meta = el('div', 'cm-meta');
+    const dot = el('span', 'cm-dot');
+    dot.style.background = author?.color ?? '#888';
+    meta.append(dot, el('b', undefined, author?.name ?? '?'), el('time', undefined, fmtTime(Number(s.data.time) || 0)));
+    const row = el('div', 'cm-actions cm-sugg-actions');
+    const acc = el('button', 'primary', '수락');
+    acc.addEventListener('click', () => this.editor.acceptSuggestion(s.id));
+    const rej = el('button', undefined, '거부');
+    rej.addEventListener('click', () => this.editor.rejectSuggestion(s.id));
+    row.append(acc, rej);
+    c.append(meta, el('p', 'cm-text', s.summary), row);
+    return c;
   }
 
   private card(v: ThreadView): HTMLElement {
