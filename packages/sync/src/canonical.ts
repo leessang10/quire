@@ -17,6 +17,9 @@ import {
   OBJ_KEYS,
   cellKey,
   cellStoryId,
+  isNoteStory,
+  noteRefs,
+  noteStoryId,
   emptyTable,
   newTableId,
   normalizeTable,
@@ -224,8 +227,10 @@ export function quireFromDocument(document: Document): QuireDoc {
     return { table };
   });
   // 표 셀이 아닌 스토리 (3단계: 머리말·각주·글상자). 표 레코드가 있는 표의 셀은 표 블록이 쓴다
+  const usedNotes = new Set(noteRefs(document.body).map((n) => noteStoryId(n.id)));
   for (const id of document.storyIds().sort()) {
     if (id.includes('|') && document.table(id.split('|')[0]!)) continue; // 표 셀 (표 블록이 썼다)
+    if (isNoteStory(id) && !usedNotes.has(id)) continue; // 참조가 지워진 각주 (12 §6.1)
     const d = document.story(id);
     if (emptyStory(d)) continue;
     stories[id] = paragraphsOf(d);

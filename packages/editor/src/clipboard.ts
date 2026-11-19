@@ -16,6 +16,7 @@ import {
   Document,
   cellKey,
   cellStoryId,
+  noteStoryId,
   defaultListDef,
   normalizeTable,
   type Doc,
@@ -63,7 +64,7 @@ export interface Fragment {
   blocks: ClipBlock[];
   /** 마지막 블록의 ¶까지 복사했다 (붙이면 뒤에 새 문단이 생긴다) */
   closed: boolean;
-  /** 표 셀 내용 (표 블록의 story 이름) */
+  /** 표 셀 내용 (표 블록의 story 이름), 각주 내용 (note|<참조 id>) */
   stories: Record<string, ClipPara[]>;
   /** 쓰인 목록 정의 */
   lists: Record<string, ListDef>;
@@ -191,6 +192,14 @@ export function fragmentOf(document: Document, doc: Doc, from: number, to: numbe
     }
     frag.blocks.push(para(doc, p, s, e, frag.lists, document.body));
   }
+  // 각주 참조 (12 §6.1): 각주 내용도 싣는다 (붙이면 새 id + 내용 복사)
+  if (doc === document.body)
+    for (const b of frag.blocks)
+      if (!isTable(b))
+        for (const run of b.c) {
+          const id = run.img?.kind === 'note' ? run.img.id : undefined;
+          if (id && document.has(noteStoryId(id))) frag.stories[`note|${id}`] = storyParas(document.story(noteStoryId(id)), frag.lists, document.body);
+        }
   return frag;
 }
 
@@ -717,8 +726,16 @@ export function pasteFragment(t: PasteTarget, offset: number, frag: Fragment): {
   const insertRuns = (d: Doc, pos: number, runs: ClipRun[]): { ops: Op[]; pos: number } => {
     const o: Op[] = [];
     for (const r of runs) {
-      if (r.img) {
-        if (!r.img.asset) continue; // 원본을 못 가져온 이미지
+      if (r.img?.kind === 'note') {
+        // 각주 참조: 본문에만. 새 id로 넣고 각주 내용을 새 각주 스토리에 복사한다
+        if (t.inCell || d !== t.document.body) continue;
+        const id = t.newId();
+        o.push(...d.insertObject(pos, { ...r.img, id }, r.m ?? {}));
+        const sid = noteStoryId(id);
+        o.push(...Document.tag(sid, fillStory(t, t.document.story(sid), frag.stories[`note|${r.img.id}`] ?? [], mapList)));
+        pos++;
+      } else if (r.img) {
+        if (!r.img.asset && r.img.kind !== 'field') continue; // 원본을 못 가져온 이미지
         o.push(...d.insertObject(pos, { ...r.img, id: t.newId() }, r.m ?? {}));
         pos++;
       } else if (r.t) {
@@ -803,36 +820,39 @@ function buildTable(t: PasteTarget, block: ClipTable, frag: Fragment, ops: Op[],
       for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) taken.add(`${yy},${xx}`);
       if (h > 1 || w > 1) ops.push(...d.mergeCells(id, rows[y]!, cols[x]!, rows.slice(y + 1, y + h), cols.slice(x + 1, x + w)));
       if (c.fill) ops.push(...d.setCellAttrs(id, rows[y]!, cols[x]!, { fill: c.fill }));
-      const paras = frag.stories[c.story] ?? [];
       const sid = cellStoryId(id, rows[y]!, cols[x]!);
-      const cell = d.story(sid);
-      const o: Op[] = [];
-      let pos = 0;
-      paras.forEach((p, k) => {
-        if (k > 0) {
-          o.push({ type: 'insert', ids: cell.insertText(pos, '\n') });
-          pos++;
-        }
-        for (const r2 of p.c) {
-          if (r2.img) {
-            if (!r2.img.asset) continue;
-            o.push(...cell.insertObject(pos, { ...r2.img, id: t.newId(), float: undefined }, r2.m ?? {}));
-            pos++;
-          } else if (r2.t) {
-            o.push({ type: 'insert', ids: cell.insertText(pos, r2.t, r2.m ?? {}) });
-            pos += Array.from(r2.t).length;
-          }
-        }
-      });
-      paras.forEach((p, k) => {
-        const want: ParaAttrs = { ...p.p, ...(p.p.list ? { list: mapList(p.p.list) } : {}) };
-        for (const key of Object.keys(want) as ParaKey[]) if (want[key] !== undefined) o.push(...cell.setParaAttr(k, key, want[key]));
-      });
-      ops.push(...Document.tag(sid, o));
+      ops.push(...Document.tag(sid, fillStory(t, d.story(sid), frag.stories[c.story] ?? [], mapList)));
       x += w;
     }
   });
   return id;
+}
+
+/** 빈 스토리(셀·각주)에 문단들을 쓴다 (각주 참조·원본 없는 이미지는 빼고, 떠 있는 개체는 인라인으로). 연산은 감싸지 않은 채 */
+function fillStory(t: PasteTarget, story: Doc, paras: ClipPara[], mapList: (li: ParaAttrs['list']) => ParaAttrs['list']): Op[] {
+  const o: Op[] = [];
+  let pos = 0;
+  paras.forEach((p, k) => {
+    if (k > 0) {
+      o.push({ type: 'insert', ids: story.insertText(pos, '\n') });
+      pos++;
+    }
+    for (const r2 of p.c) {
+      if (r2.img) {
+        if (r2.img.kind === 'note' || (!r2.img.asset && r2.img.kind !== 'field')) continue;
+        o.push(...story.insertObject(pos, { ...r2.img, id: t.newId(), float: undefined }, r2.m ?? {}));
+        pos++;
+      } else if (r2.t) {
+        o.push({ type: 'insert', ids: story.insertText(pos, r2.t, r2.m ?? {}) });
+        pos += Array.from(r2.t).length;
+      }
+    }
+  });
+  paras.forEach((p, k) => {
+    const want: ParaAttrs = { ...p.p, ...(p.p.list ? { list: mapList(p.p.list) } : {}) };
+    for (const key of Object.keys(want) as ParaKey[]) if (want[key] !== undefined) o.push(...story.setParaAttr(k, key, want[key]));
+  });
+  return o;
 }
 
 /** 붙여넣기 조각이 이미지 원본(data: URL)을 가졌는가 */

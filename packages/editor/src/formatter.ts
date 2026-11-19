@@ -11,6 +11,9 @@ import {
   DEFAULT_HF_DISTANCE,
   LAST_SECTION,
   fullSection,
+  noteRefs,
+  noteStoryId,
+  type NoteRefAt,
   mergeParaAttrs,
   normalizeTable,
   type Doc,
@@ -37,6 +40,7 @@ import {
   type FloatSpec,
   type FormatSource,
   type Measurer,
+  type NoteSpec,
   type PageSetup,
   type ParaBox,
   type PreeditAt,
@@ -75,6 +79,9 @@ export type FieldValues = Record<FieldKind, string>;
 
 /** 자리표시 값 (12 §5.2): 머리말 높이를 이 값의 폭으로 잰다. 그래서 본문 프레임은 쪽 번호와 무관하다 */
 export const FIELD_PLACEHOLDER: FieldValues = { page: '999', pages: '999', sectionPages: '999', date: '0000. 00. 00.' };
+
+/** 각주 영역에서 번호 자리 (px): 각주 내용은 그만큼 들여 조판한다 */
+export const NOTE_INDENT = 24;
 
 /** 구역 하나의 머리말·꼬리말 (문서 순서로 이어 쓴 것까지) */
 export interface SectionHF {
@@ -124,6 +131,14 @@ export class Formatter {
   private measurer: Measurer | null = null;
   /** 지금 조판하는 필드 값 (null이면 자리표시) */
   fields: FieldValues | null = null;
+  /** 각주 참조 (본문 판마다 훑는다, 12 §6.1) */
+  private noteScan: { version: number; refs: NoteRefAt[]; nums: Map<string, number> } = { version: -1, refs: [], nums: new Map() };
+  /** 각주 → 줄 높이들 (스토리 판·폭·스타일 판이 같으면 그대로) */
+  private readonly noteLineCache = new Map<string, { version: number; styles: number; width: number; lines: number[] }>();
+  /** 각주 → 마지막으로 참조 문단 서식에 쓴 값 (번호 자릿수·줄 높이). 바뀌면 그 문단을 다시 조판한다 */
+  private readonly noteUsed = new Map<string, string>();
+  /** 지난 syncNotes의 참조 차례 (같으면 번호가 그대로) */
+  private noteOrder: string[] = [];
   /** 본문 문단 → 구역 차례·쪽 모양 (12 §3.3, SectionFrames). 머리말·꼬리말이 크면 본문을 민다 (§5.2) */
   readonly sections: SectionSource = {
     sectionOf: (m) => {
@@ -144,6 +159,8 @@ export class Formatter {
   /** 셀 레이아웃을 새로 (측정이 바뀌었거나 문서가 바뀜) */
   reset(measurer: Measurer, cellCache: LayoutCache): void {
     this.measurer = measurer;
+    this.noteLineCache.clear();
+    this.noteUsed.clear();
     this.hfHeights.clear();
     this.hfCache.clear();
     this.secs = [];
@@ -258,6 +275,82 @@ export class Formatter {
     return L;
   }
 
+  // ── 각주 (12 §6) ──────────────────────────────────
+
+  private notesNow(): { refs: NoteRefAt[]; nums: Map<string, number> } {
+    const b = this.body;
+    if (this.noteScan.version !== b.version) {
+      const refs = noteRefs(b);
+      const nums = new Map<string, number>();
+      refs.forEach((n, i) => {
+        if (!nums.has(n.id)) nums.set(n.id, i + 1);
+      });
+      this.noteScan = { version: b.version, refs, nums };
+    }
+    return this.noteScan;
+  }
+
+  /** 각주 번호 (참조 순서, 1부터). 참조가 없으면 0 */
+  noteNumber(id: string): number {
+    return this.notesNow().nums.get(id) ?? 0;
+  }
+
+  /** 본문의 각주 참조 (문서 순서) */
+  noteList(): readonly NoteRefAt[] {
+    return this.notesNow().refs;
+  }
+
+  /** 본문 문단 i의 각주 영역 폭 (px): 그 구역 본문 폭 − 번호 자리 */
+  noteWidth(i: number): number {
+    const s = this.body.sectionOf(i);
+    const g = this.sectionAt(s.index, s.id).geom;
+    return Math.max(1, g.width - g.left - g.right - NOTE_INDENT);
+  }
+
+  /** 각주 내용의 줄 높이들 (px, 폭 width로 조판, 합 = 각주 높이) */
+  noteLines(id: string, width: number): number[] {
+    const doc = this.document().story(noteStoryId(id));
+    const styles = this.body.stylesVersion;
+    const hit = this.noteLineCache.get(id);
+    if (hit && hit.version === doc.version && hit.width === width && hit.styles === styles) return hit.lines;
+    const L = this.layoutStory(doc, width, null);
+    const tops: number[] = [];
+    for (const pp of L.paras) for (const ln of pp!.lines) tops.push(ln.y);
+    const bottom = L.contentBottom;
+    const lines = tops.map((t, k) => (k + 1 < tops.length ? tops[k + 1]! : bottom) - t);
+    this.noteLineCache.set(id, { version: doc.version, styles, width, lines });
+    return lines;
+  }
+
+  private noteKey(id: string, width: number): string {
+    return `${String(this.noteNumber(id)).length}|${this.noteLines(id, width).join('/')}`;
+  }
+
+  /**
+   * 각주 번호 자릿수(참조 폭)나 각주 높이가 바뀐 참조 문단들 (12 §6.2): 부르는 쪽이 다시 조판하게 한다. 본문을 조판하기 전에 부른다
+   */
+  syncNotes(): number[] {
+    const out: number[] = [];
+    const refs = this.notesNow().refs;
+    // 참조 차례가 같으면 번호도 같다: 내용이 바뀐 각주만 본다 (입력마다 모든 참조의 키를 만들지 않는다)
+    const order = this.noteOrder;
+    const same = refs.length === order.length && refs.every((n, i) => n.id === order[i]);
+    if (!same) this.noteOrder = refs.map((n) => n.id);
+    const styles = this.body.stylesVersion;
+    const document = this.document();
+    for (const n of refs) {
+      const used = this.noteUsed.get(n.id);
+      if (used === undefined) continue;
+      if (same) {
+        const c = this.noteLineCache.get(n.id);
+        const sid = noteStoryId(n.id);
+        if (c && c.styles === styles && (!document.has(sid) || c.version === document.story(sid).version)) continue;
+      }
+      if (used !== this.noteKey(n.id, this.noteWidth(n.para))) out.push(n.para);
+    }
+    return out;
+  }
+
   /** 가장 넓은 쪽 폭 (px): 화면 가로 스크롤 폭 */
   maxPageWidth(): number {
     let w = this.setup.width;
@@ -286,6 +379,7 @@ export class Formatter {
     if (!p.fmt && !p.mark && !force && !box && !styled && !p.objs) return null;
     const marker = label ? { text: label.text, id: p.mark ?? 0, hanging: pt(label.def.levels[label.level]!.hanging) } : null;
     const objs = p.objs ? this.objSizes(p, doc, styled ? (attrs.style ?? BODY_STYLE) : '') : null;
+    const notes = p.objs && doc === body ? this.noteSpecs(p) : null;
     // 셀 안의 떠 있는 개체는 인라인으로 (셀 원점이 바뀌어도 놓인 자리를 다시 구하지 않으므로)
     const floats = p.objs && doc === body ? floatSpecs(p.objs) : null;
     const sty = styled ? (attrs.style ?? BODY_STYLE) : '';
@@ -293,7 +387,7 @@ export class Formatter {
     const fmt = p.fmt ?? (styled ? new Uint16Array(cpCount(p.text)) : null);
     // 서식 번호의 뜻은 스토리마다 다르므로 셀은 캐시 키에 스토리 번호를 넣는다
     const key = (doc === body ? '' : `d${this.docId(doc)}`) + (styled ? `${sty}@${body.stylesVersion}` : '');
-    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty, doc), box, marker, objs, floats, key: key || undefined };
+    return { fmt, mark: p.mark ?? 0, style: this.styleFn(sty, doc), box, marker, objs, floats, notes, key: key || undefined };
   }
 
   /** 인라인 개체 크기 (px). 필드는 값(또는 자리표시)의 글자 폭, 높이는 글자 ascent보다 작게 (줄 높이를 바꾸지 않는다) */
@@ -301,9 +395,24 @@ export class Formatter {
     const out = objSizes(p.objs!);
     if (!out) return null;
     for (const [k, o] of p.objs!) {
-      if (o.kind !== 'field' || o.float) continue;
+      if (o.float) continue;
       const run = this.drawStyle(p.fmt?.[k] ?? 0, sty, doc).run;
-      out.set(k, { w: this.textWidth(this.fieldText(o.field), run.face) * run.scale, h: 0.7 * this.fontSize * run.scale });
+      if (o.kind === 'field') out.set(k, { w: this.textWidth(this.fieldText(o.field), run.face) * run.scale, h: 0.7 * this.fontSize * run.scale });
+      // 각주 참조: 번호(위 첨자)의 폭 (12 §6.2)
+      else if (o.kind === 'note') out.set(k, { w: this.textWidth(String(this.noteNumber(o.id ?? '') || 0), run.face) * run.scale * SCRIPT_SCALE, h: 0.7 * this.fontSize * run.scale });
+    }
+    return out;
+  }
+
+  /** 본문 문단의 각주 참조 → 각주 줄 높이 (그 구역의 각주 영역 폭) */
+  private noteSpecs(p: ParagraphInfo): Map<number, NoteSpec> | null {
+    let out: Map<number, NoteSpec> | null = null;
+    let width = -1;
+    for (const [k, o] of p.objs!) {
+      if (o.kind !== 'note' || !o.id) continue;
+      if (width < 0) width = this.noteWidth(this.body.paragraphIndexAt(p.start));
+      (out ??= new Map()).set(k, { id: o.id, lines: this.noteLines(o.id, width) });
+      this.noteUsed.set(o.id, this.noteKey(o.id, width));
     }
     return out;
   }

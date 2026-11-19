@@ -1,6 +1,6 @@
 export { layoutParagraph, cpSlice, breakFrom, lineMetrics, PLAIN_STYLE, OBJ_CHAR } from './paragraph';
-export type { Measurer, Preedit, LineBox, ParaLayout, RunStyle, ParaFormat, ParaBox, MarkerLayout, FloatSpec, TableSpec } from './paragraph';
-export { LayoutCache, PagedLayout, UniformFrames, pageTop, lineHeight, objExtra, lineX, baselineOffset, charFormats, displayToDoc, docToDisplay } from './document';
+export type { Measurer, Preedit, LineBox, ParaLayout, RunStyle, ParaFormat, ParaBox, MarkerLayout, FloatSpec, TableSpec, NoteSpec, NoteRef } from './paragraph';
+export { LayoutCache, NO_NOTES, PagedLayout, UniformFrames, pageTop, lineHeight, objExtra, lineX, baselineOffset, charFormats, displayToDoc, docToDisplay } from './document';
 export type { FormatSource } from './document';
 export type {
   PageSetup,
@@ -14,6 +14,9 @@ export type {
   CaretRect,
   LineRef,
   LayoutCounts,
+  NoteState,
+  NoteCarry,
+  NotePlace,
 } from './document';
 export { TableLayouter, CELL_PAD } from './table';
 export { SectionFrames, geomKey } from './sections';

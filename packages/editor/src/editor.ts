@@ -27,6 +27,8 @@ import {
   fullSection,
   hfStoryId,
   isHFStory,
+  isNoteStory,
+  noteStoryId,
   type FieldKind,
   type HFKind,
   type HFPart,
@@ -50,7 +52,7 @@ import {
 } from '@quire/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
 import { MemoryAssets, type AssetStore } from './assets';
-import { Formatter, PLAIN_DRAW, defaultPageSetup, hasKeys, type DrawStyle, type FieldValues, type TableView } from './formatter';
+import { Formatter, NOTE_INDENT, PLAIN_DRAW, defaultPageSetup, hasKeys, type DrawStyle, type FieldValues, type TableView } from './formatter';
 import { dateText, layoutHF, pageHF } from './headers';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
@@ -265,6 +267,30 @@ interface ActiveHF {
   bodySel: Selection;
 }
 
+/** 편집 중인 각주 (12 §6.3): 누른 쪽(page)의 각주 영역에 그 각주의 레이아웃을 놓는다 */
+interface ActiveNote {
+  story: string;
+  id: string;
+  page: number;
+  /** 들어오기 전 본문 선택 */
+  bodySel: Selection;
+}
+
+/** 쪽의 각주 영역에 놓인 각주 하나 (그리기·누르기) */
+interface NoteSlot {
+  id: string;
+  num: number;
+  /** 번호 자리 왼쪽, 조각 위쪽 (문서 좌표), 각주 내용 폭 */
+  x: number;
+  y: number;
+  width: number;
+  /** 각주 줄 [from, to), 높이, 앞 쪽에서 이어 씀 */
+  from: number;
+  to: number;
+  h: number;
+  cont: boolean;
+}
+
 /** 편집 중인 머리말·꼬리말의 상태 (도구 막대) */
 export interface HeaderFooterInfo {
   part: HFPart;
@@ -307,6 +333,8 @@ export class Editor {
   private cell: ActiveCell | null = null;
   /** 편집 중인 머리말·꼬리말 (null이면 아님) */
   private hf: ActiveHF | null = null;
+  /** 편집 중인 각주 (null이면 아님) */
+  private note: ActiveNote | null = null;
   /** 지금 그리는 머리말·꼬리말의 필드 값 */
   private drawFields: FieldValues | null = null;
   /** 다음 붙여넣기는 글자만 (Ctrl+Shift+V) */
@@ -661,6 +689,7 @@ export class Editor {
     this.doc = this.document.body;
     this.cell = null;
     this.hf = null;
+    this.note = null;
     this.cellSel = null;
     this.extras = [];
     this.resetLayouts();
@@ -686,6 +715,7 @@ export class Editor {
     const { anchor, head } = this.inBody ? this.selection() : { anchor: 0, head: 0 };
     this.cell = null;
     this.hf = null;
+    this.note = null;
     this.cellSel = null;
     this.extras = []; // 다른 캐럿은 옛 문서의 원소를 가리킨다
     this.document = document;
@@ -704,12 +734,12 @@ export class Editor {
 
   /** 편집 중인 스토리 ID (본문이면 null) */
   private get storyId(): string | null {
-    return this.cell?.story ?? this.hf?.story ?? null;
+    return this.cell?.story ?? this.hf?.story ?? this.note?.story ?? null;
   }
 
   /** 본문을 편집 중인가 (셀·머리말이 아님) */
   private get inBody(): boolean {
-    return !this.cell && !this.hf;
+    return !this.cell && !this.hf && !this.note;
   }
 
   /** 날짜 필드 값 */
@@ -775,11 +805,14 @@ export class Editor {
     // 머리말·꼬리말 높이가 바뀌어 쪽 모양이 바뀐 구역은 그 첫 문단부터 다시 놓는다 (12 §5.2). 높이가 그대로면 본문은 그대로
     const sec = this.fmt.syncSections();
     if (sec >= 0) body.touchParagraph(sec === 0 ? 0 : body.sectionBreaks()[sec - 1]! + 1);
+    // 각주 높이·번호 자릿수가 바뀐 참조 문단을 다시 조판한다 (12 §6.2)
+    for (const i of this.fmt.syncNotes()) body.touchParagraph(i);
     // 화면 아래 한 화면 분량까지만 즉시 배치하고 나머지는 백그라운드로
     const syncUntil = this.scroller.scrollTop + this.scroller.clientHeight * 2;
     this.bodyLayout.update(body.paragraphs(), this.inBody ? pre : null, syncUntil, body.takeParagraphChanges());
     if (this.cell) this.attachActive();
     else if (this.hf) this.attachHF(pre);
+    else if (this.note) this.attachNote(pre);
     this.stats.layoutMs = performance.now() - t0;
     this.stats.reflowed = this.bodyLayout.counts.reflowed;
     this.stats.repositioned = this.bodyLayout.counts.repositioned;
@@ -898,6 +931,11 @@ export class Editor {
     this.drawDoc = this.body;
     this.drawActive = this.inBody;
     for (const f of floats) if (!f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
+    // 각주 영역 (12 §6.2)
+    for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
+      if (layout.pageBox(p).top - top > h) break;
+      this.drawPageNotes(p, px, top, h);
+    }
     ctx.restore();
     ctx.textBaseline = 'middle';
     this.drawParagraphDrag(px, top);
@@ -1118,6 +1156,68 @@ export class Editor {
       this.drawFields = null;
       ctx.restore();
     }
+  }
+
+  /** 쪽 p의 각주 영역: 구분선(이어 쓴 각주로 시작하면 전체 폭), 번호와 내용. 나눈 각주는 그 쪽 조각만 잘라 그린다 */
+  private drawPageNotes(p: number, px: number, top: number, h: number): void {
+    const slots = this.noteSlots(p);
+    if (!slots.length) return;
+    const { ctx } = this;
+    const s0 = slots[0]!;
+    const sep = this.setup.noteSeparator ?? 16;
+    ctx.save();
+    ctx.fillStyle = COLORS.text;
+    const lineW = s0.cont ? s0.width + NOTE_INDENT : Math.min(160, (s0.width + NOTE_INDENT) / 3);
+    ctx.fillRect(px + s0.x, s0.y - sep / 2 - top, lineW, 0.75);
+    ctx.restore();
+    for (const s of slots) {
+      const editing = this.note !== null && this.note.id === s.id && this.note.page === p;
+      const L = editing ? this.layout : this.noteLayout(s);
+      const doc = this.document.story(noteStoryId(s.id));
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(px + s.x - 2, s.y - top, s.width + NOTE_INDENT + 4, s.h);
+      ctx.clip();
+      if (!s.cont && s.num > 0) {
+        const ln = L.paras[0]?.lines[0];
+        if (ln) {
+          ctx.font = `${Math.round(this.fontSize * 0.75)}px ${this.family}`;
+          ctx.fillStyle = COLORS.text;
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText(String(s.num), px + s.x, ln.baseline - top - this.fontSize * 0.3);
+        }
+      }
+      this.drawLines(L, doc, px, top, h, null);
+      ctx.restore();
+    }
+  }
+
+  /** 쪽 p의 각주 영역에 놓인 각주들 (문서 좌표). 영역은 본문 프레임 맨 아래에 붙는다 */
+  private noteSlots(p: number): NoteSlot[] {
+    const L = this.bodyLayout;
+    const places = L.notesOnPage(p);
+    if (!places.length) return [];
+    const info = pageHF(this.fmt, L, p, this.today);
+    const sep = this.setup.noteSeparator ?? 16;
+    const area = sep + places.reduce((a, n) => a + n.h, 0);
+    let y = info.bodyBottom - area + sep;
+    const width = Math.max(1, info.header.width - NOTE_INDENT);
+    return places.map((n) => {
+      const s: NoteSlot = { id: n.id, num: this.fmt.noteNumber(n.id), x: info.header.x, y, width, from: n.from, to: n.to, h: n.h, cont: n.cont };
+      y += n.h;
+      return s;
+    });
+  }
+
+  /** 각주 조각의 레이아웃: 줄 from이 조각 위쪽에 오도록 원점을 둔다 */
+  private noteLayout(s: NoteSlot, pre: { offset: number; text: string; fmt?: number } | null = null): PagedLayout {
+    const doc = this.document.story(noteStoryId(s.id));
+    const L = this.fmt.layoutStory(doc, s.width, null, pre);
+    const lines = this.fmt.noteLines(s.id, s.width);
+    let before = 0;
+    for (let k = 0; k < s.from; k++) before += lines[k] ?? 0;
+    L.setOrigin(s.x + NOTE_INDENT, s.y - before);
+    return L;
   }
 
   /** 본문 문단 i 뒤의 나눔 표시: 구역 나눔, 다음 문단의 앞에서 쪽 나눔 (없으면 null) */
@@ -1376,6 +1476,14 @@ export class Editor {
       const x = px + lineX(pl, ln, k);
       if (attrs?.kind === 'field') {
         this.drawField(pl, k, attrs.field, info, x, box.w, baseY);
+        continue;
+      }
+      if (attrs?.kind === 'note') {
+        // 각주 참조: 번호를 위 첨자로 (12 §6.2)
+        const d = this.fmt.drawStyle(pl.fmt?.[k] ?? 0, this.fmt.styleKey(info), this.drawDoc);
+        ctx.font = this.cssFont(0, { ...d, run: { ...d.run, scale: d.run.scale * 0.65 } });
+        ctx.fillStyle = d.color ?? COLORS.text;
+        ctx.fillText(String(this.fmt.noteNumber(attrs.id ?? '') || '?'), x, baseY - this.fontSize * d.run.scale * 0.33);
         continue;
       }
       let { w, h } = box;
@@ -2700,9 +2808,19 @@ export class Editor {
   private restoreSelection(sel: Selection): void {
     this.cellSel = null;
     this.pending = null;
-    if (sel.story && isHFStory(sel.story)) {
+    if (sel.story && isNoteStory(sel.story)) {
+      // 각주: 그 각주가 놓인 쪽으로
+      this.cell = null;
+      this.hf = null;
+      if (this.note?.story !== sel.story) {
+        const id = sel.story.slice(3);
+        this.note = { story: sel.story, id, page: this.notePageOf(id), bodySel: this.note?.bodySel ?? this.bodyStart() };
+      }
+      this.doc = this.document.story(sel.story);
+    } else if (sel.story && isHFStory(sel.story)) {
       // 머리말·꼬리말: 그 스토리를 그리는 쪽으로 (지금 편집 중인 쪽이면 그대로)
       this.cell = null;
+      this.note = null;
       if (this.hf?.story !== sel.story) {
         const part: HFPart = sel.story.startsWith('hdr|') ? 'header' : 'footer';
         this.hf = { story: sel.story, part, page: Math.max(0, this.hfPageOf(sel.story, part)), bodySel: this.hf?.bodySel ?? this.bodyStart() };
@@ -2711,11 +2829,13 @@ export class Editor {
     } else if (sel.story) {
       const [table, row, col] = sel.story.split('|') as [string, string, string];
       this.hf = null;
+      this.note = null;
       this.cell = { table, row, col, story: sel.story };
       this.doc = this.document.story(sel.story);
     } else if (!this.inBody) {
       this.cell = null;
       this.hf = null;
+      this.note = null;
       this.doc = this.body;
       this.layout = this.bodyLayout;
     }
@@ -3406,6 +3526,18 @@ export class Editor {
       e.preventDefault();
       return;
     }
+    // 각주에서 나오기 (12 §6.3)
+    if (this.note && e.key === 'Escape') {
+      this.closeNote();
+      e.preventDefault();
+      return;
+    }
+    // 각주 넣기 (12 §6.3): Ctrl+Alt+F
+    if (mod && e.altKey && !shift && (e.key === 'f' || e.key === 'F' || e.code === 'KeyF')) {
+      this.insertFootnote();
+      e.preventDefault();
+      return;
+    }
     // 머리말·꼬리말에서 나오기 (12 §5.4)
     if (this.hf && e.key === 'Escape' && !this.cellSel) {
       this.closeHeaderFooter();
@@ -3727,6 +3859,21 @@ export class Editor {
       this.opts.onChange?.(this);
       return;
     }
+    // 각주 (12 §6.3): 쪽 아래 각주를 누르면 그 각주를 편집한다. 각주 밖을 누르면 나온다
+    const nz = this.noteAt(p.x, p.y);
+    if (this.note) {
+      if (nz && nz.id === this.note.id && nz.page === this.note.page) return this.selectAt(p, e);
+      this.leaveNote(false);
+      this.relayout();
+    }
+    if (nz) {
+      this.enterNote(nz.id, nz.page);
+      if (this.note) this.setSelection(this.layout.hitTest(p.x, p.y));
+      this.history.seal();
+      this.render();
+      this.opts.onChange?.(this);
+      return;
+    }
     if (e.detail === 1 && this.inGrip(p.x, p.y)) {
       const ref = this.bodyLayout.firstLineBelow(p.y, false);
       if (ref) {
@@ -3808,6 +3955,115 @@ export class Editor {
     }
   }
 
+  // ── 각주 (12 §6) ─────────────────────────────────────
+
+  /** 문서 좌표의 각주 (쪽 아래 각주 영역) */
+  private noteAt(x: number, y: number): { id: string; page: number } | null {
+    const L = this.bodyLayout;
+    const page = L.pageAt(y);
+    if (page >= L.pageCount) return null;
+    for (const s of this.noteSlots(page)) if (y >= s.y && y < s.y + s.h && x >= s.x - 4 && x <= s.x + NOTE_INDENT + s.width + 4) return { id: s.id, page };
+    return null;
+  }
+
+  /** 각주가 (처음) 놓인 쪽: 참조 줄의 쪽부터 찾는다. 없으면 참조 줄의 쪽 */
+  private notePageOf(id: string): number {
+    const L = this.bodyLayout;
+    const ref = this.fmt.noteList().find((n) => n.id === id);
+    if (!ref) return 0;
+    const pp = L.para(ref.para);
+    const ln = pp.lines.find((l, k) => ref.k < l.end || k === pp.lines.length - 1)!;
+    for (let p = ln.page; p < Math.min(L.pageCount, ln.page + 8); p++) if (L.notesOnPage(p).some((n) => n.id === id)) return p;
+    return ln.page;
+  }
+
+  /** 각주 편집을 시작한다 (page: 그 각주가 놓인 쪽, 없으면 처음 놓인 쪽) */
+  private enterNote(id: string, page: number | null): void {
+    this.input.commitComposition();
+    if (this.hf) this.leaveHF(true);
+    if (this.cell) this.leaveCellKeep();
+    const bodySel = this.note ? this.note.bodySel : { anchor: this.sel.anchor, head: this.sel.head };
+    if (this.note) this.leaveNote(true);
+    this.history.seal();
+    const story = noteStoryId(id);
+    this.note = { story, id, page: page ?? this.notePageOf(id), bodySel };
+    this.extras = [];
+    this.pending = null;
+    this.cellSel = null;
+    this.doc = this.document.story(story);
+    const end = this.doc.positionAt(this.doc.maxCaret);
+    this.sel = { anchor: end, head: end, story };
+    this.relayout();
+  }
+
+  /** 편집 중인 각주의 레이아웃: 그 쪽에 놓인 조각 자리. 참조가 지워졌으면 나온다 */
+  private attachNote(pre: { offset: number; text: string; fmt?: number } | null): void {
+    const a = this.note!;
+    if (!this.fmt.noteNumber(a.id)) return this.leaveNote(true);
+    let s = this.noteSlots(a.page).find((x) => x.id === a.id);
+    if (!s) {
+      a.page = this.notePageOf(a.id);
+      s = this.noteSlots(a.page).find((x) => x.id === a.id);
+    }
+    if (!s) return this.leaveNote(true);
+    this.layout = this.noteLayout(s, pre);
+  }
+
+  /** 각주 편집을 끝낸다. restore면 들어오기 전 본문 선택으로 */
+  private leaveNote(restore: boolean): void {
+    const a = this.note;
+    if (!a) return;
+    this.input.commitComposition();
+    this.history.seal();
+    this.note = null;
+    this.extras = [];
+    this.pending = null;
+    this.doc = this.body;
+    this.layout = this.bodyLayout;
+    if (restore) this.sel = { anchor: a.bodySel.anchor, head: a.bodySel.head };
+    else this.setSelection(0);
+  }
+
+  /**
+   * 각주 넣기 (Ctrl+Alt+F, 12 §6.3): 캐럿에 참조를 넣고 그 각주를 편집한다. 본문에서만 (셀·머리말 안 각주는 3단계 밖).
+   * 참조 넣기는 실행 취소 한 단계
+   */
+  insertFootnote(): void {
+    this.input.commitComposition();
+    if (!this.inBody || this.extras.length) return;
+    const before: Selection = { ...this.sel };
+    const [from, to] = this.range();
+    const ops: Op[] = [];
+    if (from !== to) ops.push(...this.doc.deleteRange(from, to));
+    const marks = this.pending && this.pending.at === from ? this.pending.marks : undefined;
+    const id = crypto.randomUUID().replace(/-/g, '').slice(0, 10);
+    ops.push(...this.doc.insertObject(from, { id, kind: 'note' }, marks));
+    this.setSelection(from + 1);
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+    this.enterNote(id, null);
+    this.scrollCaretIntoView();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 각주 편집에서 본문으로 (Esc): 들어오기 전 본문 선택으로 */
+  closeNote(): void {
+    if (!this.note) return;
+    this.leaveNote(true);
+    this.relayout();
+    this.scrollCaretIntoView();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 편집 중인 각주 (번호, 없으면 null) */
+  noteInfo(): { id: string; number: number; page: number } | null {
+    const a = this.note;
+    return a ? { id: a.id, number: this.fmt.noteNumber(a.id), page: a.page } : null;
+  }
+
   // ── 머리말·꼬리말 (12 §5) ─────────────────────────────
 
   /** 문서 좌표가 쪽의 머리말(본문 위)·꼬리말(본문 아래) 영역이면 그 쪽과 영역 */
@@ -3856,6 +4112,7 @@ export class Editor {
   private enterHF(page: number, part: HFPart): void {
     this.input.commitComposition();
     if (this.cell) this.leaveCellKeep();
+    if (this.note) this.leaveNote(true);
     const bodySel = this.hf ? this.hf.bodySel : { anchor: this.sel.anchor, head: this.sel.head };
     if (this.hf) this.leaveHF(true);
     const body = this.body;

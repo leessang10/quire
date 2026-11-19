@@ -2,7 +2,7 @@
  * 서식 있는 복사·붙여넣기: 조각 만들기, 붙이기 규칙 (Google Docs와 같은 문단 속성 규칙), 목록·표·이미지, HTML 읽기·쓰기
  */
 import { describe, expect, it } from 'vitest';
-import { Doc, Document, History, cellStoryId, defaultListDef, normalizeTable, type Op } from '@quire/model';
+import { Doc, Document, History, cellStoryId, defaultListDef, noteRefs, noteStoryId, normalizeTable, type Op } from '@quire/model';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, parseHtml, pasteFragment, type Fragment } from './clipboard';
 
 const NL = '\n';
@@ -64,6 +64,34 @@ describe('copy (fragment)', () => {
     expect(h).toContain('<p><b>굵은</b> 글자와 보통</p>');
     expect(h).toContain('<ol><li>항목 하나</li><li>항목 둘</li></ol>');
     expect(h).toContain('<p style="text-align:center">끝</p>');
+  });
+});
+
+describe('footnotes and fields in the clipboard (12 §5, §6)', () => {
+  it('pastes a footnote reference with a new id and a copy of its note; fields are kept', () => {
+    const d = new Document(Doc.fromText(`가나다${NL}라마`));
+    d.body.insertObject(1, { id: 'a', kind: 'note' });
+    d.story(noteStoryId('a')).insertText(0, `각주 내용${NL}둘째 줄`);
+    const frag = fragmentOf(d, d.body, 0, 4);
+    expect(frag.stories['note|a']!.length).toBe(2);
+    const at = d.body.paragraphs()[1]!.end;
+    const { ops } = pasteFragment(target(d), at, JSON.parse(JSON.stringify(frag)) as Fragment);
+    const refs = noteRefs(d.body);
+    expect(refs.length).toBe(2);
+    expect(refs[1]!.id).not.toBe('a');
+    expect(d.story(noteStoryId(refs[1]!.id)).text()).toBe(`각주 내용${NL}둘째 줄${NL}`);
+    // 되돌리면 참조와 각주 내용이 함께 사라진다
+    const h = new History();
+    h.record({ ops: ops as Op[], before: { anchor: d.body.positionAt(at), head: d.body.positionAt(at) }, after: { anchor: d.body.positionAt(at), head: d.body.positionAt(at) }, time: 0 });
+    h.undo(d);
+    expect(noteRefs(d.body).length).toBe(1);
+    expect(d.story(noteStoryId(refs[1]!.id)).text()).toBe(NL);
+    // 머리말의 필드는 원본이 없는 개체지만 붙인다
+    const hdr = d.story('hdr|x|default');
+    hdr.insertObject(0, { kind: 'field', field: 'page' });
+    const f2 = fragmentOf(d, hdr, 0, 1);
+    pasteFragment(target(d, hdr), 1, f2);
+    expect([...hdr.paragraphs()[0]!.objs!.values()].map((o) => o.field)).toEqual(['page', 'page']);
   });
 });
 

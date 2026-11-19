@@ -1,5 +1,5 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
-import { Doc, Document, LAST_SECTION, PAPER_SIZES, defaultListDef, fullSection, hfStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
+import { Doc, Document, LAST_SECTION, PAPER_SIZES, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
 
@@ -127,6 +127,30 @@ function sectionsSample(): Document {
   foot.insertText(1, ' / ');
   foot.insertObject(4, { kind: 'field', field: 'pages' });
   foot.setParaAttr(0, 'align', 'center');
+  return document;
+}
+
+/**
+ * 각주 예제 (12 §6): 문단마다 각주 참조. 쪽 끝 근처의 참조는 줄과 각주가 함께 다음 쪽으로 가고, 긴 각주는 쪽 사이에서 나뉘어 이어진다
+ */
+function notesSample(): Document {
+  const body = '각주는 본문의 참조 번호와 쪽 아래의 각주 내용으로 이루어집니다. 참조가 있는 줄과 그 각주는 같은 쪽에 놓이고, 각주가 쪽보다 크면 다음 쪽에 이어 씁니다.';
+  const OBJ = String.fromCharCode(0xfffc);
+  const texts: string[] = ['각주 예제'];
+  for (let i = 0; i < 24; i++) texts.push(`${i + 1}. ${body} ${body}${OBJ}`);
+  const doc = Doc.fromParagraphRuns(
+    texts.map((t, i) => ({
+      attrs: i === 0 ? { style: 'h1' } : { align: 'justify' as const },
+      runs: t.endsWith(OBJ) ? [{ text: t.slice(0, -1), marks: {} }, { text: OBJ, marks: {}, obj: { id: `n${i}`, kind: 'note' as const } }] : [{ text: t, marks: {} }],
+    })),
+  );
+  doc.takeParagraphChanges();
+  const document = new Document(doc);
+  for (let i = 1; i < texts.length; i++) {
+    const s = document.story(noteStoryId(`n${i}`));
+    const long = i === 9;
+    s.insertText(0, long ? Array.from({ length: 18 }, (_, k) => `긴 각주의 ${k + 1}번째 문장입니다. 각주가 쪽의 절반보다 크면 들어가는 만큼 놓고 나머지는 다음 쪽 각주 영역 맨 위에 이어 씁니다.`).join(' ') : `각주 ${i}: 이 문단에 대한 설명입니다.`);
+  }
   return document;
 }
 
@@ -289,6 +313,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-doc]').forEach((btn) => {
       });
       return;
     }
+    if (kind === 'notes') {
+      editor.setDocument(notesSample());
+      editor.focus();
+      showStats();
+      return;
+    }
     if (kind === 'sections') {
       editor.setDocument(sectionsSample());
       editor.focus();
@@ -370,6 +400,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-tbl]').forEach((b) =>
   }),
 );
 let fillOn = false;
+
+// 각주 (3-5)
+document.getElementById('footnote')!.addEventListener('click', () => {
+  editor.insertFootnote();
+  editor.focus();
+});
 
 // 쪽 나눔 제어 (3-3)
 document.getElementById('page-break')!.addEventListener('click', () => {
