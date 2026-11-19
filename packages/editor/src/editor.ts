@@ -40,6 +40,9 @@ import {
   LayoutCache,
   PagedLayout,
   SectionFrames,
+  CELL_PAD,
+  cellGroups,
+  rowParts,
   cpSlice,
   docToDisplay,
   lineX,
@@ -1305,42 +1308,62 @@ export class Editor {
       bodySel = a <= info.start && b > info.start;
     }
     const box = this.cellSelBox(v);
+    // 행 조각 (12 §8): 셀은 그 행들의 조각마다 (같은 쪽에서 이어지면 하나로) 그린다
+    const parts = rowParts(v.grid.cells.length, lines);
+    const drawCell = (cell: NonNullable<TableGrid['cells'][0][0]>, x: number, y: number, rect: { x: number; top: number; height: number }, repeat: boolean) => {
+      const cx = px + rect.x + colX[x]!;
+      const cw = colX[x + cell.span[1]]! - colX[x]!;
+      const cy = rect.top - top;
+      const ch = rect.height;
+      if (cy > h || cy + ch < 0) return;
+      const fill = rec?.cellAttrs[cellKey(cell.row, cell.col)]?.fill;
+      if (fill) {
+        ctx.fillStyle = fill;
+        ctx.fillRect(cx, cy, cw, ch);
+      }
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cx, cy, cw, ch);
+      ctx.clip();
+      for (const sid of [cell.story, ...cell.covered]) {
+        const c = this.fmt.tables.cells.get(sid);
+        const d = this.document.story(sid);
+        if (!c || (sid !== cell.story && isEmptyDoc(d))) continue;
+        if (repeat) {
+          // 다시 그린 제목 행: 같은 셀 레이아웃을 이 자리 원점으로 잠깐 옮겨 그린다 (편집은 원래 자리에서만)
+          const L = c.layout;
+          const sx = L.setup.originX ?? 0;
+          const sy = L.setup.originY ?? 0;
+          L.setOrigin(rect.x + colX[x]! + CELL_PAD, rect.top + CELL_PAD);
+          this.drawLines(L, d, px, top, h, null);
+          L.setOrigin(sx, sy);
+        } else this.drawLines(c.view, d, px, top, h, null);
+      }
+      ctx.restore();
+      if (!repeat && (bodySel || (box && y >= box.y0 && y <= box.y1 && x >= box.x0 && x <= box.x1))) {
+        ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
+        ctx.fillRect(cx, cy, cw, ch);
+      }
+      ctx.strokeStyle = COLORS.tableBorder;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(Math.round(cx) + 0.5, Math.round(cy) + 0.5, Math.round(cw), Math.round(ch));
+    };
     for (let y = 0; y < v.grid.cells.length; y++) {
       const row = v.grid.cells[y]!;
       for (let x = 0; x < row.length; x++) {
         const cell = row[x];
         if (!cell) continue;
-        const first = lines[y];
-        const last = lines[y + cell.span[0] - 1];
-        if (!first || !last) continue;
-        const cx = px + first.x + colX[x]!;
-        const cw = colX[x + cell.span[1]]! - colX[x]!;
-        const cy = first.y - top;
-        const ch = (last.page === first.page ? last.y + last.height : first.y + first.height) - first.y;
-        if (cy > h || cy + ch < 0) continue;
-        const fill = rec?.cellAttrs[cellKey(cell.row, cell.col)]?.fill;
-        if (fill) {
-          ctx.fillStyle = fill;
-          ctx.fillRect(cx, cy, cw, ch);
-        }
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(cx, cy, cw, ch);
-        ctx.clip();
-        for (const sid of [cell.story, ...cell.covered]) {
-          const c = this.fmt.tables.cells.get(sid);
-          const d = this.document.story(sid);
-          if (!c || (sid !== cell.story && isEmptyDoc(d))) continue;
-          this.drawLines(c.layout, d, px, top, h, null);
-        }
-        ctx.restore();
-        if (bodySel || (box && y >= box.y0 && y <= box.y1 && x >= box.x0 && x <= box.x1)) {
-          ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
-          ctx.fillRect(cx, cy, cw, ch);
-        }
-        ctx.strokeStyle = COLORS.tableBorder;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(Math.round(cx) + 0.5, Math.round(cy) + 0.5, Math.round(cw), Math.round(ch));
+        const mine: PlacedLine[] = [];
+        for (let k = y; k < y + cell.span[0]; k++) mine.push(...(parts[k] ?? []));
+        for (const g of cellGroups(mine)) drawCell(cell, x, y, { x: g.x, top: g.top, height: g.height }, false);
+      }
+    }
+    for (const ln of lines) {
+      if (!ln.repeat || ln.row === undefined) continue;
+      const row = v.grid.cells[ln.row]!;
+      for (let x = 0; x < row.length; x++) {
+        const cell = row[x];
+        if (cell) drawCell(cell, x, ln.row, { x: ln.x, top: ln.y, height: ln.height }, true);
       }
     }
   }
@@ -2966,7 +2989,7 @@ export class Editor {
       return;
     }
     this.fmt.tables.place(loc.view.input, loc.view.measure, loc.para.lines);
-    this.layout = this.fmt.tables.cells.get(a.story)!.layout;
+    this.layout = this.fmt.tables.cells.get(a.story)!.view;
   }
 
   /** 셀 편집을 끝내고 본문으로 (선택은 본문 처음: 부르는 쪽이 정한다) */
@@ -3022,7 +3045,7 @@ export class Editor {
     const y = edge === 'first' ? 0 : v.grid.cells.length - 1;
     let col = edge === 'first' ? 0 : v.grid.cols.length - 1;
     if (x !== null) {
-      const rx = x - loc.para.lines[y]!.x;
+      const rx = x - loc.para.lines[0]!.x;
       col = 0;
       while (col + 1 < v.grid.cols.length && v.measure.colX[col + 1]! <= rx) col++;
     }
@@ -3059,7 +3082,7 @@ export class Editor {
     if (rx < 0 || rx >= v.measure.width) return null;
     let col = 0;
     while (col + 1 < v.grid.cols.length && v.measure.colX[col + 1]! <= rx) col++;
-    const o = this.ownerAt(v, ref.line, col);
+    const o = this.ownerAt(v, ln.row ?? ref.line, col);
     return o ? { view: v, ...o } : null;
   }
 
@@ -3190,11 +3213,39 @@ export class Editor {
   }
 
   /** 편집 중인 표·셀 (도구 막대 상태) */
-  tableState(): { inTable: boolean; merged: boolean; range: boolean } {
+  tableState(): { inTable: boolean; merged: boolean; range: boolean; header: boolean; cantSplit: boolean } {
     const a = this.cell;
     const v = a && this.fmt.tableViews.get(a.table);
     const pos = v && this.cellPos(v, a.story);
-    return { inTable: !!a, merged: !!pos && (pos.cell.span[0] > 1 || pos.cell.span[1] > 1), range: !!this.cellSel && !!v && !!this.cellSelBox(v) };
+    const ra = a ? this.document.table(a.table)?.rowAttrs[a.row] : undefined;
+    return {
+      inTable: !!a,
+      merged: !!pos && (pos.cell.span[0] > 1 || pos.cell.span[1] > 1),
+      range: !!this.cellSel && !!v && !!this.cellSelBox(v),
+      header: !!ra?.header,
+      cantSplit: !!ra?.cantSplit,
+    };
+  }
+
+  /**
+   * 편집 중인 셀(셀 범위면 그 행들)의 행 속성 (12 §8): header = 제목 행 (표 맨 위에서 이어진 제목 행들을 표가 이어지는 쪽마다 다시
+   * 그린다), cantSplit = 행 나누지 않음. 실행 취소 한 단계
+   */
+  tableSetRowFlag(flag: 'header' | 'cantSplit', on: boolean): void {
+    const a = this.cell;
+    const v = a && this.fmt.tableViews.get(a.table);
+    if (!a || !v) return;
+    const box = this.cellSelBox(v);
+    const rows = box ? v.grid.rows.slice(box.y0, box.y1 + 1) : [a.row];
+    const rec = this.document.table(a.table)!;
+    const ops: Op[] = [];
+    for (const r of rows) {
+      const next: Record<string, unknown> = { ...(rec.rowAttrs[r] ?? {}) };
+      if (on) next[flag] = true;
+      else delete next[flag];
+      ops.push(...this.document.setRowAttrs(a.table, r, Object.keys(next).length ? next : undefined));
+    }
+    this.commitTable(ops, { ...this.sel });
   }
 
   /** 캐럿 문단 앞에 표를 넣는다 (행 × 열, 본문 폭을 열마다 똑같이) 그리고 첫 셀로 */

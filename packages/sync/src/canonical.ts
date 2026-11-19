@@ -56,7 +56,7 @@ export interface QuireTable {
   table: {
     /** 열 너비 (1/1000pt) */
     cols: number[];
-    rows: Array<{ cells: Array<{ story: string; span?: [number, number]; fill?: string; valign?: string }>; h?: number; header?: true }>;
+    rows: Array<{ cells: Array<{ story: string; span?: [number, number]; fill?: string; valign?: string }>; h?: number; header?: true; cantSplit?: true }>;
     attrs?: Record<string, unknown>;
   };
 }
@@ -203,6 +203,7 @@ export function quireFromDocument(document: Document): QuireDoc {
       const ra = rec.rowAttrs[g.rows[y]!];
       if (ra?.minHeight) r.h = ra.minHeight;
       if (ra?.header) r.header = true;
+      if (ra?.cantSplit) r.cantSplit = true;
       row.forEach((c, x) => {
         if (!c) return;
         const name = `t${tk}.r${y + 1}c${x + 1}`;
@@ -258,6 +259,7 @@ export function documentFromQuire(q: QuireDoc, peer?: string): { document: Docum
       const r = rec.rows[y]!;
       if (row.h) rec.rowAttrs[r] = { ...rec.rowAttrs[r], minHeight: row.h };
       if (row.header) rec.rowAttrs[r] = { ...rec.rowAttrs[r], header: true };
+      if (row.cantSplit) rec.rowAttrs[r] = { ...rec.rowAttrs[r], cantSplit: true };
       let x = 0;
       for (const cell of row.cells) {
         while (taken.has(`${y},${x}`)) x++;

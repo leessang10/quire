@@ -1,5 +1,5 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
-import { Doc, Document, LAST_SECTION, PAPER_SIZES, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
+import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
 
@@ -127,6 +127,28 @@ function sectionsSample(): Document {
   foot.insertText(1, ' / ');
   foot.insertObject(4, { kind: 'field', field: 'pages' });
   foot.setParaAttr(0, 'align', 'center');
+  return document;
+}
+
+/**
+ * 표 예제 (12 §8): 쪽을 넘는 80행 표. 첫 행은 제목 행(쪽마다 다시 그림), 5행은 셀 글이 길어 쪽 사이에서 쪼개지고, 9행은 행 나누지 않음
+ */
+function tableSample(): Document {
+  const doc = Doc.fromText(['표 예제', ...Array.from({ length: 14 }, (_, i) => `${i + 1}. 표 앞 문단입니다. 표가 쪽 끝에 걸리면 행을 줄 단위로 쪼개고, 다음 쪽 맨 위에 제목 행을 다시 그립니다.`), '표 뒤 문단'].join('\n'));
+  doc.setParaAttr(0, 'style', 'h1');
+  const document = new Document(doc);
+  const { id } = document.insertTable(doc.paragraphs()[15]!.start, 80, 3, 451000);
+  doc.takeParagraphChanges();
+  const t = document.table(id)!;
+  const cell = (r: number, c: number) => document.story(cellStoryId(id, t.rows[r]!, t.cols[c]!));
+  ['번호', '항목', '설명'].forEach((h, c) => cell(0, c).insertText(0, h));
+  document.setRowAttrs(id, t.rows[0]!, { header: true });
+  for (let r = 1; r < 80; r++) {
+    cell(r, 0).insertText(0, String(r));
+    cell(r, 1).insertText(0, `항목 ${r}`);
+    cell(r, 2).insertText(0, r === 5 ? Array.from({ length: 40 }, (_, k) => `긴 셀의 ${k + 1}번째 줄입니다.`).join('\n') : r === 9 ? '이 행은 나누지 않습니다.\n둘째 줄\n셋째 줄\n넷째 줄' : `설명 ${r}`);
+  }
+  document.setRowAttrs(id, t.rows[9]!, { cantSplit: true });
   return document;
 }
 
@@ -315,7 +337,11 @@ const editor = new Editor({
     showStats();
     showMarks();
     const t = (document.querySelector('.tbl-tools') as HTMLElement | null);
-    if (t) t.hidden = !editor?.tableState().inTable;
+    const ts = editor?.tableState();
+    if (t) t.hidden = !ts?.inTable;
+    document.querySelectorAll<HTMLButtonElement>('[data-tbl="header"], [data-tbl="cantSplit"]').forEach((b) =>
+      b.setAttribute('aria-pressed', String(!!ts?.[b.dataset.tbl as 'header' | 'cantSplit'])),
+    );
     showHeaderFooter();
   },
   input: inputMode,
@@ -336,6 +362,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-doc]').forEach((btn) => {
         editor.focus();
         showStats();
       });
+      return;
+    }
+    if (kind === 'table') {
+      editor.setDocument(tableSample());
+      editor.focus();
+      showStats();
       return;
     }
     if (kind === 'columns') {
@@ -426,6 +458,8 @@ document.querySelectorAll<HTMLButtonElement>('[data-tbl]').forEach((b) =>
       case 'unmerge': editor.tableUnmerge(); break;
       case 'fill': editor.tableCellFill(t.inTable && !fillOn ? '#eeeeee' : undefined); fillOn = !fillOn; break;
       case 'delete': editor.deleteTable(); break;
+      case 'header': editor.tableSetRowFlag('header', !t.header); break;
+      case 'cantSplit': editor.tableSetRowFlag('cantSplit', !t.cantSplit); break;
     }
     editor.focus();
   }),

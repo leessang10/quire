@@ -16,8 +16,10 @@ export interface CellAttrs {
 export interface RowAttrs {
   /** 최소 높이 (1/1000pt) */
   minHeight?: number;
-  /** 제목 행 (3단계: 쪽마다 반복) */
+  /** 제목 행 (12 §8: 표 맨 위에서 이어진 제목 행들을 표가 이어지는 프레임마다 다시 그린다) */
   header?: true;
+  /** 행 나누지 않음 (12 §8): 프레임에 다 들어가지 않으면 다음 프레임으로 (빈 프레임보다 크면 쪼갠다) */
+  cantSplit?: true;
 }
 
 export interface TableAttrs {
