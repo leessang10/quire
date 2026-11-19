@@ -14,7 +14,7 @@ export { canonicalJson, displayText, docFromQuire, documentFromQuire, migrateQui
 export type { QuireDoc, QuireParagraph, QuireRun } from './canonical';
 export { openQuire, packQuire, assetIdOf, assetIdsOf, MIMETYPE, FORMAT_VERSION } from './quire-file';
 export type { OpenedQuire, Manifest, QuireAsset } from './quire-file';
-export { applyHunks, compactDoc, compactDocument, compactLoro, diffText, documentFromSnapshot, readEpoch, rebaseHunks, rebaseOnto, syncFormats, META } from './epoch';
+export { applyHunks, compactDoc, compactDocument, compactLoro, diffText, documentFromSnapshot, restoreInto, readEpoch, rebaseHunks, rebaseOnto, syncFormats, META } from './epoch';
 export type { Hunk, RebaseInfo } from './epoch';
 export { parseRebase } from './ws';
 export { LoroWriter, initLoro, newLoro, readRaw, readState, displayOrderFromLoro, SEG_MARK, TEXT, ORDER, END } from './shape';
@@ -24,3 +24,5 @@ export type { Defs } from './protocol';
 export { BODY_NAMES, storyNames, storyIdsOf, documentFromLoro, readTail } from './shape';
 export type { Names } from './shape';
 export { readTable, tableIdsOf, writeTable, writeTableRecord } from './shape';
+export { compareVersions } from './compare';
+export type { Frontiers } from './compare';

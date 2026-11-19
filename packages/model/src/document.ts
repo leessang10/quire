@@ -211,16 +211,19 @@ export class Document {
     return this.resolveSuggestions([r], accept);
   }
 
-  /** 모두 수락·거부 (author를 주면 그 작성자의 것만) */
-  resolveAll(accept: boolean, authorId?: string): Op[] {
+  /**
+   * 모두 수락·거부 (author를 주면 그 작성자의 것만). mergeAttrs = false면 ¶를 지울 때 앞 문단 속성을 두지 않는다: 버전 비교 문서는
+   * 편집기가 남긴 속성 연산이 이미 차이에 들어 있다 (14 §5.3)
+   */
+  resolveAll(accept: boolean, authorId?: string, mergeAttrs = true): Op[] {
     const list = this.annotationRanges().filter((x) => x.type === 'suggestion' && (authorId === undefined || (x.data.author as CommentAuthor | undefined)?.id === authorId));
-    return this.resolveSuggestions(list, accept);
+    return this.resolveSuggestions(list, accept, mergeAttrs);
   }
 
   /**
    * 제안들을 한꺼번에: 범위는 처음에 한 번 풀고, 서식·문단 되돌리기(오프셋이 바뀌지 않음) → 지우기(스토리마다 합친 구간을 뒤에서부터)
    */
-  private resolveSuggestions(list: readonly AnnotationRange[], accept: boolean): Op[] {
+  private resolveSuggestions(list: readonly AnnotationRange[], accept: boolean, mergeAttrs = true): Op[] {
     const saved = this.suggester;
     if (saved) this.setSuggesting(null);
     const ops: Op[] = [];
@@ -247,7 +250,7 @@ export class Document {
             for (const [k, v] of Object.entries(before)) sub.push(...d.setParaAttr(pi, k as ParaKey, v === null ? undefined : v));
           }
         }
-        for (const [a, b] of unionIntervals(cuts).reverse()) sub.push(...this.deleteKeepingAttrs(d, a, b));
+        for (const [a, b] of unionIntervals(cuts).reverse()) sub.push(...(mergeAttrs ? this.deleteKeepingAttrs(d, a, b) : d.deleteRange(a, b)));
         ops.push(...(story === null ? sub : Document.tag(story, sub)));
         // 범위가 다 지워진 다른 제안 (다른 사람 삽입 위의 삭제 제안 등)
         for (const x of this.annotationRanges()) if (x.type === 'suggestion' && (x.story ?? null) === story && (x.orphan || x.to <= x.from)) ops.push(...this.unannotate(x.id));
