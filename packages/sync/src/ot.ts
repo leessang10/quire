@@ -27,7 +27,7 @@ type Fmt = Extract<RemoteOp, { kind: 'format' }>;
 export type LocalChange = (
   | RawChange
   | TableChange
-  | { kind: 'sel'; anchor: number; head: number }
+  | { kind: 'sel'; anchor: number; head: number; page?: number }
   /** 주석 키 (14 §2.2, 위치 없음) */
   | { kind: 'annKey'; id: string; key: 'type' | 'story' | 'data'; value: unknown }
   /** 댓글 키 (14 §3, value null = 지움) */

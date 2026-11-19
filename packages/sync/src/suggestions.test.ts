@@ -104,4 +104,20 @@ describe('suggestions over the bridge (14 §4)', () => {
     expect(view(a.document)).toEqual([]);
     expect(view(b.document)).toEqual([]);
   });
+
+  it('a block move suggested by one peer can be rejected by another (14 §4.5)', () => {
+    const { peers, settle } = network('하나\n둘\n셋\n넷');
+    const [a, b] = peers as [SyncBridge, SyncBridge];
+    a.document.setSuggesting({ author: A });
+    a.document.recordSuggestions(null, a.doc, a.doc.moveParagraphs(0, 0, 3));
+    a.document.setSuggesting(null);
+    settle();
+    expect(b.doc.text()).toBe('둘\n셋\n하나\n넷\n');
+    expect(view(b.document)).toEqual(['move:하나\n', 'moveFrom:둘']); // 원래 자리 = 둘 앞
+    b.document.resolveAll(false);
+    settle();
+    expect(a.doc.text()).toBe('하나\n둘\n셋\n넷\n');
+    expect(b.doc.text()).toBe(a.doc.text());
+    expect(view(a.document)).toEqual([]);
+  });
 });

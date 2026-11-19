@@ -73,6 +73,12 @@ function setStatus(online: boolean, detail?: string) {
   statusEl.dataset.state = online ? 'online' : 'offline';
 }
 
+/** 접속자 목록 (14 §7): 이름·색·지금 스토리. 누르면 그 캐럿으로, 따라가기는 캐럿이 움직일 때마다 */
+const peopleEl = document.getElementById('people')!;
+const storyLabel = (s?: string) =>
+  !s ? '본문' : s.startsWith('fn|') ? '각주' : s.startsWith('hdr|') ? '머리말' : s.startsWith('ftr|') ? '꼬리말' : '표 셀';
+let showPeople = () => {};
+
 void (async () => {
   let editor: Editor | null = null;
   const worker = new Worker(new URL('./sync-worker.ts', import.meta.url), { type: 'module' });
@@ -81,7 +87,10 @@ void (async () => {
     { mode: 'ws', peer, user, url: `${server}/${encodeURIComponent(room)}${q}`, text: TEXT },
     {
       onRemoteChange: () => editor?.docChanged(),
-      onPresence: () => editor?.setRemoteCarets(client.remotes()),
+      onPresence: () => {
+        editor?.setRemoteCarets(client.remotes());
+        showPeople();
+      },
       onStatus: setStatus,
       onRole: (r) => {
         role = r;
@@ -103,10 +112,44 @@ void (async () => {
     host,
     document: client.document,
     onChange: () => editor?.setRemoteCarets(client.remotes()),
-    onSelectionChange: (a, h) => client.setSelection(a, h),
+    onSelectionChange: (a, h, story, page) => client.setSelection(a, h, story, page),
     // 이미지 원본은 서버의 자산 저장소 (11 §2.2)
     assets: new HttpAssets(`${server.replace(/^ws/, 'http')}/${encodeURIComponent(room)}/assets/`),
   });
+  showPeople = () => {
+    const ed = editor!;
+    const list = client.remotes();
+    peopleEl.replaceChildren();
+    const h = document.createElement('h2');
+    h.textContent = `접속자 ${list.length + 1}명`;
+    peopleEl.append(h);
+    const me = document.createElement('div');
+    me.className = 'pp-row';
+    me.innerHTML = `<i style="background:${user.color}"></i><span>${user.name} (나)</span>`;
+    peopleEl.append(me);
+    for (const r of list) {
+      const row = document.createElement('div');
+      row.className = 'pp-row';
+      const dot = document.createElement('i');
+      dot.style.background = r.color;
+      const go = document.createElement('button');
+      go.className = 'pp-name';
+      go.textContent = `${r.name} · ${storyLabel(r.story)}`;
+      go.title = '그 사람 캐럿으로';
+      go.addEventListener('click', () => ed.revealRemote(r.key));
+      const fol = document.createElement('button');
+      const on = ed.followingKey === r.key;
+      fol.textContent = on ? '따라가는 중' : '따라가기';
+      fol.setAttribute('aria-pressed', String(on));
+      fol.addEventListener('click', () => {
+        ed.follow(on ? null : r.key);
+        showPeople();
+      });
+      row.append(dot, go, fol);
+      peopleEl.append(row);
+    }
+  };
+  showPeople();
   editor.setAccess(client.role);
   setStatus(true);
   editor.focus();

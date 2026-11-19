@@ -26,6 +26,9 @@ export interface RemoteSelection {
   color: string;
   anchor: number;
   head: number;
+  /** 스토리 (14 §7, 없으면 본문) */
+  story?: string;
+  page?: number;
 }
 
 export interface PresenceOptions {

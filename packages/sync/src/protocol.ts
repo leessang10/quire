@@ -53,6 +53,9 @@ export interface RemoteSel {
   color: string;
   anchor: number | null;
   head: number | null;
+  /** 스토리 (14 §7, 없으면 본문). 위치는 그 스토리 텍스트의 UTF-16 */
+  story?: string;
+  page?: number;
 }
 
 export type ToMain =

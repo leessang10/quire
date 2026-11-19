@@ -1421,6 +1421,21 @@ export class Doc {
    * 문단 i..j(화면 인덱스, 포함)를 문단 to 앞으로 옮긴다. to === 문단 수면 맨 뒤로.
    * 글자는 그대로 두고 구획 순서만 바꾼다.
    */
+  /** 구획들이 지금 차지하는 화면 범위 [from, to) (이어져 있지 않으면 감싸는 범위, 없으면 null). 블록 이동 제안 (14 §4.5) */
+  segmentsRange(ids: readonly SegId[]): [number, number] | null {
+    let lo = Infinity;
+    let hi = -Infinity;
+    const shown = this.shownPredicate();
+    for (const id of ids) {
+      const s = this.segMap.get(id);
+      if (!s || !shown(s) || s.len === 0) continue;
+      const a = this.dispStartOf(s);
+      lo = Math.min(lo, a);
+      hi = Math.max(hi, a + s.len + this.virt(s));
+    }
+    return lo < hi ? [lo, Math.min(hi, this.length)] : null;
+  }
+
   moveParagraphs(i: number, j: number, to: number): Op[] {
     const n = this.paras.length;
     if (!this.segmentsEnabled) return [];

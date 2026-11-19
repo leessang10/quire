@@ -12,7 +12,11 @@
  */
 import type { CommentAuthor } from './comments';
 
-export type SuggestionKind = 'insert' | 'delete' | 'format' | 'para';
+/**
+ * move: 옮긴 블록 (짝 moveFrom: 원래 자리 뒤 첫 글자, 거부하면 그 앞으로 되돌려 옮긴다), table: 표 행·열 넣기·지우기 (표 개체 글자에,
+ * data.op = insert|delete, data.table, data.id = 행·열 ID). 14 §4.5
+ */
+export type SuggestionKind = 'insert' | 'delete' | 'format' | 'para' | 'move' | 'moveFrom' | 'table';
 
 /** 제안 주석의 데이터 */
 export interface SuggestionData {
@@ -21,6 +25,13 @@ export interface SuggestionData {
   time: number;
   /** format·para: 키마다 이전 값 (없던 키는 null) */
   before?: Record<string, unknown>;
+  /** move·moveFrom: 짝 주석 ID. moveFrom.end: 원래 자리가 문서 끝 (거부하면 맨 뒤로) */
+  pair?: string;
+  end?: boolean;
+  /** table */
+  op?: 'insert' | 'delete';
+  table?: string;
+  id?: string;
 }
 
 /** 제안 모드를 켠 편집기가 Document에 주는 것 */

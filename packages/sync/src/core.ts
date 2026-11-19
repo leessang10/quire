@@ -236,9 +236,9 @@ export class SyncCore {
       if (!ops) throw new Error(`sync core: H entry ${i} is not a remote entry (more than one batch in flight?)`);
       cs = transform(cs, ops)[0];
     }
-    let sel: { anchor: number; head: number } | null = null;
+    let sel: { anchor: number; head: number; story?: string; page?: number } | null = null;
     for (const c of cs) {
-      if (c.kind === 'sel') sel = { anchor: c.anchor, head: c.head };
+      if (c.kind === 'sel') sel = { anchor: c.anchor, head: c.head, ...(c.story !== undefined ? { story: c.story } : {}), ...(c.page !== undefined ? { page: c.page } : {}) };
       else if (c.kind === 'annKey') writeAnnKey(this.loro, c.id, c.key, c.value);
       else if (c.kind === 'cmt') writeCmt(this.loro, c.key, c.value);
       else if (c.kind === 'annRange') writeAnnRange(this.loro, c.id, c.story, { start: c.start, last: c.last });
@@ -288,7 +288,7 @@ export class SyncCore {
         ...(cmts ? { cmts } : {}),
       });
     } else this.opts.post({ t: 'ack', ...(anns ? { anns } : {}), ...(resync ? { annsResync: resync } : {}), ...(cmts ? { cmts } : {}) });
-    if (sel) this.setSelection(sel.anchor, sel.head);
+    if (sel) this.setSelection(sel.anchor, sel.head, sel.story, sel.page);
     if (this.pendingExport) this.schedule();
   }
 
@@ -302,12 +302,12 @@ export class SyncCore {
     return w;
   }
 
-  private setSelection(anchor: number, head: number): void {
-    const a = this.cursorBytes(anchor);
-    const h = anchor === head ? a : this.cursorBytes(head);
+  private setSelection(anchor: number, head: number, story?: string, page?: number): void {
+    const a = this.cursorBytes(anchor, story);
+    const h = anchor === head ? a : this.cursorBytes(head, story);
     if (!a || !h) return;
     const { name, color } = this.opts.user;
-    const bytes = this.store.setLocal({ name, color, anchor: a, head: h });
+    const bytes = this.store.setLocal({ name, color, anchor: a, head: h, ...(story ? { story } : {}), ...(page !== undefined ? { page } : {}) });
     // 캐럿이 가리키는 글자가 담긴 문서 업데이트보다 먼저 가지 않게 한다
     if (this.pendingExport) {
       this.presenceHeld = true;
@@ -317,8 +317,9 @@ export class SyncCore {
     }
   }
 
-  private cursorBytes(u16: number): Uint8Array | null {
-    const c = this.text.getCursor(Math.min(u16, this.text.length), 0);
+  private cursorBytes(u16: number, story?: string): Uint8Array | null {
+    const text = story ? this.loro.getText(storyNames(story).text) : this.text;
+    const c = text.getCursor(Math.min(u16, text.length), 0);
     return c ? c.encode() : null;
   }
 
@@ -466,7 +467,7 @@ export class SyncCore {
     for (const [key, s] of this.store.states) {
       const anchor = this.resolve(s.anchor);
       const head = s.head === s.anchor ? anchor : this.resolve(s.head);
-      list.push({ key, name: s.name, color: s.color, anchor, head });
+      list.push({ key, name: s.name, color: s.color, anchor, head, ...(s.story ? { story: s.story } : {}), ...(s.page !== undefined ? { page: s.page } : {}) });
     }
     list.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
     this.opts.post({ t: 'remotes', list });

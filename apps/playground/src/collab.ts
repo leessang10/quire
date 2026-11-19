@@ -123,7 +123,7 @@ function makePeer(k: number, client: WorkerClient) {
       showRemotes(k);
       status();
     },
-    onSelectionChange: (anchor, head) => client.setSelection(anchor, head),
+    onSelectionChange: (anchor, head, story, page) => client.setSelection(anchor, head, story, page),
   });
   const peer: Peer = {
     client, editor, heldPresence: null, offline: false, held: [], sent: 0, received: 0,

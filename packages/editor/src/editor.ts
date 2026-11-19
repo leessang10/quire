@@ -91,8 +91,8 @@ export interface EditorOptions {
    */
   input?: InputMode;
   onChange?: (editor: Editor) => void;
-  /** 선택 영역(캐럿)이 바뀌었을 때 (프레즌스 전송용). 화면 오프셋 */
-  onSelectionChange?: (anchor: number, head: number) => void;
+  /** 선택 영역(캐럿)이 바뀌었을 때 (프레즌스 전송용). 그 스토리의 화면 오프셋, story = 셀·머리말·각주 (14 §7), page = 머리말의 쪽 */
+  onSelectionChange?: (anchor: number, head: number, story?: string, page?: number) => void;
   /** 이미지 원본 저장소 (11 §2.2). 없으면 메모리 */
   assets?: AssetStore;
   /** 댓글 작성자 (14 §3.1: 4단계는 접속할 때의 사용자 정보). 없으면 "나" */
@@ -173,6 +173,10 @@ export interface RemoteCaret {
   color: string;
   anchor: number;
   head: number;
+  /** 스토리 (14 §7: 셀·머리말·각주, 없으면 본문). 오프셋은 그 스토리 기준 */
+  story?: string;
+  /** 머리말·꼬리말이면 상대가 편집 중인 쪽 */
+  page?: number;
 }
 
 export interface EditorStats {
@@ -816,6 +820,10 @@ export class Editor {
   /** 다른 사용자의 캐럿·선택을 바꾼다 (프레즌스 갱신·원격 편집 뒤에 호출) */
   setRemoteCarets(list: RemoteCaret[]): void {
     this.remotes = list;
+    if (this.following) {
+      if (list.some((r) => r.key === this.following)) this.revealRemote(this.following);
+      else this.following = null;
+    }
     this.scheduleRender();
   }
 
@@ -1353,9 +1361,20 @@ export class Editor {
       if (a.to <= lineFrom || a.type !== 'suggestion') continue;
       const color = suggestionColor(a);
       ctx.fillStyle = color;
-      if (a.data.kind === 'para') {
-        // ¶ 하나 범위: 그 문단 줄마다 왼쪽 여백에 막대
+      if (a.data.kind === 'para' || a.data.kind === 'table') {
+        // ¶·표 개체 하나 범위: 왼쪽 여백에 막대
         ctx.fillRect(left - 10, y + 2, 3, ln.height - 4);
+        continue;
+      }
+      if (a.data.kind === 'move') {
+        // 옮긴 블록: 줄마다 왼쪽 여백에 겹 막대 (14 §4.5)
+        ctx.fillRect(left - 12, y + 1, 2, ln.height - 2);
+        ctx.fillRect(left - 8, y + 1, 2, ln.height - 2);
+        continue;
+      }
+      if (a.data.kind === 'moveFrom') {
+        // 원래 자리: 그 글자가 있는 줄 위에 점선 ("옮겨 간 자리")
+        if (a.from >= lineFrom && a.from <= lineEnd) for (let x = left; x < left + para.width; x += 6) ctx.fillRect(x, y, 3, 1.5);
         continue;
       }
       const sd = Math.max(ln.start, docToDisplay(para, Math.max(a.from, lineFrom)));
@@ -1543,12 +1562,22 @@ export class Editor {
       sup: '위 첨자', sub: '아래 첨자', link: '링크', align: '정렬', style: '스타일', list: '목록', indent: '들여쓰기', spacing: '줄 간격',
     };
     for (const a of this.suggestions()) {
-      if (a.orphan || a.to <= a.from) continue;
+      if (a.orphan || a.to <= a.from || a.data.kind === 'moveFrom') continue;
       const text = Array.from(this.document.docOf(a.story).text()).slice(a.from, a.to).join('').replace(/\n/g, '¶').replace(/\uFFFC/g, '▣');
       const short = text.length > 24 ? `${text.slice(0, 24)}…` : text;
       const keys = Object.keys((a.data.before as Record<string, unknown> | undefined) ?? {}).map((k) => LABEL[k] ?? k).join(', ');
       const summary =
-        a.data.kind === 'insert' ? `‘${short}’ 넣음` : a.data.kind === 'delete' ? `‘${short}’ 지움` : a.data.kind === 'format' ? `서식: ${keys} (‘${short}’)` : `문단: ${keys}`;
+        a.data.kind === 'insert'
+          ? `‘${short}’ 넣음`
+          : a.data.kind === 'delete'
+            ? `‘${short}’ 지움`
+            : a.data.kind === 'format'
+              ? `서식: ${keys} (‘${short}’)`
+              : a.data.kind === 'move'
+                ? `문단 옮김 (‘${short}’)`
+                : a.data.kind === 'table'
+                  ? `표: ${a.data.axis === 'row' ? '행' : '열'} ${a.data.op === 'insert' ? '넣음' : '지움'}`
+                  : `문단: ${keys}`;
       out.push({ ...a, y: this.storyY(a.story ?? null, a.from), summary });
     }
     out.sort((x, y) => (x.y ?? Infinity) - (y.y ?? Infinity) || x.from - y.from);
@@ -2773,6 +2802,71 @@ export class Editor {
   }
 
   /** 다른 사용자의 캐럿과 이름표. 화면에 보이는 문단에 있는 것만 */
+  /**
+   * 스토리의 레이아웃 (원격 캐럿·따라가기, 14 §7): 표 셀은 셀 레이아웃, 각주는 그 쪽의 각주 자리, 머리말·꼬리말은 page 쪽(없으면 그 스토리를
+   * 그리는 첫 쪽). 지금 그려지지 않으면 null
+   */
+  private storyLayoutFor(story: string, page?: number): { caretRect(o: number): { x: number; y: number; height: number } } | null {
+    try {
+      if (story.startsWith('fn|')) {
+        const id = story.slice(3);
+        if (!this.fmt.noteNumber(id)) return null;
+        const s = this.noteSlots(this.notePageOf(id)).find((x) => x.id === id);
+        return s ? this.noteLayout(s) : null;
+      }
+      if (isHFStory(story)) {
+        const part = story.startsWith('hdr') ? 'header' : 'footer';
+        const L = this.bodyLayout;
+        let p = page !== undefined && page < L.pageCount ? page : this.hfPageOf(story, part);
+        if (p < 0) return null;
+        let info = pageHF(this.fmt, L, p, this.today);
+        if ((part === 'header' ? info.header.story : info.footer.story) !== story) {
+          p = this.hfPageOf(story, part);
+          if (p < 0) return null;
+          info = pageHF(this.fmt, L, p, this.today);
+        }
+        return layoutHF(this.fmt, (id) => this.document.story(id), info, part, null) ?? null;
+      }
+      return this.fmt.tables.cells.get(story)?.view ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 원격 캐럿의 자리 (문서 좌표) */
+  private remoteRect(rc: RemoteCaret): { x: number; y: number; height: number } | null {
+    if (rc.story) {
+      const L = this.storyLayoutFor(rc.story, rc.page);
+      if (!L) return null;
+      return L.caretRect(Math.min(rc.head, this.document.story(rc.story).maxCaret));
+    }
+    return this.bodyLayout.caretRect(Math.min(rc.head, this.body.maxCaret));
+  }
+
+  /** 따라가는 원격 피어 (그 캐럿이 움직일 때마다 스크롤) */
+  private following: string | null = null;
+
+  /** 원격 피어의 캐럿으로 스크롤한다 (접속자 목록에서 누름, 14 §7) */
+  revealRemote(key: string): boolean {
+    const rc = this.remotes.find((r) => r.key === key);
+    const r = rc ? this.remoteRect(rc) : null;
+    if (!r) return false;
+    const sc = this.scroller;
+    if (r.y < sc.scrollTop + 40 || r.y + r.height > sc.scrollTop + sc.clientHeight - 40) sc.scrollTop = Math.max(0, r.y - sc.clientHeight / 3);
+    this.scheduleRender();
+    return true;
+  }
+
+  /** 따라가기 (null이면 그만) */
+  follow(key: string | null): void {
+    this.following = key;
+    if (key) this.revealRemote(key);
+  }
+
+  get followingKey(): string | null {
+    return this.following;
+  }
+
   private drawRemoteCarets(px: number, top: number, w: number, visible: Set<number>): void {
     if (this.remotes.length === 0) return;
     const { ctx } = this;
@@ -2780,9 +2874,16 @@ export class Editor {
     ctx.font = `600 11px ${this.font.replace(/^\d+px /, '')}`;
     ctx.textBaseline = 'middle';
     for (const rc of this.remotes) {
-      const head = Math.min(rc.head, this.body.maxCaret);
-      if (!visible.has(this.body.paragraphIndexAt(head))) continue;
-      const r = this.bodyLayout.caretRect(head);
+      let r: { x: number; y: number; height: number } | null;
+      if (rc.story) {
+        // 다른 스토리 (셀·머리말·각주): 그 스토리 레이아웃 자리, 화면 안일 때만
+        r = this.remoteRect(rc);
+        if (!r || r.y + r.height < top || r.y > top + this.scroller.clientHeight) continue;
+      } else {
+        const head = Math.min(rc.head, this.body.maxCaret);
+        if (!visible.has(this.body.paragraphIndexAt(head))) continue;
+        r = this.bodyLayout.caretRect(head);
+      }
       const x = Math.round(px + r.x);
       const y = r.y - top;
       ctx.fillStyle = rc.color;
@@ -2803,11 +2904,11 @@ export class Editor {
   private reportSelection(): void {
     if (this.sel === this.reportedSel || !this.opts.onSelectionChange) return;
     this.reportedSel = this.sel;
-    // 셀에서는 표 원소 자리를 알린다 (프레즌스는 본문 오프셋)
-    const at = this.cell ? this.tableOffset(this.cell.table) : null;
-    if (at !== null) return this.opts.onSelectionChange(at, at);
+    // 셀·머리말·각주는 그 스토리의 오프셋과 스토리 (14 §7)
     const { anchor, head } = this.selection();
-    this.opts.onSelectionChange(anchor, head);
+    const story = this.storyId;
+    if (story === null) this.opts.onSelectionChange(anchor, head);
+    else this.opts.onSelectionChange(anchor, head, story, this.hf?.page);
   }
 
   /** 아직 배치되지 않은 영역: 쪽 위에 옅은 막과 진행률을 그린다 */
