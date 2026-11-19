@@ -131,6 +131,8 @@ export interface ParaAttrs {
   keepWithNext?: boolean;
   keepTogether?: boolean;
   pageBreakBefore?: boolean;
+  /** 앞에서 단 나눔 (12 §7.1): 다음 단 맨 위에서 시작 */
+  columnBreakBefore?: boolean;
   /** 이 문단이 구역의 마지막 문단이다: 그 구역의 ID (12 §3.1). 구역 설정은 문서의 구역 맵 */
   section?: string;
 }
@@ -177,7 +179,7 @@ export const OBJ_MARK_PREFIX = 'o_';
 /** Loro에서 문단 속성 마크 키의 접두사 (마크 키에는 ':'를 쓸 수 없다, 10 §3) */
 export const PARA_MARK_PREFIX = 'p_';
 /** 모델이 아는 문단 속성 키 */
-export const PARA_KEYS: readonly ParaKey[] = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore', 'section'];
+export const PARA_KEYS: readonly ParaKey[] = ['style', 'align', 'indent', 'space', 'line', 'list', 'keepWithNext', 'keepTogether', 'pageBreakBefore', 'columnBreakBefore', 'section'];
 const NO_ATTRS: ParaAttrs = Object.freeze({});
 
 /**

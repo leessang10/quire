@@ -15,6 +15,7 @@
         <button data-doc="format">서식 예제</button>
         <button data-doc="sections">구역 예제</button>
         <button data-doc="notes">각주 예제</button>
+        <button data-doc="columns">다단 예제</button>
         <button data-doc="100">100쪽 생성</button>
         <button data-doc="1000">1,000쪽 생성</button>
         <button data-doc="10000">10,000쪽 생성</button>
@@ -113,6 +114,7 @@
       </span>
       <button id="footnote" title="각주 넣기 (Ctrl+Alt+F): 캐럿에 참조를 넣고 쪽 아래 각주를 편집한다 (Esc로 본문)">각주</button>
       <button id="page-break" title="쪽 나누기 (Ctrl+Enter): 캐럿 뒤 문단을 새 쪽에서 시작">쪽 나누기</button>
+      <button id="col-break" title="단 나누기 (Ctrl+Shift+Enter): 캐럿 뒤 문단을 다음 단에서 시작">단 나누기</button>
       <button data-keep="pageBreakBefore" aria-pressed="false" title="앞에서 쪽 나눔: 이 문단을 새 쪽에서 시작">앞에서 나눔</button>
       <button data-keep="keepWithNext" aria-pressed="false" title="다음 문단과 함께: 다음 문단의 첫 두 줄과 같은 쪽에 (제목은 기본으로 켜짐)">다음과 함께</button>
       <button data-keep="keepTogether" aria-pressed="false" title="문단 나누지 않음: 문단 전체를 한 쪽에">나누지 않음</button>
@@ -168,6 +170,19 @@
             <option value="oddPage">홀수 쪽</option>
           </select>
         </label>
+        <fieldset class="row">
+          <legend>다단</legend>
+          <label>단 수
+            <select name="cols">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+          <label>간격 (mm) <input name="colGap" type="number" min="0" max="50" step="0.5" /></label>
+          <label><input name="colSep" type="checkbox" /> 구분선</label>
+        </fieldset>
         <fieldset class="row">
           <legend>쪽 번호</legend>
           <label>시작 <input name="pnStart" type="number" min="0" max="9999" step="1" placeholder="이어서" /></label>

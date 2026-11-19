@@ -23,6 +23,10 @@ export interface SectionGeom {
   bottom: number;
   left: number;
   start: 'nextPage' | 'continuous' | 'evenPage' | 'oddPage';
+  /** 다단 (12 §7): 단 수(없으면 1), 단 간격 (px), 단 사이 구분선 */
+  cols?: number;
+  gap?: number;
+  sep?: boolean;
 }
 
 /** 문단 → 구역 */
@@ -46,12 +50,27 @@ interface Run {
   ownTop: number;
   /** 첫 쪽을 앞 구역과 나눠 쓰면(continuous) 그 쪽 주인의 모양 키: 첫 쪽 위아래 여백이 거기서 온다 */
   shared: string;
+  /** 단 수 (쪽마다 프레임 수) */
+  cols: number;
+  gap: number;
+  /** 띠 (12 §7.2): 단 수가 다른 이어지는 구역은 첫 쪽에서 앞 구역 아래(본문 위에서 band px)부터 */
+  band: number;
+  /** 단 균형 (12 §7.2): 이 구역 마지막 쪽 프레임 높이 상한 (뒤에 이어지는 구역이 그 아래에서 시작한다) */
+  cap: { page: number; h: number } | null;
   frames: Frame[];
 }
 
 /** 구역 모양 (px) → 키 */
 export function geomKey(g: Omit<SectionGeom, 'key'>): string {
-  return `${g.width}x${g.height}|${g.top},${g.right},${g.bottom},${g.left}|${g.start}`;
+  const cols = (g.cols ?? 1) > 1 ? `|c${g.cols}/${g.gap ?? 0}${g.sep ? '/s' : ''}` : '';
+  return `${g.width}x${g.height}|${g.top},${g.right},${g.bottom},${g.left}|${g.start}${cols}`;
+}
+
+/** 구역 모양의 단 폭 (px) */
+export function columnWidth(g: SectionGeom): number {
+  const cw = g.width - g.left - g.right;
+  const n = g.cols ?? 1;
+  return n <= 1 ? cw : (cw - (n - 1) * (g.gap ?? 0)) / n;
 }
 
 export class SectionFrames implements FrameSource {
@@ -60,6 +79,8 @@ export class SectionFrames implements FrameSource {
   private dirtyFrom = Infinity;
   /** 지금 배치 중인 문단의 구역: 뒤 구역의 런은 아직 이번 배치에서 정하지 않았으므로 찾기에 쓰지 않는다 (다 배치하면 Infinity) */
   private cur = Infinity;
+  /** 다단 구역이 있다 (찾기를 쪽 단위로) */
+  private multiCols = false;
 
   constructor(
     private readonly setup: PageSetup,
@@ -79,8 +100,10 @@ export class SectionFrames implements FrameSource {
     return this.mk(0, g, 0, 0, 0, (this.setup.originY ?? 0) + this.setup.gap);
   }
 
-  private mk(index: number, geom: SectionGeom, k0: number, p0: number, own: number, ownTop: number, shared = ''): Run {
-    return { index, geom, k0, p0, own, ownTop, shared, frames: [] };
+  private mk(index: number, geom: SectionGeom, k0: number, p0: number, own: number, ownTop: number, shared = '', band = 0): Run {
+    const cols = Math.max(1, geom.cols ?? 1);
+    if (cols > 1) this.multiCols = true;
+    return { index, geom, k0, p0, own, ownTop, shared, cols, gap: cols > 1 ? (geom.gap ?? 0) : 0, band, cap: null, frames: [] };
   }
 
   /** 프레임 k가 든 런 */
@@ -126,19 +149,79 @@ export class SectionFrames implements FrameSource {
     const i = k - r.k0;
     let f = r.frames[i];
     if (f) return f;
-    const page = r.p0 + i;
+    const n = r.cols;
+    const page = r.p0 + (n === 1 ? i : Math.floor(i / n));
+    const column = n === 1 ? 0 : i % n;
     const o = this.ownerOf(page).geom;
     const g = r.geom;
-    f = {
-      page,
-      column: 0,
-      x: this.pageX(o) + g.left,
-      top: this.topOf(page) + o.top,
-      width: g.width - g.left - g.right,
-      height: o.height - o.top - o.bottom,
-    };
+    let top = this.topOf(page) + o.top;
+    let height = o.height - o.top - o.bottom;
+    // 띠: 이어지는 구역의 첫 쪽은 앞 구역 아래부터 (12 §7.2)
+    if (r.band > 0 && page === r.p0) {
+      top += r.band;
+      height -= r.band;
+    }
+    if (r.cap && r.cap.page === page) height = Math.min(height, r.cap.h);
+    const w = columnWidth(g);
+    f = { page, column, x: this.pageX(o) + g.left + (n === 1 ? 0 : column * (w + r.gap)), top, width: w, height };
+    if (r.band > 0 && page === r.p0) f.band = true;
     if (i < 1 << 20) r.frames[i] = f;
     return f;
+  }
+
+  /** 다단 구역이 있는가 (PagedLayout이 쪽 단위로 찾는다) */
+  multi(): boolean {
+    return this.multiCols;
+  }
+
+  /** 쪽 p의 프레임들 (단, 띠마다)과 그 구역의 구분선 여부: 단 구분선·각주 영역 그리기 */
+  columnsOn(p: number): Array<{ frame: Frame; k: number; sep: boolean }> {
+    const out: Array<{ frame: Frame; k: number; sep: boolean }> = [];
+    const n = this.live;
+    for (let j = 0; j < n; j++) {
+      const r = this.runs[j]!;
+      const next = j + 1 < n ? this.runs[j + 1]! : null;
+      if (r.p0 > p) break;
+      const offset = (p - r.p0) * r.cols;
+      for (let c = 0; c < r.cols; c++) {
+        const k = r.k0 + offset + c;
+        if (next && k >= next.k0) break;
+        out.push({ frame: this.frame(k), k, sep: !!r.geom.sep && r.cols > 1 });
+      }
+    }
+    return out.filter((x) => x.frame.page === p);
+  }
+
+  /**
+   * 단 균형 (12 §7.2): 문단 m이 새 구역을 시작하는데, 같은 쪽에서 이어지는(continuous) 새 구역이고 앞 구역이 다단이면 앞 구역의
+   * 끝 쪽(frame이 든 쪽)을 균형 맞출 대상으로. 앞 구역에 지난 균형이 남았으면 풀 대상으로 (balance false). full: 그 쪽 프레임 높이
+   */
+  balanceTarget(m: number, frame: number): { run: number; page: number; full: number; balance: boolean } | null {
+    if (m === 0) return null;
+    const s = this.source.sectionOf(m);
+    const prev = this.source.sectionOf(m - 1);
+    if (prev.index === s.index) return null;
+    // 앞 구역까지의 런만 찾기에 쓴다 (증분 배치가 이 구역 첫 문단에서 시작하면 뒤 구역의 옛 런이 앞 구역의 넘친 프레임을 가로챈다)
+    this.cur = prev.index;
+    const r = this.runs[prev.index];
+    if (!r || prev.index >= this.live) return null;
+    const page = this.frame(frame).page;
+    const g = s.geom;
+    const o = this.ownerOf(page).geom;
+    const balance = r.cols > 1 && g.start === 'continuous' && o.width === g.width && o.height === g.height;
+    if (!balance && !r.cap) return null;
+    let full = o.height - o.top - o.bottom;
+    if (r.band > 0 && page === r.p0) full -= r.band;
+    // 지난 균형이 더 앞 쪽에 걸려 있으면 그 쪽부터 다시 놓아야 한다
+    return { run: prev.index, page: r.cap ? Math.min(r.cap.page, page) : page, full, balance };
+  }
+
+  /** 구역 run의 쪽 page 프레임 높이 상한 (page null이면 푼다) */
+  setCap(run: number, page: number | null, h = Infinity): void {
+    const r = this.runs[run];
+    if (!r) return;
+    r.cap = page === null ? null : { page, h };
+    r.frames = [];
   }
 
   page(p: number): PageBox {
@@ -196,8 +279,7 @@ export class SectionFrames implements FrameSource {
   }
 
   widthOf(m: number): number {
-    const g = this.source.sectionOf(m).geom;
-    return g.width - g.left - g.right;
+    return columnWidth(this.source.sectionOf(m).geom);
   }
 
   stable(): boolean {
@@ -208,6 +290,7 @@ export class SectionFrames implements FrameSource {
   done(): void {
     const n = this.source.count();
     if (this.runs.length > n) this.runs.length = n;
+    this.multiCols = this.runs.some((r) => r.cols > 1);
     if (this.dirtyFrom >= this.runs.length) this.dirtyFrom = Infinity;
     this.cur = Infinity;
   }
@@ -233,9 +316,19 @@ export class SectionFrames implements FrameSource {
       const prevPage = this.frame(frame).page;
       const o = this.ownerOf(prevPage).geom;
       const nextTop = this.topOf(prevPage) + o.height + this.setup.gap;
-      if (g.start === 'continuous' && o.width === g.width && o.height === g.height) {
+      const prevRun = this.runOfFrame(frame);
+      const cols = Math.max(1, g.cols ?? 1);
+      // 띠의 위쪽 (본문 위에서): 앞 구역이 끝난 아래, 다단이면 균형을 맞춘 높이 아래 (12 §7.2)
+      const fr = this.frame(frame);
+      const bodyTop = this.topOf(prevPage) + o.top;
+      const band = prevRun.cap && prevRun.cap.page === prevPage ? fr.top - bodyTop + prevRun.cap.h : fr.top - bodyTop + y;
+      const continuous = g.start === 'continuous' && o.width === g.width && o.height === g.height;
+      if (continuous && prevRun.cols === 1 && cols === 1) {
         run = this.mk(s.index, g, frame + 1, prevPage, prevPage + 1, nextTop, o.key);
         out = { frame: frame + 1, y };
+      } else if (continuous && band < o.height - o.top - o.bottom - 1) {
+        run = this.mk(s.index, g, frame + 1, prevPage, prevPage + 1, nextTop, o.key, band);
+        out = { frame: frame + 1, y: 0 };
       } else {
         let p = prevPage + 1;
         if (g.start === 'evenPage' && (p + 1) % 2 !== 0) p++;
@@ -245,7 +338,15 @@ export class SectionFrames implements FrameSource {
       }
     }
     const old = this.runs[s.index];
-    const same = !!old && old.geom.key === g.key && old.k0 === run.k0 && old.p0 === run.p0 && old.own === run.own && old.ownTop === run.ownTop && old.shared === run.shared;
+    const same =
+      !!old &&
+      old.geom.key === g.key &&
+      old.k0 === run.k0 &&
+      old.p0 === run.p0 &&
+      old.own === run.own &&
+      old.ownTop === run.ownTop &&
+      old.shared === run.shared &&
+      old.band === run.band;
     if (same) {
       // 이 구역부터는 옛 런 그대로 (뒤 런도 옛 배치와 맞다)
       this.dirtyFrom = Infinity;
