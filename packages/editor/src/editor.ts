@@ -1021,6 +1021,7 @@ export class Editor {
     const storyId = this.document.storyIdOf(doc);
     // 해결한 댓글 스레드의 범위는 칠하지 않는다 (14 §3.2)
     const anns = storyId === undefined ? [] : this.document.annotationRanges().filter((a) => (a.story ?? null) === storyId && !a.orphan && a.to > a.from && !this.hiddenAnn(a));
+    const sugg = anns.filter((a) => a.type === 'suggestion');
     // 화면 영역이 아직 배치되지 않았으면 시간 예산 안에서만 배치한다 (스크롤바로 멀리 이동한 경우 등).
     // 못 끝낸 부분은 자리표시로 그리고 다음 프레임에 이어서 한다.
     const ready = isBody ? layout.ensureThroughY(top + h, RENDER_LAYOUT_BUDGET_MS) : true;
@@ -1155,6 +1156,9 @@ export class Editor {
           i = j;
         }
       }
+
+      // 제안 밑줄·취소선 (글자 위)
+      if (sugg.length) this.drawSuggestionLines(sugg, para, ln, X, y, px + para.frameLeft);
 
       // 조합 중 밑줄
       if (preedit) {
@@ -1303,8 +1307,42 @@ export class Editor {
       // 마지막 줄의 ¶까지 덮으면 ¶ 표시 폭만큼
       const ex = X(ed) + (isLast && a.to > lineEnd ? this.fontSize * 0.5 : 0);
       if (ex <= sx) continue;
-      ctx.fillStyle = a.id === this.focusAnn ? COLORS.annFocus : a.type === 'comment' ? COLORS.annComment : COLORS.annOther;
+      if (a.type === 'suggestion') {
+        // 제안: 삽입은 작성자 색 옅은 바탕 (밑줄·취소선은 글자 뒤에 drawSuggestionLines)
+        if (a.data.kind !== 'insert' && a.id !== this.focusAnn) continue;
+        ctx.fillStyle = a.id === this.focusAnn ? COLORS.annFocus : withAlpha(suggestionColor(a), 0.1);
+      } else ctx.fillStyle = a.id === this.focusAnn ? COLORS.annFocus : a.type === 'comment' ? COLORS.annComment : COLORS.annOther;
       ctx.fillRect(sx, y, ex - sx, ln.height);
+    }
+  }
+
+  /**
+   * 제안 표시 (14 §4.3, 글자 위에): 삽입은 작성자 색 밑줄, 삭제는 취소선, 서식 제안은 점선 밑줄, 문단 제안은 왼쪽 여백 막대
+   */
+  private drawSuggestionLines(anns: readonly AnnotationRange[], para: PlacedPara, ln: PlacedLine, X: (d: number) => number, y: number, left: number): void {
+    const { ctx } = this;
+    const isLast = ln.index === para.lines.length - 1;
+    const lineFrom = displayToDoc(para, ln.start);
+    const lineEnd = displayToDoc(para, ln.end);
+    const lineTo = lineEnd + (isLast ? 1 : 0);
+    for (const a of anns) {
+      if (a.from >= lineTo) break;
+      if (a.to <= lineFrom || a.type !== 'suggestion') continue;
+      const color = suggestionColor(a);
+      ctx.fillStyle = color;
+      if (a.data.kind === 'para') {
+        // ¶ 하나 범위: 그 문단 줄마다 왼쪽 여백에 막대
+        ctx.fillRect(left - 10, y + 2, 3, ln.height - 4);
+        continue;
+      }
+      const sd = Math.max(ln.start, docToDisplay(para, Math.max(a.from, lineFrom)));
+      const ed = Math.min(ln.end, docToDisplay(para, Math.min(a.to, lineEnd)));
+      const sx = X(sd);
+      const ex = X(ed) + (isLast && a.to > lineEnd ? this.fontSize * 0.5 : 0);
+      if (ex <= sx) continue;
+      if (a.data.kind === 'insert') ctx.fillRect(sx, y + ln.height - 4, ex - sx, 1.5);
+      else if (a.data.kind === 'delete') ctx.fillRect(sx, y + ln.height * 0.55, ex - sx, 1.5);
+      else for (let x = sx; x < ex; x += 4) ctx.fillRect(x, y + ln.height - 3, Math.min(2, ex - x), 1.5);
     }
   }
 
@@ -1353,6 +1391,24 @@ export class Editor {
     if (this.focusAnn === id) return;
     this.focusAnn = id;
     this.scheduleRender();
+  }
+
+  // ── 제안 모드 (14 §4) ─────────────────────────────────
+
+  /** 제안 모드 켜기·끄기 (이 편집기의 상태: 켜면 편집이 작성자의 제안으로 기록된다) */
+  setSuggesting(on: boolean): void {
+    this.document.setSuggesting(on ? { author: this.author } : null);
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  get suggesting(): boolean {
+    return this.document.suggesting !== null;
+  }
+
+  /** 제안 목록 (문서 순서, 고아 포함): 종류·작성자·시각·범위 */
+  suggestions(): AnnotationRange[] {
+    return this.document.annotationRanges().filter((a) => a.type === 'suggestion');
   }
 
   // ── 댓글 (14 §3) ─────────────────────────────────────
@@ -2356,7 +2412,7 @@ export class Editor {
    * 앞 문단이 일부라도 남으면(from이 문단 첫머리가 아니면) 그 문단의 속성을 합친 문단에 복사하는 연산을 돌려준다.
    */
   private mergeKeepAttrs(from: number, to: number): (() => Op[]) | null {
-    if (from === to) return null;
+    if (from === to || this.document.suggesting) return null; // 제안 모드는 ¶를 지우지 않는다
     const pi = this.doc.paragraphIndexAt(from);
     const p = this.doc.paragraphs()[pi]!;
     if (to <= p.end || from === p.start) return null;
@@ -2794,7 +2850,7 @@ export class Editor {
     this.commit(ops, before, mergeKey);
   }
 
-  private deleteRange(from: number, to: number, mergeKey?: string): void {
+  private deleteRange(from: number, to: number, mergeKey?: string, forward = false): void {
     if (from === to) return;
     const before: Selection = { ...this.sel };
     const merge = this.mergeKeepAttrs(from, to);
@@ -2803,7 +2859,8 @@ export class Editor {
       ops.push(...merge());
       mergeKey = undefined;
     }
-    this.setSelection(from);
+    // 제안 모드: 지운 글자가 남으므로 앞으로 지우기는 그 뒤로 (다음 Delete가 다음 글자를 지우게)
+    this.setSelection(forward && this.document.suggesting ? this.document.suggestDeleteEnd : from);
     this.commit(ops, before, mergeKey);
   }
 
@@ -3057,6 +3114,8 @@ export class Editor {
       mergeKey = undefined;
     }
     const story = this.storyId;
+    // 제안 모드 (14 §4): 넣은 글자·서식·문단 속성을 제안으로 표시한다 (지우기는 Doc의 삭제 갈고리가 이미 표시했다)
+    if (this.document.suggesting) ops = [...ops, ...this.document.recordSuggestions(story, this.doc, ops)];
     this.commitRaw(story ? Document.tag(story, ops) : ops, before, mergeKey);
   }
 
@@ -4022,7 +4081,7 @@ export class Editor {
           break;
         case 'delete':
           if (from !== to) this.deleteRange(from, to);
-          else this.deleteRange(head, this.wordBoundary(head, 1));
+          else this.deleteRange(head, this.wordBoundary(head, 1), undefined, true);
           break;
         case 'arrowleft':
           this.moveTo(this.wordBoundary(head, -1), shift);
@@ -4046,7 +4105,7 @@ export class Editor {
         case 'Delete':
           if (from !== to) this.deleteRange(from, to);
           else if (this.inBody && head < this.doc.maxCaret && this.tableAtOffset(head + 1)) this.moveTo(head + 1, false); // 표 앞 문단 끝
-          else if (head < this.doc.maxCaret) this.deleteRange(head, this.layout.nextStop(head), 'delete');
+          else if (head < this.doc.maxCaret) this.deleteRange(head, this.layout.nextStop(head), 'delete', true);
           break;
         case 'ArrowLeft':
           if (from !== to && !shift) this.moveTo(from, false);
@@ -4814,6 +4873,12 @@ export class Editor {
 // ── 유틸 ─────────────────────────────────────────────────
 
 /** #rrggbb → rgba(…, a) */
+/** 제안 작성자 색 (없으면 기본 파랑) */
+function suggestionColor(a: AnnotationRange): string {
+  const c = (a.data.author as { color?: unknown } | undefined)?.color;
+  return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c : '#2563eb';
+}
+
 function withAlpha(hex: string, a: number): string {
   const n = parseInt(hex.slice(1, 7), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;

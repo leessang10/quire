@@ -478,6 +478,14 @@ document.getElementById('col-break')!.addEventListener('click', () => {
 // 댓글 창 (4-2)
 pane = new CommentsPane(document.getElementById('comments')!, editor);
 
+// 제안 모드 (4-3)
+const suggestBtn = document.getElementById('suggest')!;
+suggestBtn.addEventListener('click', () => {
+  editor.setSuggesting(!editor.suggesting);
+  suggestBtn.setAttribute('aria-pressed', String(editor.suggesting));
+  editor.focus();
+});
+
 // 주석 레이어 (4-1)
 document.getElementById('ann-add')!.addEventListener('click', () => {
   editor.annotate('highlight');
