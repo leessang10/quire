@@ -25,6 +25,11 @@ import {
   cellKey,
   cellStoryId,
   fullSection,
+  hfStoryId,
+  isHFStory,
+  type FieldKind,
+  type HFKind,
+  type HFPart,
   type SectionProps,
   type SectionStart,
   type Style,
@@ -45,7 +50,8 @@ import {
 } from '@quire/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
 import { MemoryAssets, type AssetStore } from './assets';
-import { Formatter, PLAIN_DRAW, defaultPageSetup, hasKeys, type DrawStyle, type TableView } from './formatter';
+import { Formatter, PLAIN_DRAW, defaultPageSetup, hasKeys, type DrawStyle, type FieldValues, type TableView } from './formatter';
+import { dateText, layoutHF, pageHF } from './headers';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 
@@ -153,6 +159,8 @@ const SECTION_LABELS: Record<SectionStart, string> = { nextPage: '다음 쪽', c
 
 const COLORS = {
   desk: '#e9e9ec',
+  /** 머리말·꼬리말을 편집할 때 필드 바탕 */
+  field: '#e4e4ea',
   page: '#ffffff',
   pageShadow: 'rgba(0,0,0,0.12)',
   text: '#1d1d1f',
@@ -213,12 +221,62 @@ class CanvasMeasurer implements Measurer {
   }
 }
 
+/** 스토리 내용을 다른 스토리로 복사한다 (머리말 연결 끊기). dst는 먼저 비운다 */
+function copyStory(src: Doc, dst: Doc): Op[] {
+  const ops: Op[] = [];
+  if (dst.maxCaret > 0) ops.push(...dst.deleteRange(0, dst.maxCaret));
+  const paras = src.paragraphRuns();
+  let at = 0;
+  paras.forEach((p, i) => {
+    if (i > 0) {
+      ops.push({ type: 'insert', ids: dst.insertText(at, '\n') });
+      at++;
+    }
+    for (const r of p.runs) {
+      if (r.obj) {
+        ops.push(...dst.insertObject(at, r.obj, r.marks));
+        at++;
+      } else if (r.text) {
+        ops.push({ type: 'insert', ids: dst.insertText(at, r.text, r.marks) });
+        at += Array.from(r.text).length;
+      }
+    }
+  });
+  paras.forEach((p, i) => {
+    for (const [k, v] of Object.entries(p.attrs)) ops.push(...dst.setParaAttr(i, k as ParaKey, v as never));
+  });
+  return ops;
+}
+
 /** 편집 중인 표 셀 (11 §5.4) */
 interface ActiveCell {
   table: string;
   row: string;
   col: string;
   story: string;
+}
+
+/** 편집 중인 머리말·꼬리말 (12 §5.4). 같은 스토리가 여러 쪽에 그려지므로 캐럿은 누른 쪽(page)에만 그린다 */
+interface ActiveHF {
+  story: string;
+  part: HFPart;
+  page: number;
+  /** 들어오기 전 본문 선택 (나오면 되돌린다) */
+  bodySel: Selection;
+}
+
+/** 편집 중인 머리말·꼬리말의 상태 (도구 막대) */
+export interface HeaderFooterInfo {
+  part: HFPart;
+  kind: HFKind;
+  /** 그 쪽의 구역 ID와 차례 */
+  section: string;
+  sectionIndex: number;
+  page: number;
+  titlePage: boolean;
+  oddEven: boolean;
+  /** 앞 구역의 스토리를 이어 쓰는가 (이전과 연결) */
+  linked: boolean;
 }
 
 /** 셀 범위 선택 (격자 인덱스 대신 행·열 ID: 원격 변경에도 따라간다) */
@@ -246,7 +304,11 @@ export class Editor {
   private sel: Selection;
   private goalX: number | null = null;
   /** 편집 중인 셀 (null이면 본문) */
-  private active: ActiveCell | null = null;
+  private cell: ActiveCell | null = null;
+  /** 편집 중인 머리말·꼬리말 (null이면 아님) */
+  private hf: ActiveHF | null = null;
+  /** 지금 그리는 머리말·꼬리말의 필드 값 */
+  private drawFields: FieldValues | null = null;
   /** 다음 붙여넣기는 글자만 (Ctrl+Shift+V) */
   private plainPaste = false;
   /** 다중 커서 (11 §5.2): 첫 캐럿(sel) 말고 다른 캐럿들. 같은 스토리, 겹치지 않음 */
@@ -597,7 +659,8 @@ export class Editor {
   setText(text: string): void {
     this.document = new Document(Doc.fromText(text));
     this.doc = this.document.body;
-    this.active = null;
+    this.cell = null;
+    this.hf = null;
     this.cellSel = null;
     this.extras = [];
     this.resetLayouts();
@@ -620,8 +683,9 @@ export class Editor {
 
   /** 여러 스토리 문서를 통째로 바꾼다 (setDoc과 같다. 편집 중인 셀에서는 나온다) */
   setDocument(document: Document): void {
-    const { anchor, head } = this.active ? { anchor: 0, head: 0 } : this.selection();
-    this.active = null;
+    const { anchor, head } = this.inBody ? this.selection() : { anchor: 0, head: 0 };
+    this.cell = null;
+    this.hf = null;
     this.cellSel = null;
     this.extras = []; // 다른 캐럿은 옛 문서의 원소를 가리킨다
     this.document = document;
@@ -636,6 +700,21 @@ export class Editor {
   /** 본문 */
   get body(): Doc {
     return this.document.body;
+  }
+
+  /** 편집 중인 스토리 ID (본문이면 null) */
+  private get storyId(): string | null {
+    return this.cell?.story ?? this.hf?.story ?? null;
+  }
+
+  /** 본문을 편집 중인가 (셀·머리말이 아님) */
+  private get inBody(): boolean {
+    return !this.cell && !this.hf;
+  }
+
+  /** 날짜 필드 값 */
+  private get today(): string {
+    return dateText();
   }
 
   /**
@@ -690,13 +769,17 @@ export class Editor {
     const t0 = performance.now();
     const body = this.body;
     const pre = this.preedit ? { offset: this.headOffset(), text: this.preedit, fmt: this.pendingFmt() } : null;
-    this.fmt.cellPreedit = this.active && pre ? { story: this.active.story, preedit: pre } : null;
+    this.fmt.cellPreedit = this.cell && pre ? { story: this.cell.story, preedit: pre } : null;
     // 바뀐 표 (레코드, 편집 중인 셀, 원격 변경)의 표 문단을 다시 조판하게 한다
     this.touchTables();
+    // 머리말·꼬리말 높이가 바뀌어 쪽 모양이 바뀐 구역은 그 첫 문단부터 다시 놓는다 (12 §5.2). 높이가 그대로면 본문은 그대로
+    const sec = this.fmt.syncSections();
+    if (sec >= 0) body.touchParagraph(sec === 0 ? 0 : body.sectionBreaks()[sec - 1]! + 1);
     // 화면 아래 한 화면 분량까지만 즉시 배치하고 나머지는 백그라운드로
     const syncUntil = this.scroller.scrollTop + this.scroller.clientHeight * 2;
-    this.bodyLayout.update(body.paragraphs(), this.active ? null : pre, syncUntil, body.takeParagraphChanges());
-    if (this.active) this.attachActive();
+    this.bodyLayout.update(body.paragraphs(), this.inBody ? pre : null, syncUntil, body.takeParagraphChanges());
+    if (this.cell) this.attachActive();
+    else if (this.hf) this.attachHF(pre);
     this.stats.layoutMs = performance.now() - t0;
     this.stats.reflowed = this.bodyLayout.counts.reflowed;
     this.stats.repositioned = this.bodyLayout.counts.repositioned;
@@ -793,6 +876,16 @@ export class Editor {
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
 
+    // 머리말·꼬리말 (12 §5): 쪽마다 그 쪽의 필드 값으로
+    for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
+      if (layout.pageBox(p).top - top > h) break;
+      this.drawPageHF(p, px, top, h);
+    }
+
+    // 머리말·꼬리말을 편집 중이면 본문을 흐리게 (12 §5.4)
+    ctx.save();
+    if (this.hf) ctx.globalAlpha = 0.4;
+
     // 떠 있는 개체 (11 §4.2): 글 뒤 개체는 글보다 먼저, 나머지는 글 다음에 그린다
     const floats = layout.floatsIn(top, top + h);
     this.drawDoc = this.body;
@@ -803,8 +896,9 @@ export class Editor {
     const ready = this.drawLines(layout, this.body, px, top, h, visibleParas);
 
     this.drawDoc = this.body;
-    this.drawActive = !this.active;
+    this.drawActive = this.inBody;
     for (const f of floats) if (!f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
+    ctx.restore();
     ctx.textBaseline = 'middle';
     this.drawParagraphDrag(px, top);
     this.drawExtraCarets(px, top, h);
@@ -984,6 +1078,48 @@ export class Editor {
     return ready;
   }
 
+  /**
+   * 쪽 p의 머리말·꼬리말 (12 §5). 본문을 편집 중이면 흐리게, 편집 중인 쪽에는 경계 점선과 이름.
+   * 편집 중인 것은 편집 레이아웃(this.layout)으로 그려 선택 영역이 보인다
+   */
+  private drawPageHF(p: number, px: number, top: number, h: number): void {
+    const { ctx } = this;
+    const info = pageHF(this.fmt, this.bodyLayout, p, this.today);
+    for (const part of ['header', 'footer'] as const) {
+      const slot = part === 'header' ? info.header : info.footer;
+      const editing = this.hf !== null && this.hf.page === p && this.hf.part === part;
+      if (editing) {
+        const y = (part === 'header' ? info.bodyTop : info.bodyBottom) - top;
+        const label = `${part === 'header' ? '머리말' : '꼬리말'}${info.kind === 'first' ? ' (첫 쪽)' : info.kind === 'even' ? ' (짝수 쪽)' : ''}${this.headerFooterInfo()?.linked ? ' · 이전과 연결' : ''}`;
+        ctx.save();
+        ctx.strokeStyle = COLORS.gripActive;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(px + info.box.x, y + 0.5);
+        ctx.lineTo(px + info.box.x + info.box.width, y + 0.5);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = `${Math.min(12, this.fontSize)}px ${this.family}`;
+        const w = ctx.measureText(label).width + 10;
+        const ly = part === 'header' ? y : y - 18;
+        ctx.fillStyle = COLORS.gripActive;
+        ctx.fillRect(px + info.box.x, ly, w, 18);
+        ctx.fillStyle = '#ffffff';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, px + info.box.x + 5, ly + 9);
+        ctx.restore();
+      }
+      const L = editing ? this.layout : layoutHF(this.fmt, (id) => this.document.story(id), info, part);
+      if (!L || !slot.story) continue;
+      ctx.save();
+      if (!this.hf) ctx.globalAlpha = 0.55;
+      this.drawFields = info.fields;
+      this.drawLines(L, this.document.story(slot.story), px, top, h, null);
+      this.drawFields = null;
+      ctx.restore();
+    }
+  }
+
   /** 본문 문단 i 뒤의 나눔 표시: 구역 나눔, 다음 문단의 앞에서 쪽 나눔 (없으면 null) */
   private breakLabel(i: number): string | null {
     const b = this.body;
@@ -1031,7 +1167,7 @@ export class Editor {
     const colX = v.measure.colX;
     // 본문 선택이 표 원소를 덮으면 표 전체를 선택 색으로
     let bodySel = false;
-    if (!this.active) {
+    if (this.inBody) {
       const [a, b] = this.range();
       bodySel = a <= info.start && b > info.start;
     }
@@ -1238,6 +1374,10 @@ export class Editor {
       if (k < ln.start || k >= ln.end) continue;
       const attrs = info.objs?.get(pl.preedit && k >= pl.preedit[0] ? k - (pl.preedit[1] - pl.preedit[0]) : k);
       const x = px + lineX(pl, ln, k);
+      if (attrs?.kind === 'field') {
+        this.drawField(pl, k, attrs.field, info, x, box.w, baseY);
+        continue;
+      }
       let { w, h } = box;
       const offset = info.start + k;
       if (this.resizing && this.resizing.offset === offset) ({ w, h } = this.resizing);
@@ -1268,6 +1408,20 @@ export class Editor {
     }
   }
 
+  /** 필드 (12 §5.1): 그 쪽의 값을 글자 서식으로. 머리말·꼬리말을 편집 중이면 회색 바탕으로 필드임을 보인다 */
+  private drawField(pl: ParaLayout, k: number, kind: FieldKind | undefined, info: ParagraphInfo, x: number, w: number, baseY: number): void {
+    const { ctx } = this;
+    const d = this.fmt.drawStyle(pl.fmt?.[k] ?? 0, this.fmt.styleKey(info), this.drawDoc);
+    const em = this.fontSize * d.run.scale;
+    if (this.hf) {
+      ctx.fillStyle = COLORS.field;
+      ctx.fillRect(x, baseY - em * 0.85, w, em * 1.1);
+    }
+    ctx.font = this.cssFont(0, d);
+    ctx.fillStyle = d.color ?? COLORS.text;
+    ctx.fillText(this.drawFields && kind ? this.drawFields[kind] : this.fmt.fieldText(kind), x, baseY + d.shift);
+  }
+
   /** 떠 있는 개체 하나 그리기 (선택했으면 손잡이) */
   private drawFloat(para: PlacedPara, f: PlacedFloat, px: number, top: number): void {
     const { ctx } = this;
@@ -1294,7 +1448,7 @@ export class Editor {
       ctx.font = `${Math.min(13, this.fontSize)}px ${this.family}`;
       ctx.fillText(attrs?.alt ?? '이미지', x + 6, y + 18, w - 12);
     }
-    const [from, to] = this.active ? [0, 0] : this.range();
+    const [from, to] = this.inBody ? this.range() : [0, 0];
     if (to - from === 1 && from === offset) {
       ctx.strokeStyle = COLORS.gripActive;
       ctx.lineWidth = 1.5;
@@ -1642,7 +1796,7 @@ export class Editor {
    */
   insertPageBreak(): void {
     this.input.commitComposition();
-    if (this.active || this.extras.length) return;
+    if (!this.inBody || this.extras.length) return;
     const [from, to] = this.range();
     const pi = this.doc.paragraphIndexAt(from);
     const p = this.doc.paragraphs()[pi]!;
@@ -1678,7 +1832,7 @@ export class Editor {
    */
   insertSectionBreak(start: SectionStart = 'nextPage'): void {
     this.input.commitComposition();
-    if (this.active || this.extras.length) return;
+    if (!this.inBody || this.extras.length) return;
     const [from] = this.range();
     const pi = this.doc.paragraphIndexAt(from);
     if (this.doc.paragraphs()[pi]?.objs?.get(0)?.kind === 'table') return;
@@ -1696,7 +1850,12 @@ export class Editor {
   /** 캐럿이 든 구역: ID, 설정(빠진 키는 기본값), 차례, 구역 수 */
   sectionInfo(): { id: string; props: SectionProps; index: number; count: number } {
     const b = this.body;
-    const pi = this.active ? this.tableIndex(this.active.table) : b.paragraphIndexAt(this.range()[0]);
+    if (this.hf) {
+      // 머리말·꼬리말: 그 쪽의 구역
+      const info = pageHF(this.fmt, this.bodyLayout, this.hf.page, this.today);
+      return { id: info.sectionId, props: fullSection(b.sectionDef(info.sectionId)), index: info.section, count: b.sectionBreaks().length + 1 };
+    }
+    const pi = this.cell ? this.tableIndex(this.cell.table) : b.paragraphIndexAt(this.range()[0]);
     const s = b.sectionOf(Math.max(0, pi));
     return { id: s.id, props: fullSection(b.sectionDef(s.id)), index: s.index, count: b.sectionBreaks().length + 1 };
   }
@@ -1966,7 +2125,7 @@ export class Editor {
     if (this.sel === this.reportedSel || !this.opts.onSelectionChange) return;
     this.reportedSel = this.sel;
     // 셀에서는 표 원소 자리를 알린다 (프레즌스는 본문 오프셋)
-    const at = this.active ? this.tableOffset(this.active.table) : null;
+    const at = this.cell ? this.tableOffset(this.cell.table) : null;
     if (at !== null) return this.opts.onSelectionChange(at, at);
     const { anchor, head } = this.selection();
     this.opts.onSelectionChange(anchor, head);
@@ -2155,7 +2314,8 @@ export class Editor {
     const max = this.doc.maxCaret;
     anchor = Math.max(0, Math.min(max, anchor));
     head = Math.max(0, Math.min(max, head));
-    this.sel = { anchor: this.doc.positionAt(anchor), head: this.doc.positionAt(head), ...(this.active ? { story: this.active.story } : {}) };
+    const story = this.storyId;
+    this.sel = { anchor: this.doc.positionAt(anchor), head: this.doc.positionAt(head), ...(story ? { story } : {}) };
     if (!keepGoal) this.goalX = null;
     this.cellSel = null;
     this.extras = [];
@@ -2450,7 +2610,8 @@ export class Editor {
       ops = [...ops, ...join];
       mergeKey = undefined;
     }
-    this.commitRaw(this.active ? Document.tag(this.active.story, ops) : ops, before, mergeKey);
+    const story = this.storyId;
+    this.commitRaw(story ? Document.tag(story, ops) : ops, before, mergeKey);
   }
 
   /**
@@ -2505,7 +2666,7 @@ export class Editor {
   }
 
   private moveTo(offset: number, extend: boolean, keepGoal = false): void {
-    if (!this.active && !extend) {
+    if (this.inBody && !extend) {
       const t = this.tableAtOffset(offset);
       if (t && this.enterTableEdge(t, offset < this.headOffset() ? 'last' : 'first', null)) {
         this.history.seal();
@@ -2539,12 +2700,22 @@ export class Editor {
   private restoreSelection(sel: Selection): void {
     this.cellSel = null;
     this.pending = null;
-    if (sel.story) {
-      const [table, row, col] = sel.story.split('|') as [string, string, string];
-      this.active = { table, row, col, story: sel.story };
+    if (sel.story && isHFStory(sel.story)) {
+      // 머리말·꼬리말: 그 스토리를 그리는 쪽으로 (지금 편집 중인 쪽이면 그대로)
+      this.cell = null;
+      if (this.hf?.story !== sel.story) {
+        const part: HFPart = sel.story.startsWith('hdr|') ? 'header' : 'footer';
+        this.hf = { story: sel.story, part, page: Math.max(0, this.hfPageOf(sel.story, part)), bodySel: this.hf?.bodySel ?? this.bodyStart() };
+      }
       this.doc = this.document.story(sel.story);
-    } else if (this.active) {
-      this.active = null;
+    } else if (sel.story) {
+      const [table, row, col] = sel.story.split('|') as [string, string, string];
+      this.hf = null;
+      this.cell = { table, row, col, story: sel.story };
+      this.doc = this.document.story(sel.story);
+    } else if (!this.inBody) {
+      this.cell = null;
+      this.hf = null;
       this.doc = this.body;
       this.layout = this.bodyLayout;
     }
@@ -2569,7 +2740,7 @@ export class Editor {
   /** 바뀐 표 (레코드가 바뀐 표, 편집 중인 셀의 표, 원격 변경이면 모든 표)의 표 문단을 다시 조판하게 한다 */
   private touchTables(): void {
     const ids = new Set(this.document.takeDirtyTables());
-    if (this.active) ids.add(this.active.table);
+    if (this.cell) ids.add(this.cell.table);
     if (this.tablesAllDirty) {
       for (const id of this.fmt.tableViews.keys()) ids.add(id);
       this.tablesAllDirty = false;
@@ -2616,7 +2787,7 @@ export class Editor {
 
   /** 편집 중인 셀의 레이아웃을 붙인다 (셀 원점을 맞춘다). 셀이 사라졌으면 표 뒤 본문으로 나온다 */
   private attachActive(): void {
-    const a = this.active!;
+    const a = this.cell!;
     const loc = this.locateTable(a.table);
     if (!loc || !this.cellPos(loc.view, a.story)) {
       this.leaveTable(loc ? loc.index : this.tableIndex(a.table), 1);
@@ -2628,9 +2799,9 @@ export class Editor {
 
   /** 셀 편집을 끝내고 본문으로 (선택은 본문 처음: 부르는 쪽이 정한다) */
   private leaveCell(): void {
-    if (!this.active) return;
+    if (!this.cell) return;
     this.input.commitComposition();
-    this.active = null;
+    this.cell = null;
     this.extras = [];
     this.doc = this.body;
     this.layout = this.bodyLayout;
@@ -2660,15 +2831,15 @@ export class Editor {
   /** 셀로 들어간다 (캐럿은 부르는 쪽이 정한다). 셀이 없으면 false */
   private enterCell(table: string, row: string, col: string): boolean {
     const story = cellStoryId(table, row, col);
-    if (this.active?.story === story) return true;
+    if (this.cell?.story === story) return true;
     this.input.commitComposition();
     this.history.seal();
-    this.active = { table, row, col, story };
+    this.cell = { table, row, col, story };
     this.extras = []; // 다른 캐럿은 같은 스토리 안에만 있다
     this.doc = this.document.story(story);
     this.pending = null;
     this.attachActive();
-    return this.active !== null;
+    return this.cell !== null;
   }
 
   /** 표의 첫 행(first) 또는 끝 행(last) 셀로 들어간다. x(문서 좌표)가 있으면 그 열, 캐럿도 그 x에 */
@@ -2723,7 +2894,7 @@ export class Editor {
   /** 셀 안을 눌렀다: 셀로 들어가 캐럿, Shift는 셀 범위 선택, 끌어서 다른 셀로 가면 셀 범위 선택 */
   private mouseInCell(hit: NonNullable<ReturnType<Editor['cellAt']>>, p: { x: number; y: number }, e: MouseEvent): void {
     const id = hit.view.id;
-    const a = this.active;
+    const a = this.cell;
     if (e.shiftKey && a && a.table === id && a.story !== hit.cell.story) {
       this.cellSel = { table: id, rows: [a.row, hit.cell.row], cols: [a.col, hit.cell.col] };
       this.render();
@@ -2731,7 +2902,7 @@ export class Editor {
       return;
     }
     if (!this.enterCell(id, hit.cell.row, hit.cell.col)) return;
-    const start = this.active!;
+    const start = this.cell!;
     const offset = this.layout.hitTest(p.x, p.y);
     if (e.detail === 2) {
       const [x0, x1] = this.wordAt(offset);
@@ -2751,7 +2922,7 @@ export class Editor {
       const h2 = this.cellAt(q.x, q.y);
       if (h2 && h2.view.id === id && h2.cell.story !== start.story) {
         this.cellSel = { table: id, rows: [start.row, h2.cell.row], cols: [start.col, h2.cell.col] };
-      } else if (this.active?.story === start.story) {
+      } else if (this.cell?.story === start.story) {
         this.setSelection(anchor, this.layout.hitTest(q.x, q.y));
       }
       this.scheduleRender();
@@ -2767,7 +2938,7 @@ export class Editor {
 
   /** 행 우선 순서로 이웃 셀 (dir ±1). 표 끝을 넘으면 표 밖 본문으로 */
   private stepCell(dir: -1 | 1, caret: 'start' | 'end' | 'all'): void {
-    const a = this.active;
+    const a = this.cell;
     const loc = a && this.locateTable(a.table);
     if (!a || !loc) return;
     const list = loc.view.grid.cells.flat().filter((c) => c !== null);
@@ -2788,7 +2959,7 @@ export class Editor {
 
   /** Tab: 다음 셀 (내용 선택). 마지막 셀에서는 행을 더한다 */
   private tabCell(dir: -1 | 1): void {
-    const a = this.active;
+    const a = this.cell;
     const loc = a && this.locateTable(a.table);
     if (!a || !loc) return;
     const list = loc.view.grid.cells.flat().filter((c) => c !== null);
@@ -2809,7 +2980,7 @@ export class Editor {
 
   /** 셀의 첫 줄 위·끝 줄 아래로: 위·아래 셀, 표 끝이면 표 밖 본문 */
   private leaveCellVertical(dir: number): void {
-    const a = this.active!;
+    const a = this.cell!;
     const loc = this.locateTable(a.table);
     if (!loc) return;
     const pos = this.cellPos(loc.view, a.story);
@@ -2848,7 +3019,7 @@ export class Editor {
 
   /** 편집 중인 표·셀 (도구 막대 상태) */
   tableState(): { inTable: boolean; merged: boolean; range: boolean } {
-    const a = this.active;
+    const a = this.cell;
     const v = a && this.fmt.tableViews.get(a.table);
     const pos = v && this.cellPos(v, a.story);
     return { inTable: !!a, merged: !!pos && (pos.cell.span[0] > 1 || pos.cell.span[1] > 1), range: !!this.cellSel && !!v && !!this.cellSelBox(v) };
@@ -2872,7 +3043,7 @@ export class Editor {
 
   /** 셀에서 나오되 캐럿을 표 앞에 (표 명령) */
   private leaveCellKeep(): void {
-    const a = this.active;
+    const a = this.cell;
     if (!a) return;
     const at = this.tableOffset(a.table);
     this.leaveCell();
@@ -2881,7 +3052,7 @@ export class Editor {
 
   /** 편집 중인 셀의 행 아래(below)·위에 행 */
   tableAddRow(below = true): void {
-    const a = this.active;
+    const a = this.cell;
     const loc = a && this.locateTable(a.table);
     const pos = loc && this.cellPos(loc.view, a.story);
     if (!a || !loc || !pos) return;
@@ -2893,7 +3064,7 @@ export class Editor {
 
   /** 편집 중인 셀의 열 오른쪽(right)·왼쪽에 열 (너비는 그 열과 같게) */
   tableAddCol(right = true): void {
-    const a = this.active;
+    const a = this.cell;
     const loc = a && this.locateTable(a.table);
     const pos = loc && this.cellPos(loc.view, a.story);
     if (!a || !loc || !pos) return;
@@ -2906,7 +3077,7 @@ export class Editor {
 
   /** 편집 중인 셀(또는 셀 범위)의 행·열을 지운다. 다 지우면 표를 지운다 */
   tableDelete(what: 'row' | 'col'): void {
-    const a = this.active;
+    const a = this.cell;
     const loc = a && this.locateTable(a.table);
     const pos = loc && this.cellPos(loc.view, a.story);
     if (!a || !loc || !pos) return;
@@ -2926,14 +3097,14 @@ export class Editor {
     this.history.seal();
     this.history.record({ ops, before, after: { ...this.sel }, time: Date.now() });
     if (o) this.enterCell(a.table, o.cell.row, o.cell.col);
-    if (this.active) this.setSelection(0);
+    if (this.cell) this.setSelection(0);
     this.history.seal();
     this.afterChange();
   }
 
   /** 셀 범위를 병합 (왼쪽 위 셀이 주인, 덮인 셀의 글은 그대로 주인 셀 아래에 이어 보인다) */
   tableMerge(): void {
-    const a = this.active;
+    const a = this.cell;
     const v = a && this.fmt.tableViews.get(a.table);
     const box = v && this.cellSelBox(v);
     if (!a || !v || !box) return;
@@ -2951,14 +3122,14 @@ export class Editor {
 
   /** 편집 중인 병합 셀을 나눈다 */
   tableUnmerge(): void {
-    const a = this.active;
+    const a = this.cell;
     if (!a) return;
     this.commitTable(this.document.unmergeCell(a.table, a.row, a.col), { ...this.sel });
   }
 
   /** 편집 중인 셀(범위)의 배경색 */
   tableCellFill(fill: string | undefined): void {
-    const a = this.active;
+    const a = this.cell;
     const v = a && this.fmt.tableViews.get(a.table);
     if (!a || !v) return;
     const box = this.cellSelBox(v);
@@ -2973,14 +3144,14 @@ export class Editor {
 
   /** 편집 중인 셀의 열 너비 (px) */
   tableSetColWidth(px: number): void {
-    const a = this.active;
+    const a = this.cell;
     if (!a) return;
     this.commitTable(this.document.setColWidth(a.table, a.col, px * (72 / 96) * 1000), { ...this.sel });
   }
 
   /** 편집 중인 표를 지운다 (표 문단 [표][¶]) */
   deleteTable(): void {
-    const a = this.active;
+    const a = this.cell;
     if (!a) return;
     const i = this.tableIndex(a.table);
     this.leaveCell();
@@ -2996,7 +3167,7 @@ export class Editor {
 
   /** 셀 범위의 내용을 지운다 (Delete·Backspace) */
   private clearCellRange(): void {
-    const a = this.active;
+    const a = this.cell;
     const v = a && this.fmt.tableViews.get(a.table);
     const box = v && this.cellSelBox(v);
     if (!a || !v || !box) return;
@@ -3079,8 +3250,8 @@ export class Editor {
           break;
         }
         // 셀 범위: 그 셀들로 된 표
-        if (this.cellSel && this.active) {
-          const v = this.fmt.tableViews.get(this.active.table);
+        if (this.cellSel && this.cell) {
+          const v = this.fmt.tableViews.get(this.cell.table);
           const box = v && this.cellSelBox(v);
           if (v && box) {
             const frag: Fragment = { quire: 1, blocks: [], closed: true, stories: {}, lists: {} };
@@ -3163,14 +3334,14 @@ export class Editor {
     }
     this.input.commitComposition();
     // 셀에서 표(셀 범위)를 붙이면 지금 셀부터 칸마다 덮어쓴다 (Word·Excel)
-    if (this.active && frag.blocks.length === 1 && 'table' in frag.blocks[0]!) return this.pasteCells(frag);
+    if (this.cell && frag.blocks.length === 1 && 'table' in frag.blocks[0]!) return this.pasteCells(frag);
     const before = this.fullSel();
     const [from, to] = this.range();
     const ops: Op[] = [];
     const merge = this.mergeKeepAttrs(from, to);
     if (from !== to) ops.push(...this.doc.deleteRange(from, to));
     if (merge) ops.push(...merge());
-    const r = pasteFragment({ document: this.document, doc: this.doc, inCell: !!this.active, newId: () => crypto.randomUUID().slice(0, 8) }, from, frag);
+    const r = pasteFragment({ document: this.document, doc: this.doc, inCell: !this.inBody, newId: () => crypto.randomUUID().slice(0, 8) }, from, frag);
     ops.push(...r.ops);
     this.setSelection(r.caret);
     this.history.seal();
@@ -3180,7 +3351,7 @@ export class Editor {
 
   /** 표 조각을 편집 중인 셀부터 칸마다 덮어쓴다 (표 밖으로 넘치는 칸은 버린다). 실행 취소 한 단계 */
   private pasteCells(frag: Fragment): void {
-    const a = this.active!;
+    const a = this.cell!;
     const loc = this.locateTable(a.table);
     const pos = loc && this.cellPos(loc.view, a.story);
     const block = frag.blocks[0] as Extract<Fragment['blocks'][0], { table: unknown }>;
@@ -3232,6 +3403,12 @@ export class Editor {
     // 셀 범위 선택 (11 §5.4): 지우기는 셀 내용, Esc는 해제
     if (this.cellSel && !mod && (e.key === 'Backspace' || e.key === 'Delete')) {
       this.clearCellRange();
+      e.preventDefault();
+      return;
+    }
+    // 머리말·꼬리말에서 나오기 (12 §5.4)
+    if (this.hf && e.key === 'Escape' && !this.cellSel) {
+      this.closeHeaderFooter();
       e.preventDefault();
       return;
     }
@@ -3357,23 +3534,23 @@ export class Editor {
         case 'Backspace':
           if (this.caretAtListStart()) this.outdentListItem(this.caretAtListStart()!.i, true); // 목록 첫머리: 번호부터 지운다
           else if (from !== to) this.deleteRange(from, to);
-          else if (!this.active && head > 0 && this.tableAtOffset(head - 1)) this.moveTo(head - 1, false); // 표 뒤 문단 처음: 표와 합치지 않고 표로
-          else if (!this.active && this.pageBreakAtCaret(head)) this.setParagraphAttr('pageBreakBefore', undefined); // 쪽 나눔부터 지운다
+          else if (this.inBody && head > 0 && this.tableAtOffset(head - 1)) this.moveTo(head - 1, false); // 표 뒤 문단 처음: 표와 합치지 않고 표로
+          else if (this.inBody && this.pageBreakAtCaret(head)) this.setParagraphAttr('pageBreakBefore', undefined); // 쪽 나눔부터 지운다
           else if (head > 0) this.deleteRange(this.layout.prevStop(head), head, 'delete');
           break;
         case 'Delete':
           if (from !== to) this.deleteRange(from, to);
-          else if (!this.active && head < this.doc.maxCaret && this.tableAtOffset(head + 1)) this.moveTo(head + 1, false); // 표 앞 문단 끝
+          else if (this.inBody && head < this.doc.maxCaret && this.tableAtOffset(head + 1)) this.moveTo(head + 1, false); // 표 앞 문단 끝
           else if (head < this.doc.maxCaret) this.deleteRange(head, this.layout.nextStop(head), 'delete');
           break;
         case 'ArrowLeft':
           if (from !== to && !shift) this.moveTo(from, false);
-          else if (this.active && head === 0 && !shift) this.stepCell(-1, 'end');
+          else if (this.cell && head === 0 && !shift) this.stepCell(-1, 'end');
           else this.moveTo(this.layout.prevStop(head), shift);
           break;
         case 'ArrowRight':
           if (from !== to && !shift) this.moveTo(to, false);
-          else if (this.active && head >= this.doc.maxCaret && !shift) this.stepCell(1, 'start');
+          else if (this.cell && head >= this.doc.maxCaret && !shift) this.stepCell(1, 'start');
           else this.moveTo(Math.min(this.doc.maxCaret, this.layout.nextStop(head)), shift);
           break;
         case 'ArrowUp':
@@ -3400,7 +3577,7 @@ export class Editor {
         }
         case 'Tab':
           // 표 셀이면 다음·앞 셀 (11 §5.4). 목록 문단이면 수준 ±1 (10 §2.4), 아니면 탭 문자 (Shift+Tab은 목록에서만)
-          if (this.active) this.tabCell(shift ? -1 : 1);
+          if (this.cell) this.tabCell(shift ? -1 : 1);
           else if (!this.listLevel(shift ? -1 : 1) && !shift) this.replaceSelection('\t', 'type');
           break;
         default:
@@ -3450,7 +3627,7 @@ export class Editor {
         return true;
       }
       case 'Tab':
-        if (this.active) return false;
+        if (this.cell) return false;
         this.insertAll('\t', 'type');
         return true;
     }
@@ -3462,8 +3639,8 @@ export class Editor {
     const r = this.layout.caretRect(head);
     if (this.goalX === null) this.goalX = r.x;
     const target = this.layout.stepLine(r.ref, dir);
-    if (!extend && this.active && !target) return this.leaveCellVertical(dir);
-    if (!extend && !this.active && target && this.bodyLayout.para(target.para).layout.table) {
+    if (!extend && this.cell && !target) return this.leaveCellVertical(dir);
+    if (!extend && this.inBody && target && this.bodyLayout.para(target.para).layout.table) {
       // 위·아래 표로: 첫 행(내려갈 때)이나 끝 행의 goalX 열
       const id = (this.bodyLayout.para(target.para).info as ParagraphInfo).objs?.get(0)?.table;
       const goal = this.goalX;
@@ -3520,6 +3697,36 @@ export class Editor {
     const p = this.docPoint(e);
     // 아직 쪽 조립이 안 된 영역의 클릭은 무시 (자리표시가 보이는 상태)
     if (p.y >= this.bodyLayout.validBottom) return;
+    // 머리말·꼬리말 (12 §5.4): 두 번 눌러 들어간다. 편집 중에는 다른 쪽·다른 영역을 누르면 그리로, 본문은 두 번 눌러 나온다
+    const zone = this.hfZoneAt(p.x, p.y);
+    if (this.hf) {
+      if (!zone && e.detail < 2) return;
+      if (!zone) {
+        this.leaveHF(false);
+        this.setSelection(this.bodyLayout.hitTest(p.x, p.y));
+        this.history.seal();
+        this.relayout();
+        this.render();
+        this.opts.onChange?.(this);
+        return;
+      }
+      if (zone.page !== this.hf.page || zone.part !== this.hf.part) {
+        this.enterHF(zone.page, zone.part);
+        if (!this.hf) return;
+        this.setSelection(this.layout.hitTest(p.x, p.y));
+        this.render();
+        this.opts.onChange?.(this);
+        return;
+      }
+      return this.selectAt(p, e);
+    }
+    if (zone && e.detail === 2) {
+      this.enterHF(zone.page, zone.part);
+      if (this.hf) this.setSelection(this.layout.hitTest(p.x, p.y));
+      this.render();
+      this.opts.onChange?.(this);
+      return;
+    }
     if (e.detail === 1 && this.inGrip(p.x, p.y)) {
       const ref = this.bodyLayout.firstLineBelow(p.y, false);
       if (ref) {
@@ -3531,7 +3738,7 @@ export class Editor {
     // Alt+누르기: 캐럿 더하기 (11 §5.2, 편집 중인 스토리 안에서)
     if (e.altKey && !e.shiftKey && e.detail === 1) {
       const hit0 = this.cellAt(p.x, p.y);
-      if ((hit0 ? hit0.cell.story : null) === (this.active ? this.active.story : null)) {
+      if ((hit0 ? hit0.cell.story : null) === (this.cell ? this.cell.story : null)) {
         this.addCaret(this.layout.hitTest(p.x, p.y));
         return;
       }
@@ -3561,6 +3768,11 @@ export class Editor {
       this.opts.onChange?.(this);
       return;
     }
+    this.selectAt(p, e);
+  }
+
+  /** 편집 중인 스토리 안에서 누르기(두 번: 낱말, 세 번: 문단)와 끌어 선택하기 */
+  private selectAt(p: { x: number; y: number }, e: MouseEvent): void {
     const offset = this.layout.hitTest(p.x, p.y);
 
     if (e.detail === 2) {
@@ -3594,6 +3806,220 @@ export class Editor {
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     }
+  }
+
+  // ── 머리말·꼬리말 (12 §5) ─────────────────────────────
+
+  /** 문서 좌표가 쪽의 머리말(본문 위)·꼬리말(본문 아래) 영역이면 그 쪽과 영역 */
+  private hfZoneAt(x: number, y: number): { page: number; part: HFPart } | null {
+    const L = this.bodyLayout;
+    const page = L.pageAt(y);
+    if (page >= L.pageCount) return null;
+    const pb = L.pageBox(page);
+    if (x < pb.x || x > pb.x + pb.width || y < pb.top || y > pb.top + pb.height) return null;
+    const info = pageHF(this.fmt, L, page, this.today);
+    if (y < info.bodyTop) return { page, part: 'header' };
+    if (y > info.bodyBottom) return { page, part: 'footer' };
+    return null;
+  }
+
+  /** 본문 처음 (머리말에서 나올 때 돌아갈 선택이 없으면) */
+  private bodyStart(): Selection {
+    const p = this.body.positionAt(0);
+    return { anchor: p, head: p };
+  }
+
+  /** 스토리를 머리말·꼬리말로 그리는 첫 쪽 (없으면 -1) */
+  private hfPageOf(story: string, part: HFPart): number {
+    const L = this.bodyLayout;
+    for (let p = 0; p < L.pageCount; p++) {
+      const info = pageHF(this.fmt, L, p, this.today);
+      if ((part === 'header' ? info.header.story : info.footer.story) === story) return p;
+    }
+    return -1;
+  }
+
+  /** 캐럿이 있는 본문 쪽 */
+  private caretPage(): number {
+    const L = this.bodyLayout;
+    if (this.cell) {
+      const at = this.tableOffset(this.cell.table);
+      return at === null ? 0 : L.pageAt(L.caretRect(at).y);
+    }
+    return L.pageAt(L.caretRect(this.body.resolve(this.sel.head)).y);
+  }
+
+  /**
+   * 쪽 page의 머리말·꼬리말을 편집한다. 그 쪽에 스토리가 없으면 그 쪽 구역·종류의 스토리를 만들어 구역 설정에 건다 (실행 취소 한 단계).
+   * 셀에서 들어오면 셀에서 나온다
+   */
+  private enterHF(page: number, part: HFPart): void {
+    this.input.commitComposition();
+    if (this.cell) this.leaveCellKeep();
+    const bodySel = this.hf ? this.hf.bodySel : { anchor: this.sel.anchor, head: this.sel.head };
+    if (this.hf) this.leaveHF(true);
+    const body = this.body;
+    const info = pageHF(this.fmt, this.bodyLayout, page, this.today);
+    let story = part === 'header' ? info.header.story : info.footer.story;
+    if (!story) {
+      story = hfStoryId(part, info.sectionId, info.kind);
+      const f = fullSection(body.sectionDef(info.sectionId));
+      const before: Selection = { ...this.sel };
+      this.history.seal();
+      this.commitRaw(body.setSection(info.sectionId, { ...f, [part]: { ...(f[part] ?? {}), [info.kind]: story } }), before);
+    }
+    this.history.seal();
+    this.hf = { story, part, page, bodySel };
+    this.extras = [];
+    this.pending = null;
+    this.cellSel = null;
+    this.doc = this.document.story(story);
+    const start = this.doc.positionAt(0);
+    this.sel = { anchor: start, head: start, story };
+    this.relayout();
+  }
+
+  /** 편집 중인 머리말·꼬리말의 레이아웃 (그 쪽의 필드 값, 자리). 쪽의 스토리가 바뀌었으면 같은 스토리를 그리는 쪽으로, 없으면 나온다 */
+  private attachHF(pre: { offset: number; text: string; fmt?: number } | null): void {
+    const a = this.hf!;
+    const L = this.bodyLayout;
+    if (a.page >= L.pageCount) a.page = Math.max(0, L.pageCount - 1);
+    let info = pageHF(this.fmt, L, a.page, this.today);
+    if ((a.part === 'header' ? info.header.story : info.footer.story) !== a.story) {
+      const p = this.hfPageOf(a.story, a.part);
+      if (p < 0) return this.leaveHF(true);
+      a.page = p;
+      info = pageHF(this.fmt, L, p, this.today);
+    }
+    this.layout = layoutHF(this.fmt, (id) => this.document.story(id), info, a.part, pre)!;
+  }
+
+  /** 머리말·꼬리말 편집을 끝낸다. restore면 들어오기 전 본문 선택으로 */
+  private leaveHF(restore: boolean): void {
+    const a = this.hf;
+    if (!a) return;
+    this.input.commitComposition();
+    this.history.seal();
+    this.hf = null;
+    this.extras = [];
+    this.pending = null;
+    this.doc = this.body;
+    this.layout = this.bodyLayout;
+    if (restore) this.sel = { anchor: a.bodySel.anchor, head: a.bodySel.head };
+    else this.setSelection(0);
+  }
+
+  /** 캐럿이 있는 쪽의 머리말(또는 꼬리말) 편집을 시작한다 (12 §5.4). 머리말 편집 중이면 같은 쪽의 다른 쪽으로 */
+  editHeaderFooter(part: HFPart = 'header'): void {
+    this.enterHF(this.hf ? this.hf.page : this.caretPage(), part);
+    this.scrollCaretIntoView();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 머리말·꼬리말 편집을 끝내고 본문으로 (Esc) */
+  closeHeaderFooter(): void {
+    if (!this.hf) return;
+    this.leaveHF(true);
+    this.relayout();
+    this.scrollCaretIntoView();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 편집 중인 머리말·꼬리말 (없으면 null) */
+  headerFooterInfo(): HeaderFooterInfo | null {
+    const a = this.hf;
+    if (!a) return null;
+    const info = pageHF(this.fmt, this.bodyLayout, a.page, this.today);
+    const f = fullSection(this.body.sectionDef(info.sectionId));
+    return {
+      part: a.part,
+      kind: info.kind,
+      section: info.sectionId,
+      sectionIndex: info.section,
+      page: a.page,
+      titlePage: !!f.titlePage,
+      oddEven: !!f.oddEven,
+      linked: f[a.part]?.[info.kind] !== a.story,
+    };
+  }
+
+  /** 필드 넣기 (12 §5.1): 머리말·꼬리말 안에서만 (본문의 쪽 번호 필드는 쪽 나눔과 순환을 만든다, O-29) */
+  insertField(kind: FieldKind): void {
+    if (!this.hf) return;
+    this.input.commitComposition();
+    const before: Selection = { ...this.sel };
+    const [from, to] = this.range();
+    const ops: Op[] = [];
+    if (from !== to) ops.push(...this.doc.deleteRange(from, to));
+    const marks = this.pending && this.pending.at === from ? this.pending.marks : undefined;
+    ops.push(...this.doc.insertObject(from, { kind: 'field', field: kind }, marks));
+    this.setSelection(from + 1);
+    this.history.seal();
+    this.commit(ops, before);
+    this.history.seal();
+  }
+
+  /** 편집 중인 머리말·꼬리말 구역의 첫 쪽 다르게(titlePage)·짝홀 다르게(oddEven). 그 쪽의 새 종류 스토리로 옮겨 간다 */
+  setHeaderFooterOption(key: 'titlePage' | 'oddEven', on: boolean): void {
+    const a = this.hf;
+    if (!a) return;
+    const info = pageHF(this.fmt, this.bodyLayout, a.page, this.today);
+    const f = fullSection(this.body.sectionDef(info.sectionId));
+    if (!!f[key] === on) return;
+    const { page, part } = a;
+    const keep = { story: a.story, ...this.selection() };
+    this.leaveHF(true);
+    const next: SectionProps = { ...f };
+    if (on) next[key] = true;
+    else delete next[key];
+    const before: Selection = { ...this.sel };
+    this.history.seal();
+    this.commitRaw(this.body.setSection(info.sectionId, next), before);
+    this.enterHF(page, part);
+    if (this.hf?.story === keep.story) this.setSelection(keep.anchor, keep.head);
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /**
+   * 이전과 연결 (Word): linked = false면 앞 구역에서 이어 쓰던 스토리를 이 구역 스토리로 복사해 끊는다. true면 이 구역 스토리를
+   * 떼어 앞 구역의 것을 이어 쓴다 (스토리 내용은 남아 되돌릴 수 있다). 실행 취소 한 단계
+   */
+  setHeaderFooterLinked(linked: boolean): void {
+    const a = this.hf;
+    const cur = this.headerFooterInfo();
+    if (!a || !cur || cur.linked === linked) return;
+    if (linked && cur.sectionIndex === 0) return;
+    const { page, part } = a;
+    const sec = cur.section;
+    const kind = cur.kind;
+    const src = a.story;
+    const caret = this.selection();
+    this.leaveHF(true);
+    const before: Selection = { ...this.sel };
+    const body = this.body;
+    const f = fullSection(body.sectionDef(sec));
+    const map = { ...(f[part] ?? {}) };
+    const ops: Op[] = [];
+    if (linked) delete map[kind];
+    else {
+      const id = hfStoryId(part, sec, kind);
+      ops.push(...Document.tag(id, copyStory(this.document.story(src), this.document.story(id))));
+      map[kind] = id;
+    }
+    const next: SectionProps = { ...f };
+    if (Object.keys(map).length) next[part] = map;
+    else delete next[part];
+    ops.push(...body.setSection(sec, next));
+    this.history.seal();
+    this.commitRaw(ops, before);
+    this.enterHF(page, part);
+    // 복사한 스토리는 글이 같으므로 캐럿을 같은 자리에
+    if (this.hf && !linked) this.setSelection(caret.anchor, caret.head);
+    this.render();
+    this.opts.onChange?.(this);
   }
 
   // ── 문단 끌기 ─────────────────────────────────────────

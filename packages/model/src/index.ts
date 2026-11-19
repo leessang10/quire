@@ -1,5 +1,5 @@
 export { Doc, PARA, BRK_CHAR, MARK_KEYS, INHERITED_MARKS, PARA_KEYS, PARA_MARK_PREFIX, OBJ, OBJ_KEYS, OBJ_MARK_PREFIX } from './doc';
-export type { ElementId, Side, Position, ParagraphInfo, SegId, SegState, RawChange, TextDelta, MarkSet, MarkKey, ParaAttrs, ParaKey, ObjAttrs, ObjKey, FloatAttrs } from './doc';
+export type { ElementId, Side, Position, ParagraphInfo, SegId, SegState, RawChange, TextDelta, MarkSet, MarkKey, ParaAttrs, ParaKey, ObjAttrs, ObjKey, FloatAttrs, FieldKind } from './doc';
 export { History, applyOp, invertOp } from './history';
 export type { OpTarget } from './history';
 export { BODY_STYLE, DEFAULT_STYLES, mergeParaAttrs, resolveStyle } from './styles';
@@ -12,5 +12,5 @@ export type { StoryId } from './document';
 export { DEFAULT_COL_WIDTH, cellKey, cellStoryId, emptyTable, newTableId, normalizeTable, tableMap } from './tables';
 export type { CellAttrs, GridCell, RowAttrs, TableAttrs, TableChange, TableGrid, TableMapName, TableRecord, TableSpan } from './tables';
 export type { DocumentListener } from './document';
-export { DEFAULT_SECTION, LAST_SECTION, PAPER_SIZES, SECTION_KEYS, fullSection } from './sections';
-export type { SectionKey, SectionProps, SectionStart } from './sections';
+export { DEFAULT_HF_DISTANCE, DEFAULT_SECTION, LAST_SECTION, PAPER_SIZES, SECTION_KEYS, formatPageNumber, fullSection, hfKindOf, hfStoryId, isHFStory, resolveHF } from './sections';
+export type { HFKind, HFPart, SectionKey, SectionProps, SectionStart } from './sections';

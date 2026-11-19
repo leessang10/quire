@@ -2,7 +2,7 @@
  * 구역 동기화·저장 (12 §3.2): 구역 설정은 Loro 맵 sections의 '<구역 ID>|<키>' (키마다 LWW), 구역 나눔은 ¶의 문단 속성.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { LAST_SECTION, fullSection, type SectionProps } from '@quire/model';
+import { Doc, Document, LAST_SECTION, fullSection, hfStoryId, type SectionProps } from '@quire/model';
 import { SyncBridge } from './index';
 import { SyncClient } from './client';
 import { SyncCore } from './core';
@@ -71,6 +71,49 @@ describe('section sync (bridge)', () => {
     settle();
     expect(b.doc.sectionOf(0).id).toBe('s1');
     expect(b.doc.sectionDef('s1')).toEqual(LANDSCAPE);
+  });
+});
+
+describe('headers, footers and fields (12 §5)', () => {
+  /** 꼬리말 "쪽 / 전체 쪽" (필드 개체 둘) */
+  const footer = (d: Doc) => {
+    d.insertObject(0, { kind: 'field', field: 'page' });
+    d.insertText(1, ' / ');
+    d.insertObject(4, { kind: 'field', field: 'pages' });
+    d.setParaAttr(0, 'align', 'center');
+  };
+  const fields = (d: Doc) => [...(d.paragraphs()[0]!.objs ?? new Map()).entries()].map(([k, o]) => [k, o.kind, o.field]);
+
+  it('sends header and footer stories with their fields and the section references', () => {
+    const { a, b, settle } = bridges(['가', '나'].join(NL));
+    const id = hfStoryId('footer', LAST_SECTION, 'default');
+    footer(a.story(id));
+    a.doc.setSection(LAST_SECTION, { ...fullSection(undefined), titlePage: true, footer: { default: id } });
+    settle();
+    expect(b.doc.sectionDef(LAST_SECTION)!.footer).toEqual({ default: id });
+    expect(b.doc.sectionDef(LAST_SECTION)!.titlePage).toBe(true);
+    expect(fields(b.story(id))).toEqual([[0, 'field', 'page'], [4, 'field', 'pages']]);
+    expect(b.story(id).paraAttrs(0)).toEqual({ align: 'center' });
+    // 두 사람이 같은 머리말(같은 ID)을 동시에 처음 만들어도 한 스토리로 합쳐진다
+    const h = hfStoryId('header', LAST_SECTION, 'default');
+    a.story(h).insertText(0, 'A');
+    b.story(h).insertText(0, 'B');
+    settle();
+    expect(a.story(h).text()).toBe(b.story(h).text());
+    expect(a.story(h).text().length).toBe(3);
+  });
+
+  it('round-trips header references and fields through the canonical JSON', () => {
+    const d = new Document(Doc.fromText(['가', '나'].join(NL)));
+    const id = hfStoryId('footer', LAST_SECTION, 'default');
+    footer(d.story(id));
+    d.body.setSection(LAST_SECTION, { ...fullSection(undefined), oddEven: true, footer: { default: id, even: id }, pageNumber: { start: 3, format: 'roman' } });
+    const q = quireFromDocument(d);
+    expect(q.stories[id]).toEqual([{ p: { align: 'center' }, c: [{ img: { kind: 'field', field: 'page' } }, { t: ' / ' }, { img: { kind: 'field', field: 'pages' } }] }]);
+    const back = documentFromQuire(JSON.parse(canonicalJson(q))).document;
+    expect(back.body.sectionDef(LAST_SECTION)).toEqual(d.body.sectionDef(LAST_SECTION));
+    expect(fields(back.story(id))).toEqual(fields(d.story(id)));
+    expect(canonicalJson(quireFromDocument(back))).toBe(canonicalJson(q));
   });
 });
 

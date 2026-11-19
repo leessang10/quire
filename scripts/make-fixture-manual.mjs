@@ -4,6 +4,8 @@
  *   - 절 제목(제목 2·3)은 스타일의 다음 문단과 함께: 쪽 끝에 홀로 남지 않는다
  *   - 주의 문단은 문단 나누지 않음
  *   - 긴 문단이 쪽을 넘을 때 과부·고아 줄 막기
+ * 머리말·꼬리말(12 §5)도 쓴다: 표지(첫 쪽)는 비우고, 홀수 쪽은 오른쪽에 제목, 짝수 쪽은 왼쪽에 부제, 꼬리말은 가운데 "쪽 / 전체 쪽".
+ * 머리말이 여백 안에 들어가므로 본문 쪽 나눔은 머리말이 없을 때와 같다.
  * 네 규칙이 모두 실제로 걸리도록 문단 길이를 맞췄다 (규칙을 하나씩 끄면 쪽 나눔이 바뀐다): 주의 문단(10)이 통째로 3쪽,
  * 제목 2.1(18)·2.3(23)이 다음 쪽, 마지막 문단(32)이 4+1줄 대신 3+2줄.
  *   node scripts/make-fixture-manual.mjs  → fixtures/docs/manual.json
@@ -17,6 +19,8 @@ const h2 = (t) => p(t, { style: 'h2' });
 const h3 = (t) => p(t, { style: 'h3' });
 const body = (t) => p(t, { align: 'justify' });
 const note = (t) => p(t, { style: 'quote', keepTogether: true });
+
+const field = (f) => ({ img: { kind: 'field', field: f } });
 
 const S = [
   '이 설명서는 문서 편집기를 처음 쓰는 사람을 위해 만들었다. 메뉴의 이름보다는 하려는 일을 기준으로 장을 나누었으므로, 하려는 일이 있는 장부터 읽어도 된다.',
@@ -33,8 +37,21 @@ const doc = {
   version: 1,
   settings: {},
   styles: {},
-  sections: [{ id: 's1', page: { width: 595276, height: 841890, margin: [72000, 72000, 72000, 72000] }, columns: 1 }],
+  sections: [
+    {
+      id: 's1',
+      page: { width: 595276, height: 841890, margin: [72000, 72000, 72000, 72000] },
+      columns: 1,
+      titlePage: true,
+      oddEven: true,
+      header: { default: 'hdr|s1|default', even: 'hdr|s1|even' },
+      footer: { default: 'ftr|s1|default', even: 'ftr|s1|default' },
+    },
+  ],
   stories: {
+    'hdr|s1|default': [p('문서 편집기 설명서', { align: 'right' })],
+    'hdr|s1|even': [p('처음 쓰는 사람을 위한 안내')],
+    'ftr|s1|default': [{ p: { align: 'center' }, c: [field('page'), { t: ' / ' }, field('pages')] }],
     body: [
       p('문서 편집기 설명서', { style: 'h1', align: 'center' }),
       p('처음 쓰는 사람을 위한 안내', { align: 'center' }),

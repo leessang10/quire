@@ -1,5 +1,5 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
-import { Doc, LAST_SECTION, PAPER_SIZES, defaultListDef, fullSection, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
+import { Doc, Document, LAST_SECTION, PAPER_SIZES, defaultListDef, fullSection, hfStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
 
@@ -89,9 +89,10 @@ async function sampleImage(): Promise<Blob> {
 }
 
 /**
- * 구역 예제 (12 §3): 표지(A4 세로) → 가로 쪽(A4 가로, 다음 쪽) → 본문(홀수 쪽에서 시작, 여백 30mm) → 이어지는 구역(같은 쪽, 왼쪽 여백 넓게)
+ * 구역 예제 (12 §3): 표지(A4 세로) → 가로 쪽(A4 가로, 다음 쪽) → 본문(홀수 쪽에서 시작, 여백 30mm) → 이어지는 구역(같은 쪽, 왼쪽 여백 넓게).
+ * 머리말·꼬리말 (12 §5): 표지는 첫 쪽 따로(비움), 꼬리말 "쪽 / 전체 쪽"을 뒤 구역들이 이어 쓴다. 본문 구역에서 쪽 번호를 1부터 다시 센다
  */
-function sectionsSample(): Doc {
+function sectionsSample(): Document {
   const r = (text: string, marks: MarkSet = {}) => ({ text, marks });
   const pa = (attrs: ParaAttrs, ...runs: Array<{ text: string; marks: MarkSet }>) => ({ attrs, runs });
   const body = '구역마다 용지 크기·방향·여백이 다를 수 있습니다. 구역 나눔은 그 구역 마지막 문단에 붙은 표시이고, 다음 구역이 어떻게 시작할지(다음 쪽·이어서·짝수 쪽·홀수 쪽)는 다음 구역의 설정입니다.';
@@ -110,12 +111,23 @@ function sectionsSample(): Doc {
   ]);
   const mm = (v: number) => Math.round((v * 72000) / 25.4);
   const [w, h] = PAPER_SIZES.A4!;
-  doc.setSection('cover', fullSection(undefined));
+  const hdr = hfStoryId('header', 'cover', 'default');
+  const ftr = hfStoryId('footer', 'cover', 'default');
+  doc.setSection('cover', { ...fullSection(undefined), titlePage: true, header: { default: hdr }, footer: { default: ftr } });
   doc.setSection('wide', { page: { width: h, height: w, margin: [mm(20), mm(20), mm(20), mm(20)] }, start: 'nextPage' });
-  doc.setSection('main', { page: { width: w, height: h, margin: [mm(30), mm(30), mm(30), mm(30)] }, start: 'oddPage' });
+  doc.setSection('main', { page: { width: w, height: h, margin: [mm(30), mm(30), mm(30), mm(30)] }, start: 'oddPage', pageNumber: { start: 1 } });
   doc.setSection(LAST_SECTION, { page: { width: w, height: h, margin: [mm(30), mm(30), mm(30), mm(60)] }, start: 'continuous' });
   doc.takeParagraphChanges();
-  return doc;
+  const document = new Document(doc);
+  const head = document.story(hdr);
+  head.insertText(0, '구역 예제 · 머리말');
+  head.setParaAttr(0, 'align', 'right');
+  const foot = document.story(ftr);
+  foot.insertObject(0, { kind: 'field', field: 'page' });
+  foot.insertText(1, ' / ');
+  foot.insertObject(4, { kind: 'field', field: 'pages' });
+  foot.setParaAttr(0, 'align', 'center');
+  return document;
 }
 
 /** 서식 예제를 열고 이미지 두 개를 넣는다 (인라인: 글자처럼 줄 안에) */
@@ -255,6 +267,7 @@ const editor = new Editor({
     showMarks();
     const t = (document.querySelector('.tbl-tools') as HTMLElement | null);
     if (t) t.hidden = !editor?.tableState().inTable;
+    showHeaderFooter();
   },
   input: inputMode,
   fonts,
@@ -277,7 +290,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-doc]').forEach((btn) => {
       return;
     }
     if (kind === 'sections') {
-      editor.setDoc(sectionsSample());
+      editor.setDocument(sectionsSample());
       editor.focus();
       showStats();
       return;
@@ -370,6 +383,50 @@ document.querySelectorAll<HTMLButtonElement>('[data-keep]').forEach((btn) =>
   }),
 );
 
+// 머리말·꼬리말과 필드 (3-4)
+document.getElementById('hf-header')!.addEventListener('click', () => {
+  editor.editHeaderFooter('header');
+  editor.focus();
+});
+document.getElementById('hf-footer')!.addEventListener('click', () => {
+  editor.editHeaderFooter('footer');
+  editor.focus();
+});
+document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach((b) =>
+  b.addEventListener('click', () => {
+    editor.insertField(b.dataset.field as 'page' | 'pages');
+    editor.focus();
+  }),
+);
+document.querySelectorAll<HTMLButtonElement>('[data-hfopt]').forEach((b) =>
+  b.addEventListener('click', () => {
+    const k = b.dataset.hfopt as 'titlePage' | 'oddEven';
+    editor.setHeaderFooterOption(k, !editor.headerFooterInfo()?.[k]);
+    editor.focus();
+  }),
+);
+document.getElementById('hf-link')!.addEventListener('click', () => {
+  editor.setHeaderFooterLinked(!editor.headerFooterInfo()?.linked);
+  editor.focus();
+});
+document.getElementById('hf-close')!.addEventListener('click', () => {
+  editor.closeHeaderFooter();
+  editor.focus();
+});
+
+/** 머리말·꼬리말을 편집 중이면 그 도구를 보인다 */
+function showHeaderFooter(): void {
+  const info = editor?.headerFooterInfo();
+  const tools = document.querySelector('.hf-tools') as HTMLElement | null;
+  if (!tools) return;
+  tools.hidden = !info;
+  if (!info) return;
+  document.querySelectorAll<HTMLButtonElement>('[data-hfopt]').forEach((b) => b.setAttribute('aria-pressed', String(!!info[b.dataset.hfopt as 'titlePage' | 'oddEven'])));
+  const link = document.getElementById('hf-link') as HTMLButtonElement;
+  link.setAttribute('aria-pressed', String(info.linked));
+  link.disabled = info.sectionIndex === 0;
+}
+
 // 구역 (3-2): 구역 나누기, 쪽 설정 대화상자
 document.getElementById('sec-break')!.addEventListener('click', () => {
   editor.insertSectionBreak('nextPage');
@@ -396,6 +453,8 @@ function fillPageForm(p: SectionProps): void {
   for (const el of pageForm.querySelectorAll<HTMLInputElement>('input[name="orient"]')) el.checked = el.value === (width > height ? 'landscape' : 'portrait');
   ['mt', 'mr', 'mb', 'ml'].forEach((n, k) => (field(n).value = String(toMm(margin[k]!))));
   field<HTMLSelectElement>('start').value = p.start;
+  field('pnStart').value = p.pageNumber?.start !== undefined ? String(p.pageNumber.start) : '';
+  field<HTMLSelectElement>('pnFormat').value = p.pageNumber?.format ?? 'decimal';
 }
 function syncPaper(): void {
   const name = field<HTMLSelectElement>('paper').value;
@@ -451,11 +510,17 @@ pageForm.addEventListener('submit', (e) => {
     return;
   }
   const info = editor.sectionInfo();
-  editor.setSectionProps({
+  const pnStart = field('pnStart').value.trim();
+  const pnFormat = field<HTMLSelectElement>('pnFormat').value as 'decimal' | 'roman' | 'hangul';
+  const pageNumber = { ...(pnStart !== '' ? { start: Math.max(0, Math.round(Number(pnStart))) } : {}), ...(pnFormat !== 'decimal' ? { format: pnFormat } : {}) };
+  const next: SectionProps = {
     ...info.props,
     page: { width: fromMm(w), height: fromMm(h), margin: [fromMm(mt), fromMm(mr), fromMm(mb), fromMm(ml)] },
     start: field<HTMLSelectElement>('start').value as SectionStart,
-  });
+  };
+  if (Object.keys(pageNumber).length) next.pageNumber = pageNumber;
+  else delete next.pageNumber;
+  editor.setSectionProps(next);
 });
 pageDialog.addEventListener('close', () => editor.focus());
 

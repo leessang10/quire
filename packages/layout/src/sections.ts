@@ -170,6 +170,27 @@ export class SectionFrames implements FrameSource {
     return this.topOf(pages);
   }
 
+  /**
+   * 쪽 p를 가진 구역 (쪽 모양을 정하는 구역, 12 §5.3): 차례, 그 구역의 첫 쪽, 다음 구역의 첫 쪽 (없으면 Infinity).
+   * 짝·홀수 시작으로 넣은 빈 쪽은 새 구역의 쪽이다
+   */
+  /** 구역 차례 i의 첫 쪽 (아직 놓지 않았으면 -1) */
+  firstPageOf(i: number): number {
+    return i < this.live ? this.runs[i]!.own : -1;
+  }
+
+  pageOwner(p: number): { index: number; first: number; end: number } {
+    const r = this.ownerOf(p);
+    const n = this.live;
+    let end = Infinity;
+    for (let j = this.runs.indexOf(r) + 1; j < n; j++)
+      if (this.runs[j]!.own > r.own) {
+        end = this.runs[j]!.own;
+        break;
+      }
+    return { index: r.index, first: r.own, end };
+  }
+
   startsSection(m: number): boolean {
     return m > 0 && this.source.sectionOf(m - 1).index !== this.source.sectionOf(m).index;
   }
