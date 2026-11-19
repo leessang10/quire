@@ -13,3 +13,7 @@ export type { Fragment } from './clipboard';
 export { Formatter, defaultPageSetup } from './formatter';
 export { dateText, hfText, layoutHF, pageHF, pageNumberOf } from './headers';
 export type { PageHF } from './headers';
+export { CanvasTarget, RecordingTarget } from './paint';
+export type { FontRef, ImageSource, PaintCommand, PaintTarget, TextRun } from './paint';
+export { DEFAULT_METRICS, PagePainter, noteLayout, noteSlots } from './painter';
+export type { FontMetrics, LinePaint, NoteSlot, ObjectPaint, PaintOverlay, PaintRegion, PainterEnv, StoryOverlay } from './painter';

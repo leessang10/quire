@@ -11,7 +11,6 @@ import {
   type TableGrid,
   MARK_KEYS,
   MAX_LIST_LEVEL,
-  OBJ,
   type MarkKey,
   type MarkSet,
   type Op,
@@ -53,27 +52,24 @@ import {
   LayoutCache,
   PagedLayout,
   SectionFrames,
-  CELL_PAD,
-  cellGroups,
-  rowParts,
-  cpSlice,
   displayToDoc,
   docToDisplay,
   lineX,
   type Measurer,
   type PageSetup,
-  type ParaLayout,
-  type PlacedFloat,
   type PlacedLine,
   type PlacedPara,
 } from '@quire/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
 import { MemoryAssets, type AssetStore } from './assets';
-import { Formatter, NOTE_INDENT, PLAIN_DRAW, defaultPageSetup, hasKeys, type DrawStyle, type FieldValues, type TableView } from './formatter';
-import { dateText, layoutHF, pageHF } from './headers';
+import { Formatter, NOTE_INDENT, defaultPageSetup, hasKeys, type TableView } from './formatter';
+import { dateText, layoutHF, pageHF, type PageHF } from './headers';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 import { SpellSession, carryIssues, type SpellChecker, type SpellIssue, type SpellKind } from './spell';
+import { CanvasTarget } from './paint';
+import type { PainterEnv } from './painter';
+import { DEFAULT_METRICS, PagePainter, noteLayout as noteLayoutOf, noteSlots as noteSlotsOf, type FontMetrics, type LinePaint, type NoteSlot, type ObjectPaint, type PaintOverlay, type StoryOverlay } from './painter';
 
 /** 찾기 상태 (15 §3.1): 결과 수, 지금 결과 번호(-1이면 없음), 상한에 닿았나, 틀린 조건 */
 export interface FindStatus {
@@ -221,18 +217,6 @@ export interface SelectionMarks {
   mixed: Set<MarkKey>;
 }
 
-/** 글꼴 치수 (em 비율): 기준선·밑줄·취소선 */
-interface Metrics {
-  ascent: number;
-  descent: number;
-  underlinePosition: number;
-  underlineThickness: number;
-  strikePosition: number;
-  strikeThickness: number;
-}
-
-/** 기울인 그리기의 기울기 (tan 약 12°) */
-const ITALIC_SKEW = 0.21;
 /** 다른 사용자의 선택 영역 (화면 오프셋). 협업 프레즌스에서 받아 그린다 */
 export interface RemoteCaret {
   key: string;
@@ -404,23 +388,6 @@ interface ActiveNote {
   bodySel: Selection;
 }
 
-/** 쪽의 각주 영역에 놓인 각주 하나 (그리기·누르기) */
-interface NoteSlot {
-  id: string;
-  num: number;
-  /** 번호 자리 왼쪽, 조각 위쪽 (문서 좌표), 각주 내용 폭 */
-  x: number;
-  y: number;
-  width: number;
-  /** 각주 줄 [from, to), 높이, 앞 쪽에서 이어 씀 */
-  from: number;
-  to: number;
-  h: number;
-  cont: boolean;
-  /** 그 프레임(단) 각주 영역의 첫 조각 (구분선을 그 위에) */
-  first: boolean;
-}
-
 /** 편집 중인 머리말·꼬리말의 상태 (도구 막대) */
 export interface HeaderFooterInfo {
   part: HFPart;
@@ -498,8 +465,6 @@ export class Editor {
     cursor: number;
     cursorVersion: number;
   } | null = null;
-  /** 지금 그리는 머리말·꼬리말의 필드 값 */
-  private drawFields: FieldValues | null = null;
   /** 다음 붙여넣기는 글자만 (Ctrl+Shift+V) */
   private plainPaste = false;
   /** 다중 커서 (11 §5.2): 첫 캐럿(sel) 말고 다른 캐럿들. 같은 스토리, 겹치지 않음 */
@@ -511,10 +476,6 @@ export class Editor {
   /** 다음 relayout에서 모든 표를 다시 잰다 (원격 변경) */
   private tablesAllDirty = false;
   private readonly cellCache = new LayoutCache(20000);
-  /** 지금 그리는 스토리 (서식 번호의 뜻이 스토리마다 다르다) */
-  private drawDoc!: Doc;
-  /** 지금 그리는 것이 편집 중인 스토리인가 (선택 영역을 그린다) */
-  private drawActive = true;
   private preedit = '';
   private focused = false;
 
@@ -533,9 +494,7 @@ export class Editor {
   private shapedFonts: string[] | null = null;
   /** 글꼴 번호별 굵은 얼굴의 가족 이름 (불러온 것만). 없으면 합성 굵게 */
   private boldFonts: Array<string | null> = [];
-  private metrics: Metrics = {
-    ascent: 0.8, descent: 0.2, underlinePosition: -0.1, underlineThickness: 0.06, strikePosition: 0.3, strikeThickness: 0.06,
-  };
+  private metrics: FontMetrics = { ...DEFAULT_METRICS };
   private readonly assets: AssetStore;
   /** 자산 ID → 그릴 이미지 (불러오는 중 null) */
   private readonly images = new Map<string, ImageBitmap | null | 'error'>();
@@ -556,7 +515,11 @@ export class Editor {
   private resizeObserver: ResizeObserver;
   private readonly blink: Animation | null;
   /** 캔버스에서 커닝을 끌 수 있는가 (줄 단위 그리기 가능 여부) */
-  private readonly kerningOff: boolean;
+  /** 쪽 그리기기 (15 §5.1)와 화면 대상 */
+  private readonly target: CanvasTarget;
+  private readonly painter = new PagePainter(this.painterEnv());
+  /** 편집기 덧그리기: 쪽 그리기기가 쪽 내용 사이사이에 부른다 */
+  private readonly overlay: PaintOverlay = this.makeOverlay();
   private renderQueued = false;
   private bgTimer: ReturnType<typeof setTimeout> | null = null;
   private disposers: Array<() => void> = [];
@@ -587,7 +550,6 @@ export class Editor {
     this.document = opts.document ?? new Document(opts.doc ?? Doc.fromText(opts.text ?? ''));
     this.fmt = new Formatter(() => this.document, this.setup, this.fontSize);
     this.doc = this.document.body;
-    this.drawDoc = this.doc;
     const start = this.doc.positionAt(0);
     this.sel = { anchor: start, head: start };
 
@@ -608,7 +570,10 @@ export class Editor {
     scroller.appendChild(canvas);
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
-    this.kerningOff = 'fontKerning' in this.ctx;
+    this.target = new CanvasTarget(this.ctx, (asset) => {
+      const img = this.images.get(asset);
+      return img && img !== 'error' ? img : null;
+    });
 
     this.spacer = document.createElement('div');
     scroller.appendChild(this.spacer);
@@ -1094,49 +1059,10 @@ export class Editor {
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
 
-    // 단 구분선 (12 §7.1)
-    if (layout.frames.multi?.())
-      for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
-        if (layout.pageBox(p).top - top > h) break;
-        const cols = layout.frames.columnsOn?.(p) ?? [];
-        ctx.fillStyle = COLORS.columnRule;
-        for (let i = 1; i < cols.length; i++) {
-          const a = cols[i - 1]!;
-          const b = cols[i]!;
-          if (!b.sep || b.frame.column === 0 || a.frame.top !== b.frame.top) continue;
-          const x = (a.frame.x + a.frame.width + b.frame.x) / 2;
-          ctx.fillRect(px + x - 0.5, b.frame.top - top, 1, b.frame.height);
-        }
-      }
-
-    // 머리말·꼬리말 (12 §5): 쪽마다 그 쪽의 필드 값으로
-    for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
-      if (layout.pageBox(p).top - top > h) break;
-      this.drawPageHF(p, px, top, h);
-    }
-
-    // 머리말·꼬리말을 편집 중이면 본문을 흐리게 (12 §5.4)
-    ctx.save();
-    if (this.hf) ctx.globalAlpha = 0.4;
-
-    // 떠 있는 개체 (11 §4.2): 글 뒤 개체는 글보다 먼저, 나머지는 글 다음에 그린다
-    const floats = layout.floatsIn(top, top + h);
-    this.drawDoc = this.body;
-    for (const f of floats) if (f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
-
-    // 줄 (표 문단은 표로, 셀 내용은 셀 레이아웃으로)
+    // 쪽 내용 (15 §5.1): 단 구분선, 머리말·꼬리말, 떠 있는 개체, 줄, 각주. 편집기 것은 덧그리기 갈고리로
     const visibleParas = new Set<number>();
-    const ready = this.drawLines(layout, this.body, px, top, h, visibleParas);
-
-    this.drawDoc = this.body;
-    this.drawActive = this.inBody;
-    for (const f of floats) if (!f.float.spec.behind) this.drawFloat(f.para, f.float, px, top);
-    // 각주 영역 (12 §6.2)
-    for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
-      if (layout.pageBox(p).top - top > h) break;
-      this.drawPageNotes(p, px, top, h);
-    }
-    ctx.restore();
+    this.target.begin();
+    const ready = this.painter.paint(this.target, { px, top, h, overlay: this.overlay, budgetMs: RENDER_LAYOUT_BUDGET_MS, visible: visibleParas });
     ctx.textBaseline = 'middle';
     this.drawParagraphDrag(px, top);
     this.drawExtraCarets(px, top, h);
@@ -1155,303 +1081,243 @@ export class Editor {
     this.stats.renderMs = performance.now() - t0;
   }
 
-  /**
-   * 레이아웃의 보이는 줄을 그린다 (본문 또는 표 셀). 셀 레이아웃은 본문과 같은 문서 좌표다 (원점을 옮겨 놓았다).
-   * visibleParas: 본문이면 보이는 문단 번호를 모은다. 본문 영역이 아직 배치되지 않았으면 false
-   */
-  private drawLines(layout: PagedLayout, doc: Doc, px: number, top: number, h: number, visibleParas: Set<number> | null): boolean {
+  /** 쪽 그리기기가 읽는 것들 (게터: 글꼴을 불러오면 셰이핑 글꼴이 바뀐다) */
+  private painterEnv(): PainterEnv {
+    const self = this;
+    return {
+      get fmt() {
+        return self.fmt;
+      },
+      get document() {
+        return self.document;
+      },
+      get layout() {
+        return self.bodyLayout;
+      },
+      get setup() {
+        return self.setup;
+      },
+      get fontSize() {
+        return self.fontSize;
+      },
+      get family() {
+        return self.family;
+      },
+      get metrics() {
+        return self.metrics;
+      },
+      get shapedFonts() {
+        return self.shapedFonts;
+      },
+      get boldFonts() {
+        return self.boldFonts;
+      },
+      get today() {
+        return self.today;
+      },
+      images: {
+        state: (asset) => {
+          const img = this.image(asset);
+          return img === 'error' ? 'error' : img ? 'ready' : 'loading';
+        },
+      },
+    };
+  }
+
+  /** 편집기 덧그리기 (15 §5.1): 선택, 주석·제안·장식, 조합 밑줄, 나눔 표시, 편집 중 표시, 개체 손잡이, 셀 범위 선택 */
+  private makeOverlay(): PaintOverlay {
+    const self = this;
+    return {
+      get bodyAlpha() {
+        // 머리말·꼬리말을 편집 중이면 본문을 흐리게 (12 §5.4)
+        return self.hf ? 0.4 : 1;
+      },
+      get hfAlpha() {
+        return self.hf ? 1 : 0.55;
+      },
+      get fieldShading() {
+        return !!self.hf;
+      },
+      story: (layout, doc) => this.storyOverlay(layout, doc),
+      hf: (p, part, info, px, top) => this.hfOverlay(p, part, info, px, top),
+      note: (p, s) => (this.note !== null && this.note.id === s.id && this.note.page === p ? this.layout : null),
+      objectBox: (offset, float, w, h) => {
+        const r = this.resizing && this.resizing.offset === offset ? this.resizing : null;
+        const m = float && this.moving && this.moving.offset === offset ? this.moving : null;
+        if (!r && !m) return null;
+        return { w: r ? r.w : w, h: r ? r.h : h, dx: m ? m.dx : 0, dy: m ? m.dy : 0 };
+      },
+      object: (o) => this.objectOverlay(o),
+      cell: (v, start, x, y, cx, cy, cw, ch) => {
+        // 본문 선택이 표 원소를 덮으면 표 전체를 선택 색으로
+        let bodySel = false;
+        if (this.inBody) {
+          const [a, b] = this.range();
+          bodySel = a <= start && b > start;
+        }
+        const box = this.cellSelBox(v);
+        if (bodySel || (box && y >= box.y0 && y <= box.y1 && x >= box.x0 && x <= box.x1)) {
+          this.ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
+          this.ctx.fillRect(cx, cy, cw, ch);
+        }
+      },
+    };
+  }
+
+  /** 한 스토리의 줄 덧그리기: 끄는 문단, 주석 범위, 장식, 선택 영역, 원격 선택 / 제안 표시, 장식 물결, 조합 밑줄, 나눔 표시 */
+  private storyOverlay(layout: PagedLayout, doc: Doc): StoryOverlay {
     const { ctx } = this;
     const isBody = doc === this.body;
     const active = layout === this.layout;
-    this.drawDoc = doc;
-    this.drawActive = active;
     // 선택 범위들 (다중 커서면 여럿)
     const ranges = active ? this.caretList().filter((c) => c.anchor !== c.head).map((c) => [Math.min(c.anchor, c.head), Math.max(c.anchor, c.head)] as const) : [];
-    ctx.font = this.font;
-    ctx.textBaseline = 'alphabetic';
-    // 셰이핑 중이면 커닝을 켠다: 같은 글꼴 파일이면 캔버스가 HarfBuzz와 같은 폭으로 그린다 (ADR-0002)
-    if (this.kerningOff) ctx.fontKerning = this.shapedFonts ? 'normal' : 'none';
-    // 주석 범위 (14 §2.4): 이 스토리의 주석 (문서 판마다 캐시)
+    // 주석 범위 (14 §2.4): 이 스토리의 주석. 해결한 댓글 스레드의 범위는 칠하지 않는다 (14 §3.2)
     const storyId = this.document.storyIdOf(doc);
-    // 해결한 댓글 스레드의 범위는 칠하지 않는다 (14 §3.2)
     const anns = storyId === undefined ? [] : this.document.annotationRanges().filter((a) => (a.story ?? null) === storyId && !a.orphan && a.to > a.from && !this.hiddenAnn(a));
     const sugg = anns.filter((a) => a.type === 'suggestion');
     // 장식 (15 §2): 문단마다 한 번 구한다
     const decoCache = new Map<number, readonly Decoration[]>();
-    const decosOf = (i: number, info: DecorationPara): readonly Decoration[] => {
-      let d = decoCache.get(i);
-      if (!d) decoCache.set(i, (d = storyId === undefined ? [] : this.decorationsFor(storyId, info)));
+    const decosOf = (l: LinePaint): readonly Decoration[] => {
+      let d = decoCache.get(l.index);
+      if (!d) decoCache.set(l.index, (d = storyId === undefined ? [] : this.decorationsFor(storyId, l.para.info)));
       return d;
     };
-    // 화면 영역이 아직 배치되지 않았으면 시간 예산 안에서만 배치한다 (스크롤바로 멀리 이동한 경우 등).
-    // 못 끝낸 부분은 자리표시로 그리고 다음 프레임에 이어서 한다.
-    const ready = isBody ? layout.ensureThroughY(top + h, RENDER_LAYOUT_BUDGET_MS) : true;
-    let lastTable = -1;
-    const validCount = layout.validCount;
-    const nextRef = (r: { para: number; line: number }) => {
-      if (r.line + 1 < layout.paras[r.para]!.lines.length) return { para: r.para, line: r.line + 1 };
-      return r.para + 1 < validCount ? { para: r.para + 1, line: 0 } : null;
-    };
-    let ref: { para: number; line: number } | null = layout.firstLineBelow(top, false);
-    // 다단 (12 §7): 앞 단의 줄이 화면 아래로 가도 뒤 단의 줄이 화면에 있을 수 있다. 화면의 마지막 쪽을 지나면 멈춘다
-    const multi = isBody && !!layout.frames.multi?.();
-    const lastPage = multi ? layout.pageAt(top + h) : 0;
-    for (; ref; ref = nextRef(ref)) {
-      const para = layout.paras[ref.para]!;
-      const ln = para.lines[ref.line]!;
-      const y = ln.y - top;
-      if (y > h) {
-        if (!multi || ln.page > lastPage) break;
-        continue;
-      }
-      if (y + ln.height < 0) continue;
-      visibleParas?.add(ref.para);
-      if (para.layout.table) {
-        // 표 문단: 처음 보이는 행에서 표 전체(보이는 부분)를 그린다
-        if (lastTable !== ref.para) {
-          lastTable = ref.para;
-          this.drawTable(para, px, top, h);
-          this.drawDoc = doc;
-          this.drawActive = active;
-          ctx.font = this.font;
-          ctx.textBaseline = 'alphabetic';
+    return {
+      back: (l) => {
+        // 끌고 있는 문단
+        if (isBody && this.drag && l.index >= this.drag.i && l.index <= this.drag.j) {
+          ctx.fillStyle = COLORS.dragSource;
+          ctx.fillRect(l.px + l.para.frameLeft - 6, l.y, l.para.width + 12, l.ln.height);
         }
-        continue;
-      }
-      const { xs, preedit } = para.layout;
-      const pStart = para.info.start;
-      const x0 = px + ln.x - xs[ln.start]!;
-      /** 표시 인덱스 d의 화면 x (들여쓰기·정렬·양쪽 맞춤 포함) */
-      const X = (d: number) => px + lineX(para.layout, ln, d);
-      const sty = this.fmt.styleKey(para.info as ParagraphInfo);
-
-      // 끌고 있는 문단
-      if (isBody && this.drag && ref.para >= this.drag.i && ref.para <= this.drag.j) {
-        ctx.fillStyle = COLORS.dragSource;
-        ctx.fillRect(px + para.frameLeft - 6, y, para.width + 12, ln.height);
-      }
-
-      // 형광펜 (선택 영역 아래)
-      const baseY = ln.baseline - top;
-      if (para.layout.fmt) this.drawHighlights(para.layout, ln, px, baseY, sty);
-      // 주석 범위 칠 (겹치면 진해진다)
-      if (anns.length) this.drawAnnotations(anns, para, ln, X, y);
-      const decos = decosOf(ref.para, para.info);
-      if (decos.length) this.paintDecorations(decos, para, ln, X, y, false);
-
-      // 선택 영역
-      for (const [selFrom, selTo] of ranges) {
-        const lineDocStart = pStart + ln.start;
-        const isLast = ln.index === para.lines.length - 1;
-        const lineDocEnd = pStart + ln.end + (isLast ? 1 : 0); // 마지막 줄은 ¶ 포함
-        const a = Math.max(selFrom, lineDocStart);
-        const b = Math.min(selTo, lineDocEnd);
-        if (a < b) {
-          const da = a - pStart;
-          const db = Math.min(b - pStart, ln.end);
-          const sx = X(da);
-          let ex = X(db);
-          if (isLast && b > pStart + ln.end) ex += this.fontSize * 0.5; // ¶ 표시 폭
-          ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
+      },
+      under: (l) => {
+        const { para, ln, X, y } = l;
+        const pStart = para.info.start;
+        // 주석 범위 칠 (겹치면 진해진다)
+        if (anns.length) this.drawAnnotations(anns, para, ln, X, y);
+        const decos = decosOf(l);
+        if (decos.length) this.paintDecorations(decos, para, ln, X, y, false);
+        // 선택 영역
+        for (const [selFrom, selTo] of ranges) {
+          const lineDocStart = pStart + ln.start;
+          const isLast = ln.index === para.lines.length - 1;
+          const lineDocEnd = pStart + ln.end + (isLast ? 1 : 0); // 마지막 줄은 ¶ 포함
+          const a = Math.max(selFrom, lineDocStart);
+          const b = Math.min(selTo, lineDocEnd);
+          if (a < b) {
+            const da = a - pStart;
+            const db = Math.min(b - pStart, ln.end);
+            const sx = X(da);
+            let ex = X(db);
+            if (isLast && b > pStart + ln.end) ex += this.fontSize * 0.5; // ¶ 표시 폭
+            ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
+            ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
+          }
+        }
+        // 다른 사용자의 선택 영역
+        for (const rc of isBody ? this.remotes : []) {
+          if (rc.anchor === rc.head) continue;
+          const pEnd = doc.paragraphs()[l.index]!.end; // 이 문단 ¶의 오프셋
+          const a = Math.max(Math.min(rc.anchor, rc.head), pStart);
+          const b = Math.min(Math.max(rc.anchor, rc.head), pEnd + 1);
+          if (a >= b) continue;
+          const withMark = b > pEnd && ln.index === para.lines.length - 1; // 이 줄에 ¶까지 포함
+          const sd = Math.max(docToDisplay(para, a), ln.start);
+          const ed = b > pEnd ? ln.end : Math.min(docToDisplay(para, b), ln.end);
+          if (sd > ed || (sd === ed && !withMark)) continue;
+          const sx = X(sd);
+          const ex = X(ed) + (withMark ? this.fontSize * 0.5 : 0);
+          ctx.fillStyle = withAlpha(rc.color, 0.22);
           ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
         }
-      }
-
-      // 다른 사용자의 선택 영역
-      for (const rc of isBody ? this.remotes : []) {
-        if (rc.anchor === rc.head) continue;
-        const pEnd = doc.paragraphs()[ref.para]!.end; // 이 문단 ¶의 오프셋
-        const a = Math.max(Math.min(rc.anchor, rc.head), pStart);
-        const b = Math.min(Math.max(rc.anchor, rc.head), pEnd + 1);
-        if (a >= b) continue;
-        const withMark = b > pEnd && ln.index === para.lines.length - 1; // 이 줄에 ¶까지 포함
-        const sd = Math.max(docToDisplay(para, a), ln.start);
-        const ed = b > pEnd ? ln.end : Math.min(docToDisplay(para, b), ln.end);
-        if (sd > ed || (sd === ed && !withMark)) continue;
-        const sx = X(sd);
-        const ex = X(ed) + (withMark ? this.fontSize * 0.5 : 0);
-        ctx.fillStyle = withAlpha(rc.color, 0.22);
-        ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
-      }
-
-      // 목록 번호·글머리 (첫 줄, 내어쓴 자리)
-      if (ln.index === 0 && para.layout.marker) this.drawMarker(para.layout, px + para.frameLeft, baseY, sty);
-
-      // 글자
-      ctx.fillStyle = COLORS.text;
-      const midY = baseY;
-      if (this.shapedFonts || para.layout.fmt || ln.adj || para.layout.objs) {
-        this.drawRuns(para.layout, ln, px, baseY, sty);
-        if (para.layout.objs) this.drawObjects(para, ln, px, baseY);
-        if (para.layout.fmt) this.drawDecorations(para.layout, ln, px, baseY, sty);
-        ctx.font = this.font;
-        ctx.fillStyle = COLORS.text;
-      } else if (this.kerningOff) {
-        // 커닝을 끄면 문자열 폭 = 글자 폭의 합이므로 탭 사이 구간을 한 번에 그린다 (그리기 호출 수 ↓)
-        const text = cpSlice(para.layout, ln.start, ln.end);
-        let segStart = ln.start;
-        let cp = ln.start;
-        let u = 0;
-        let segU = 0;
-        const flush = (endU: number) => {
-          if (endU > segU) ctx.fillText(text.slice(segU, endU), x0 + xs[segStart]!, midY);
-        };
-        while (u < text.length) {
-          const c = text.charCodeAt(u);
-          const w = c >= 0xd800 && c <= 0xdbff && u + 1 < text.length ? 2 : 1;
-          if (c === 9) {
-            flush(u);
-            segStart = cp + 1;
-            segU = u + 1;
+      },
+      over: (l) => {
+        const { para, ln, X, y } = l;
+        // 제안 밑줄·취소선 (글자 위)
+        if (sugg.length) this.drawSuggestionLines(sugg, para, ln, X, y, l.px + para.frameLeft);
+        const decos = decosOf(l);
+        if (decos.length) this.paintDecorations(decos, para, ln, X, y, true);
+        // 조합 중 밑줄
+        const { preedit } = para.layout;
+        if (preedit) {
+          const a = Math.max(preedit[0], ln.start);
+          const b = Math.min(preedit[1], ln.end);
+          if (a < b) {
+            ctx.fillStyle = COLORS.preedit;
+            ctx.fillRect(X(a), y + ln.height - 5, X(b) - X(a), 1.5);
           }
-          u += w;
-          cp++;
         }
-        flush(text.length);
-      } else {
-        // 커닝을 끌 수 없는 브라우저: grapheme마다 계산된 위치에 그림
-        let i = ln.start;
-        while (i < ln.end) {
-          let j = i + 1;
-          while (j < ln.end && !para.layout.stops[j]) j++;
-          const g = cpSlice(para.layout, i, j);
-          if (g !== ' ' && g !== '\t') ctx.fillText(g, x0 + xs[i]!, midY);
-          i = j;
+        // 구역 나눔 표시 (12 §3.1): 구역 끝 문단의 마지막 줄 뒤에 점선과 다음 구역의 시작 방식. 쪽 나눔(다음 문단이 앞에서 쪽 나눔)도
+        if (isBody && ln.index === para.lines.length - 1) {
+          const mark = this.breakLabel(l.index);
+          if (mark) this.drawBreakMark(mark, X(ln.end) + this.fontSize * 0.6, l.px + para.frameLeft + para.width, y + ln.height / 2);
         }
-      }
-
-      // 제안 밑줄·취소선 (글자 위)
-      if (sugg.length) this.drawSuggestionLines(sugg, para, ln, X, y, px + para.frameLeft);
-      if (decos.length) this.paintDecorations(decos, para, ln, X, y, true);
-
-      // 조합 중 밑줄
-      if (preedit) {
-        const a = Math.max(preedit[0], ln.start);
-        const b = Math.min(preedit[1], ln.end);
-        if (a < b) {
-          ctx.fillStyle = COLORS.preedit;
-          ctx.fillRect(X(a), y + ln.height - 5, X(b) - X(a), 1.5);
-        }
-      }
-
-      // 구역 나눔 표시 (12 §3.1): 구역 끝 문단의 마지막 줄 뒤에 점선과 다음 구역의 시작 방식. 쪽 나눔(다음 문단이 앞에서 쪽 나눔)도
-      if (isBody && ln.index === para.lines.length - 1) {
-        const mark = this.breakLabel(ref.para);
-        if (mark) this.drawBreakMark(mark, X(ln.end) + this.fontSize * 0.6, px + para.frameLeft + para.width, y + ln.height / 2);
-      }
-    }
-    return ready;
+      },
+    };
   }
 
-  /**
-   * 쪽 p의 머리말·꼬리말 (12 §5). 본문을 편집 중이면 흐리게, 편집 중인 쪽에는 경계 점선과 이름.
-   * 편집 중인 것은 편집 레이아웃(this.layout)으로 그려 선택 영역이 보인다
-   */
-  private drawPageHF(p: number, px: number, top: number, h: number): void {
+  /** 머리말·꼬리말을 편집 중인 쪽: 경계 점선과 이름. 편집 중인 것은 편집 레이아웃(this.layout)으로 그려 선택 영역이 보인다 */
+  private hfOverlay(p: number, part: 'header' | 'footer', info: PageHF, px: number, top: number): PagedLayout | null {
+    const editing = this.hf !== null && this.hf.page === p && this.hf.part === part;
+    if (!editing) return null;
     const { ctx } = this;
-    const info = pageHF(this.fmt, this.bodyLayout, p, this.today);
-    for (const part of ['header', 'footer'] as const) {
-      const slot = part === 'header' ? info.header : info.footer;
-      const editing = this.hf !== null && this.hf.page === p && this.hf.part === part;
-      if (editing) {
-        const y = (part === 'header' ? info.bodyTop : info.bodyBottom) - top;
-        const label = `${part === 'header' ? '머리말' : '꼬리말'}${info.kind === 'first' ? ' (첫 쪽)' : info.kind === 'even' ? ' (짝수 쪽)' : ''}${this.headerFooterInfo()?.linked ? ' · 이전과 연결' : ''}`;
-        ctx.save();
-        ctx.strokeStyle = COLORS.gripActive;
-        ctx.setLineDash([4, 3]);
-        ctx.beginPath();
-        ctx.moveTo(px + info.box.x, y + 0.5);
-        ctx.lineTo(px + info.box.x + info.box.width, y + 0.5);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.font = `${Math.min(12, this.fontSize)}px ${this.family}`;
-        const w = ctx.measureText(label).width + 10;
-        const ly = part === 'header' ? y : y - 18;
-        ctx.fillStyle = COLORS.gripActive;
-        ctx.fillRect(px + info.box.x, ly, w, 18);
-        ctx.fillStyle = '#ffffff';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, px + info.box.x + 5, ly + 9);
-        ctx.restore();
-      }
-      const L = editing ? this.layout : layoutHF(this.fmt, (id) => this.document.story(id), info, part);
-      if (!L || !slot.story) continue;
-      ctx.save();
-      if (!this.hf) ctx.globalAlpha = 0.55;
-      this.drawFields = info.fields;
-      this.drawLines(L, this.document.story(slot.story), px, top, h, null);
-      this.drawFields = null;
-      ctx.restore();
-    }
-  }
-
-  /** 쪽 p의 각주 영역: 구분선(이어 쓴 각주로 시작하면 전체 폭), 번호와 내용. 나눈 각주는 그 쪽 조각만 잘라 그린다 */
-  private drawPageNotes(p: number, px: number, top: number, h: number): void {
-    const slots = this.noteSlots(p);
-    if (!slots.length) return;
-    const { ctx } = this;
-    const sep = this.setup.noteSeparator ?? 16;
+    const y = (part === 'header' ? info.bodyTop : info.bodyBottom) - top;
+    const label = `${part === 'header' ? '머리말' : '꼬리말'}${info.kind === 'first' ? ' (첫 쪽)' : info.kind === 'even' ? ' (짝수 쪽)' : ''}${this.headerFooterInfo()?.linked ? ' · 이전과 연결' : ''}`;
     ctx.save();
-    ctx.fillStyle = COLORS.text;
-    for (const s0 of slots) {
-      if (!s0.first) continue;
-      const lineW = s0.cont ? s0.width + NOTE_INDENT : Math.min(160, (s0.width + NOTE_INDENT) / 3);
-      ctx.fillRect(px + s0.x, s0.y - sep / 2 - top, lineW, 0.75);
-    }
+    ctx.strokeStyle = COLORS.gripActive;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(px + info.box.x, y + 0.5);
+    ctx.lineTo(px + info.box.x + info.box.width, y + 0.5);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = `${Math.min(12, this.fontSize)}px ${this.family}`;
+    const w = ctx.measureText(label).width + 10;
+    const ly = part === 'header' ? y : y - 18;
+    ctx.fillStyle = COLORS.gripActive;
+    ctx.fillRect(px + info.box.x, ly, w, 18);
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, px + info.box.x + 5, ly + 9);
     ctx.restore();
-    for (const s of slots) {
-      const editing = this.note !== null && this.note.id === s.id && this.note.page === p;
-      const L = editing ? this.layout : this.noteLayout(s);
-      const doc = this.document.story(noteStoryId(s.id));
+    return this.layout;
+  }
+
+  /** 선택한 개체: 테두리와 손잡이. 떠 있는 개체는 앵커 표시도 (개체가 붙은 문단의 첫 줄 왼쪽) */
+  private objectOverlay(o: ObjectPaint): void {
+    const active = o.float ? this.inBody : o.layout === this.layout;
+    const [from, to] = active ? this.range() : [0, 0];
+    if (to - from !== 1 || from !== o.offset) return;
+    const { ctx } = this;
+    const { x, y, w, h } = o;
+    ctx.strokeStyle = COLORS.gripActive;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, y, w, h);
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#ffffff';
+    for (const [hx, hy] of handlePoints(x, y, w, h)) {
+      ctx.fillRect(hx - 4, hy - 4, 8, 8);
+      ctx.strokeRect(hx - 4 + 0.5, hy - 4 + 0.5, 7, 7);
+    }
+    const ln = o.float ? o.para.lines[0] : undefined;
+    if (ln) {
       ctx.save();
-      ctx.beginPath();
-      ctx.rect(px + s.x - 2, s.y - top, s.width + NOTE_INDENT + 4, s.h);
-      ctx.clip();
-      if (!s.cont && s.num > 0) {
-        const ln = L.paras[0]?.lines[0];
-        if (ln) {
-          ctx.font = `${Math.round(this.fontSize * 0.75)}px ${this.family}`;
-          ctx.fillStyle = COLORS.text;
-          ctx.textBaseline = 'alphabetic';
-          ctx.fillText(String(s.num), px + s.x, ln.baseline - top - this.fontSize * 0.3);
-        }
-      }
-      this.drawLines(L, doc, px, top, h, null);
+      ctx.fillStyle = COLORS.gripActive;
+      ctx.font = `12px ${this.family}`;
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('⚓', o.px + o.para.frameLeft - 18, ln.baseline - o.top);
       ctx.restore();
     }
   }
 
-  /** 쪽 p의 각주 영역에 놓인 각주들 (문서 좌표). 영역은 프레임(다단이면 단)마다 그 맨 아래에 붙는다 (12 §6.2, O-26) */
+  /** 쪽 p의 각주 영역에 놓인 각주들 (문서 좌표) */
   private noteSlots(p: number): NoteSlot[] {
-    const L = this.bodyLayout;
-    const places = L.notesOnPage(p);
-    if (!places.length) return [];
-    const sep = this.setup.noteSeparator ?? 16;
-    const out: NoteSlot[] = [];
-    const frames = [...new Set(places.map((n) => n.frame))];
-    for (const k of frames) {
-      const mine = places.filter((n) => n.frame === k);
-      const fr = L.frames.frame(k);
-      const area = sep + mine.reduce((a, n) => a + n.h, 0);
-      let y = fr.top + fr.height - area + sep;
-      const width = Math.max(1, fr.width - NOTE_INDENT);
-      mine.forEach((n, i) => {
-        out.push({ id: n.id, num: this.fmt.noteNumber(n.id), x: fr.x, y, width, from: n.from, to: n.to, h: n.h, cont: n.cont, first: i === 0 });
-        y += n.h;
-      });
-    }
-    return out;
+    return noteSlotsOf(this.fmt, this.bodyLayout, this.setup, p);
   }
 
-  /** 각주 조각의 레이아웃: 줄 from이 조각 위쪽에 오도록 원점을 둔다 */
+  /** 각주 조각의 레이아웃 */
   private noteLayout(s: NoteSlot, pre: { offset: number; text: string; fmt?: number } | null = null): PagedLayout {
-    const doc = this.document.story(noteStoryId(s.id));
-    const L = this.fmt.layoutStory(doc, s.width, null, pre);
-    const lines = this.fmt.noteLines(s.id, s.width);
-    let before = 0;
-    for (let k = 0; k < s.from; k++) before += lines[k] ?? 0;
-    L.setOrigin(s.x + NOTE_INDENT, s.y - before);
-    return L;
+    return noteLayoutOf(this.fmt, this.document, s, pre);
   }
 
   /** 줄에 걸친 주석 범위를 칠한다 (14 §2.4) */
@@ -2222,84 +2088,6 @@ export class Editor {
     ctx.restore();
   }
 
-  /** 표 하나 (11 §4.3): 셀 배경, 셀 내용(덮인 셀은 주인 셀 아래에 이어서), 셀 범위 선택, 테두리 */
-  private drawTable(para: PlacedPara, px: number, top: number, h: number): void {
-    const info = para.info as ParagraphInfo;
-    const id = info.objs?.get(0)?.table;
-    const v = id ? this.fmt.tableViews.get(id) : undefined;
-    if (!v) return;
-    const { ctx } = this;
-    const lines = para.lines;
-    this.fmt.tables.place(v.input, v.measure, lines);
-    const rec = this.document.table(v.id);
-    const colX = v.measure.colX;
-    // 본문 선택이 표 원소를 덮으면 표 전체를 선택 색으로
-    let bodySel = false;
-    if (this.inBody) {
-      const [a, b] = this.range();
-      bodySel = a <= info.start && b > info.start;
-    }
-    const box = this.cellSelBox(v);
-    // 행 조각 (12 §8): 셀은 그 행들의 조각마다 (같은 쪽에서 이어지면 하나로) 그린다
-    const parts = rowParts(v.grid.cells.length, lines);
-    const drawCell = (cell: NonNullable<TableGrid['cells'][0][0]>, x: number, y: number, rect: { x: number; top: number; height: number }, repeat: boolean) => {
-      const cx = px + rect.x + colX[x]!;
-      const cw = colX[x + cell.span[1]]! - colX[x]!;
-      const cy = rect.top - top;
-      const ch = rect.height;
-      if (cy > h || cy + ch < 0) return;
-      const fill = rec?.cellAttrs[cellKey(cell.row, cell.col)]?.fill;
-      if (fill) {
-        ctx.fillStyle = fill;
-        ctx.fillRect(cx, cy, cw, ch);
-      }
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(cx, cy, cw, ch);
-      ctx.clip();
-      for (const sid of [cell.story, ...cell.covered]) {
-        const c = this.fmt.tables.cells.get(sid);
-        const d = this.document.story(sid);
-        if (!c || (sid !== cell.story && isEmptyDoc(d))) continue;
-        if (repeat) {
-          // 다시 그린 제목 행: 같은 셀 레이아웃을 이 자리 원점으로 잠깐 옮겨 그린다 (편집은 원래 자리에서만)
-          const L = c.layout;
-          const sx = L.setup.originX ?? 0;
-          const sy = L.setup.originY ?? 0;
-          L.setOrigin(rect.x + colX[x]! + CELL_PAD, rect.top + CELL_PAD);
-          this.drawLines(L, d, px, top, h, null);
-          L.setOrigin(sx, sy);
-        } else this.drawLines(c.view, d, px, top, h, null);
-      }
-      ctx.restore();
-      if (!repeat && (bodySel || (box && y >= box.y0 && y <= box.y1 && x >= box.x0 && x <= box.x1))) {
-        ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
-        ctx.fillRect(cx, cy, cw, ch);
-      }
-      ctx.strokeStyle = COLORS.tableBorder;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(Math.round(cx) + 0.5, Math.round(cy) + 0.5, Math.round(cw), Math.round(ch));
-    };
-    for (let y = 0; y < v.grid.cells.length; y++) {
-      const row = v.grid.cells[y]!;
-      for (let x = 0; x < row.length; x++) {
-        const cell = row[x];
-        if (!cell) continue;
-        const mine: PlacedLine[] = [];
-        for (let k = y; k < y + cell.span[0]; k++) mine.push(...(parts[k] ?? []));
-        for (const g of cellGroups(mine)) drawCell(cell, x, y, { x: g.x, top: g.top, height: g.height }, false);
-      }
-    }
-    for (const ln of lines) {
-      if (!ln.repeat || ln.row === undefined) continue;
-      const row = v.grid.cells[ln.row]!;
-      for (let x = 0; x < row.length; x++) {
-        const cell = row[x];
-        if (cell) drawCell(cell, x, ln.row, { x: ln.x, top: ln.y, height: ln.height }, true);
-      }
-    }
-  }
-
   /** 셀 범위 선택의 격자 인덱스 (이 표가 아니거나 범위의 행·열이 사라졌으면 null) */
   private cellSelBox(v: TableView): { y0: number; y1: number; x0: number; x1: number } | null {
     const c = this.cellSel;
@@ -2308,118 +2096,6 @@ export class Editor {
     const xs = c.cols.map((r) => v.grid.cols.indexOf(r));
     if (ys.includes(-1) || xs.includes(-1)) return null;
     return { y0: Math.min(...ys), y1: Math.max(...ys), x0: Math.min(...xs), x1: Math.max(...xs) };
-  }
-
-  // ── 서식 (10 §4) ──────────────────────────────────────
-
-  /** 그리기용 CSS font: 글꼴 번호 f(셰이핑 중)와 서식 */
-  private cssFont(f: number, d: DrawStyle): string {
-    const size = this.fontSize * d.run.scale;
-    const families = this.shapedFonts;
-    if (families && f < families.length) {
-      // 굵은 얼굴을 불러왔으면 그것, 아니면 보통 굵기를 합성 굵게
-      const boldFamily = d.bold ? this.boldFonts[f] : null;
-      if (boldFamily) return `${size}px ${boldFamily}`;
-      return `${d.bold ? 'bold ' : ''}${size}px ${families[f]!}`;
-    }
-    return `${d.bold ? 'bold ' : ''}${size}px ${this.family}`;
-  }
-
-  /**
-   * 줄 글자 그리기: 어절(공백·탭 사이)과 글꼴·서식이 바뀌는 곳마다 나눠 레이아웃 위치에 fillText. 레이아웃이 같은 단위로
-   * 셰이핑했으므로 어절 경계 커닝 차이가 생기지 않는다. 기울임은 기준선 기준으로 기울여 그린다 (진행폭은 바로 선 글꼴).
-   * 양쪽 맞춤이 글자 사이에 나뉜 줄은 글자마다 나눠 그린다.
-   */
-  private drawRuns(pl: ParaLayout, ln: PlacedLine, px: number, baseY: number, sty: string): void {
-    const { ctx } = this;
-    const fonts = pl.fonts;
-    const fmt = pl.fmt;
-    const start = ln.start;
-    const end = ln.end;
-    const fontAt = (k: number) => (fonts ? fonts[k]! : 0);
-    const idAt = (k: number) => (fmt ? fmt[k]! : 0);
-    const blank = (c: string) => c === ' ' || c === '\t' || c === '　' || c === OBJ;
-    const perChar = ln.adjChars;
-    let lastFont = '';
-    let k = start;
-    while (k < end) {
-      if (blank(cpSlice(pl, k, k + 1))) {
-        k++;
-        continue;
-      }
-      const f = fontAt(k);
-      const id = idAt(k);
-      let j = k + 1;
-      while (j < end && !(perChar && pl.stops[j]) && fontAt(j) === f && idAt(j) === id && !blank(cpSlice(pl, j, j + 1))) j++;
-      const d = this.fmt.drawStyle(id, sty, this.drawDoc);
-      const font = this.cssFont(f, d);
-      if (font !== lastFont) {
-        ctx.font = font;
-        lastFont = font;
-      }
-      ctx.fillStyle = d.color ?? COLORS.text;
-      const x = px + lineX(pl, ln, k);
-      const y = baseY + d.shift;
-      const t = cpSlice(pl, k, j);
-      if (d.italic) {
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.transform(1, 0, -ITALIC_SKEW, 1, 0, 0);
-        ctx.fillText(t, 0, 0);
-        ctx.restore();
-      } else ctx.fillText(t, x, y);
-      k = j;
-    }
-  }
-
-  /** 그리기 정보가 같은 구간 [k, j)마다 fn (줄 안, 끝 공백 제외) */
-  private eachFormatRun(pl: ParaLayout, ln: PlacedLine, sty: string, fn: (k: number, j: number, d: DrawStyle) => void): void {
-    const fmt = pl.fmt!;
-    const start = ln.start;
-    let end = ln.end;
-    while (end > start && /^[ \t　]$/.test(cpSlice(pl, end - 1, end))) end--;
-    let k = start;
-    while (k < end) {
-      let j = k + 1;
-      while (j < end && fmt[j] === fmt[k]) j++;
-      const d = this.fmt.drawStyle(fmt[k]!, sty, this.drawDoc);
-      if (d !== PLAIN_DRAW) fn(k, j, d);
-      k = j;
-    }
-  }
-
-  private drawHighlights(pl: ParaLayout, ln: PlacedLine, px: number, baseY: number, sty: string): void {
-    const { ctx } = this;
-    const { ascent, descent } = this.metrics;
-    this.eachFormatRun(pl, ln, sty, (k, j, d) => {
-      if (!d.highlight) return;
-      const em = this.fontSize * d.run.line;
-      const x = px + lineX(pl, ln, k);
-      ctx.fillStyle = d.highlight;
-      ctx.fillRect(x, baseY - ascent * em, px + lineX(pl, ln, j) - x, (ascent + descent) * em);
-    });
-  }
-
-  /** 밑줄·취소선: 위치·두께는 기본 글꼴 치수 (post·OS/2), 글자 크기 비례 */
-  private drawDecorations(pl: ParaLayout, ln: PlacedLine, px: number, baseY: number, sty: string): void {
-    const { ctx } = this;
-    const m = this.metrics;
-    this.eachFormatRun(pl, ln, sty, (k, j, d) => {
-      if (!d.underline && !d.strike) return;
-      const em = this.fontSize * d.run.scale;
-      const x = px + lineX(pl, ln, k);
-      const w = px + lineX(pl, ln, j) - x;
-      const y = baseY + d.shift;
-      ctx.fillStyle = d.color ?? COLORS.text;
-      if (d.underline) {
-        const th = Math.max(1, m.underlineThickness * em);
-        ctx.fillRect(x, y - m.underlinePosition * em - th / 2, w, th);
-      }
-      if (d.strike) {
-        const th = Math.max(1, m.strikeThickness * em);
-        ctx.fillRect(x, y - m.strikePosition * em - th / 2, w, th);
-      }
-    });
   }
 
   // ── 개체 (11 §2.1, §4.1, §5) ─────────────────────────
@@ -2449,119 +2125,6 @@ export class Editor {
       if (img !== 'error') img.close();
       this.images.delete(id);
       this.imageUsed.delete(id);
-    }
-  }
-
-  /** 줄의 개체 그리기: 기준선 위에 선 상자. 원본이 없으면 자리표시(회색 상자 + 대체 텍스트) */
-  private drawObjects(para: PlacedPara, ln: PlacedLine, px: number, baseY: number): void {
-    const { ctx } = this;
-    const pl = para.layout;
-    const info = para.info as ParagraphInfo;
-    const [selFrom, selTo] = this.drawActive ? this.range() : [0, 0];
-    for (const [k, box] of pl.objs!) {
-      if (k < ln.start || k >= ln.end) continue;
-      const attrs = info.objs?.get(pl.preedit && k >= pl.preedit[0] ? k - (pl.preedit[1] - pl.preedit[0]) : k);
-      const x = px + lineX(pl, ln, k);
-      if (attrs?.kind === 'field') {
-        this.drawField(pl, k, attrs.field, info, x, box.w, baseY);
-        continue;
-      }
-      if (attrs?.kind === 'note') {
-        // 각주 참조: 번호를 위 첨자로 (12 §6.2)
-        const d = this.fmt.drawStyle(pl.fmt?.[k] ?? 0, this.fmt.styleKey(info), this.drawDoc);
-        ctx.font = this.cssFont(0, { ...d, run: { ...d.run, scale: d.run.scale * 0.65 } });
-        ctx.fillStyle = d.color ?? COLORS.text;
-        ctx.fillText(String(this.fmt.noteNumber(attrs.id ?? '') || '?'), x, baseY - this.fontSize * d.run.scale * 0.33);
-        continue;
-      }
-      let { w, h } = box;
-      const offset = info.start + k;
-      if (this.resizing && this.resizing.offset === offset) ({ w, h } = this.resizing);
-      const y = baseY - h;
-      const img = attrs?.asset ? this.image(attrs.asset) : 'error';
-      if (img && img !== 'error') ctx.drawImage(img, x, y, w, h);
-      else {
-        ctx.fillStyle = '#e9e9ec';
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeStyle = '#c7c7cc';
-        ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-        ctx.fillStyle = COLORS.placeholderText;
-        ctx.font = `${Math.min(13, this.fontSize)}px ${this.family}`;
-        ctx.fillText(img === 'error' ? `이미지 없음${attrs?.alt ? `: ${attrs.alt}` : ''}` : (attrs?.alt ?? '불러오는 중…'), x + 6, y + Math.min(h - 6, 18), w - 12);
-      }
-      // 선택한 개체: 테두리와 손잡이
-      if (selTo - selFrom === 1 && selFrom === offset) {
-        ctx.strokeStyle = COLORS.gripActive;
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(x, y, w, h);
-        ctx.lineWidth = 1;
-        ctx.fillStyle = '#ffffff';
-        for (const [hx, hy] of handlePoints(x, y, w, h)) {
-          ctx.fillRect(hx - 4, hy - 4, 8, 8);
-          ctx.strokeRect(hx - 4 + 0.5, hy - 4 + 0.5, 7, 7);
-        }
-      }
-    }
-  }
-
-  /** 필드 (12 §5.1): 그 쪽의 값을 글자 서식으로. 머리말·꼬리말을 편집 중이면 회색 바탕으로 필드임을 보인다 */
-  private drawField(pl: ParaLayout, k: number, kind: FieldKind | undefined, info: ParagraphInfo, x: number, w: number, baseY: number): void {
-    const { ctx } = this;
-    const d = this.fmt.drawStyle(pl.fmt?.[k] ?? 0, this.fmt.styleKey(info), this.drawDoc);
-    const em = this.fontSize * d.run.scale;
-    if (this.hf) {
-      ctx.fillStyle = COLORS.field;
-      ctx.fillRect(x, baseY - em * 0.85, w, em * 1.1);
-    }
-    ctx.font = this.cssFont(0, d);
-    ctx.fillStyle = d.color ?? COLORS.text;
-    ctx.fillText(this.drawFields && kind ? this.drawFields[kind] : this.fmt.fieldText(kind), x, baseY + d.shift);
-  }
-
-  /** 떠 있는 개체 하나 그리기 (선택했으면 손잡이) */
-  private drawFloat(para: PlacedPara, f: PlacedFloat, px: number, top: number): void {
-    const { ctx } = this;
-    const info = para.info as ParagraphInfo;
-    const pl = para.layout;
-    const k = pl.preedit && f.k >= pl.preedit[0] ? f.k - (pl.preedit[1] - pl.preedit[0]) : f.k;
-    const attrs = info.objs?.get(k);
-    const offset = info.start + k;
-    let { w, h } = f;
-    if (this.resizing && this.resizing.offset === offset) ({ w, h } = this.resizing);
-    let x = px + f.x;
-    let y = f.y - top;
-    if (this.moving && this.moving.offset === offset) {
-      x += this.moving.dx;
-      y += this.moving.dy;
-    }
-    const img = attrs?.asset ? this.image(attrs.asset) : 'error';
-    ctx.textBaseline = 'alphabetic';
-    if (img && img !== 'error') ctx.drawImage(img, x, y, w, h);
-    else {
-      ctx.fillStyle = '#e9e9ec';
-      ctx.fillRect(x, y, w, h);
-      ctx.fillStyle = COLORS.placeholderText;
-      ctx.font = `${Math.min(13, this.fontSize)}px ${this.family}`;
-      ctx.fillText(attrs?.alt ?? '이미지', x + 6, y + 18, w - 12);
-    }
-    const [from, to] = this.inBody ? this.range() : [0, 0];
-    if (to - from === 1 && from === offset) {
-      ctx.strokeStyle = COLORS.gripActive;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(x, y, w, h);
-      ctx.lineWidth = 1;
-      ctx.fillStyle = '#ffffff';
-      for (const [hx, hy] of handlePoints(x, y, w, h)) {
-        ctx.fillRect(hx - 4, hy - 4, 8, 8);
-        ctx.strokeRect(hx - 4 + 0.5, hy - 4 + 0.5, 7, 7);
-      }
-      // 앵커 표시: 개체가 붙은 문단의 첫 줄 왼쪽
-      const ln = para.lines[0];
-      if (ln) {
-        ctx.fillStyle = COLORS.gripActive;
-        ctx.font = `12px ${this.family}`;
-        ctx.fillText('⚓', px + para.frameLeft - 18, ln.baseline - top);
-      }
     }
   }
 
@@ -2740,30 +2303,6 @@ export class Editor {
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }
-
-  /** 목록 번호: 본문 왼쪽에서 내어 쓴 자리, ¶ 서식으로 (10 §4) */
-  /** left: 화면에서 본문(프레임) 왼쪽 */
-  private drawMarker(pl: ParaLayout, left: number, baseY: number, sty: string): void {
-    const mk = pl.marker!;
-    const { ctx } = this;
-    const d = this.fmt.drawStyle(mk.id, sty, this.drawDoc);
-    const x0 = left + (pl.box?.left ?? 0) + mk.x;
-    ctx.fillStyle = d.color ?? COLORS.text;
-    // 글꼴이 바뀌는 곳마다 (글머리 기호가 대체 글꼴에 있을 수 있다)
-    const cps = Array.from(mk.text);
-    let x = x0;
-    let k = 0;
-    while (k < cps.length) {
-      const f = mk.fonts ? mk.fonts[k]! : 0;
-      let j = k + 1;
-      while (j < cps.length && (mk.fonts ? mk.fonts[j]! : 0) === f) j++;
-      ctx.font = this.cssFont(f, d);
-      const t = cps.slice(k, j).join('');
-      ctx.fillText(t, x, baseY + d.shift);
-      x += ctx.measureText(t).width;
-      k = j;
-    }
   }
 
   // ── 목록 (10 §2.4) ──────────────────────────────────
@@ -3329,6 +2868,7 @@ export class Editor {
     const total = this.body.paragraphs().length;
     const pct = total ? Math.floor((layout.validCount / total) * 100) : 100;
     ctx.fillStyle = COLORS.placeholderText;
+    ctx.font = this.font;
     ctx.textAlign = 'center';
     ctx.fillText(`쪽 조립 중… ${pct}%`, Math.min(px + setup.width / 2, w / 2), Math.max(from, 0) + (h - from) / 2);
     ctx.textAlign = 'start';
