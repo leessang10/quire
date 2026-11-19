@@ -5,7 +5,8 @@
  * (빈 텍스트 = 빈 문단 하나, 끝 ¶는 Loro에 없는 유령 ¶: Doc.fromRaw(…, story = true)). 실행 취소 연산은 스토리를 감싼
  * { type: 'story', story, op }로 기록하고 Document가 그 스토리에 적용한다. 표 레코드 연산은 { type: 'tableMap' }.
  */
-import { Doc, OBJ, type ObjAttrs, type Op, type RawChange, type SegState } from './doc';
+import { Doc, OBJ, type ElementId, type ObjAttrs, type Op, type Position, type RawChange, type SegState } from './doc';
+import type { Annotation, AnnotationChange, AnnotationRange } from './annotations';
 import {
   DEFAULT_COL_WIDTH,
   cellKey,
@@ -22,11 +23,16 @@ export type StoryId = string;
 const EMPTY_STATE: SegState = { order: [], hidden: [], placeholder: [], used: [] };
 
 /** 문서 변경 기록: 스토리의 원소 열 변경 (story = null이면 본문) 또는 표 레코드 변경 */
-export type DocumentListener = (story: StoryId | null, c: RawChange | TableChange) => void;
+export type DocumentListener = (story: StoryId | null, c: RawChange | TableChange | AnnotationChange) => void;
 
 export class Document {
   private readonly map = new Map<StoryId, Doc>();
   private readonly tableMap = new Map<string, TableRecord>();
+  /** 주석 (14 §2) */
+  private readonly annMap = new Map<string, Annotation>();
+  /** 주석이 바뀔 때마다 (범위 목록 캐시) */
+  private annVersion = 0;
+  private annCache: { key: string; list: AnnotationRange[] } | null = null;
   private listener: DocumentListener | null = null;
   /** 표 레코드가 바뀐 표 (편집기가 그 표 문단을 다시 조판한다) */
   private dirtyTables = new Set<string>();
@@ -38,7 +44,81 @@ export class Document {
   constructor(
     readonly body: Doc,
     private readonly make: (id: StoryId) => Doc = (id) => Doc.fromRaw('', [], EMPTY_STATE, `${body.peer}`, true),
-  ) {}
+  ) {
+    this.hook(body, null);
+  }
+
+  /** 주석 위치를 따라가게 Doc 고리를 건다 (꼬리 옮기기, 되살리기) */
+  private hook(d: Doc, story: StoryId | null): void {
+    d.onRemap = (pairs) => this.remapAnnotations(story, pairs);
+    d.onRevive = (ids) => this.reviveAnnotations(story, ids);
+    d.onDelete = (ids) => this.unanchorDeleted(story, ids);
+  }
+
+  /** 지운 원소에 걸린 주석 위치를 살아 있는 옆 원소로 (실행 취소 연산: 되돌리면 위치도 돌아온다). 범위 안이 다 지워졌으면 고아 */
+  private unanchorDeleted(story: StoryId | null, ids: readonly ElementId[]): Op[] {
+    if (this.annMap.size === 0) return [];
+    const set = new Set(ids);
+    const ops: Op[] = [];
+    for (const a of [...this.annMap.values()]) {
+      if (a.story !== story) continue;
+      if (!(a.start && set.has(a.start.anchor)) && !(a.end && set.has(a.end.anchor))) continue;
+      ops.push(...this.setAnnotation(a.id, this.reanchored(a)));
+    }
+    return ops;
+  }
+
+  /** 지금 풀리는 범위를 살아 있는 원소로 다시 건 주석 (고아면 시작만) */
+  private reanchored(a: Annotation): Annotation {
+    const r = this.resolveRange(a);
+    if (!r) return a;
+    const d = this.docOf(a.story);
+    if (r.orphan) return { ...a, start: d.positionAt(r.from), end: null };
+    return { ...a, ...this.rangePositions(a.story, r.from, r.to) };
+  }
+
+  /**
+   * 주석 위치를 지금 범위의 살아 있는 원소로 다시 걸고 동기화에 다시 쓴다 (기록 없음). 원격에서 받은 커서가 지운 글자에 남아 있을 때:
+   * 모든 피어가 같은 살아 있는 글자로 옮기므로 같은 값이 된다
+   */
+  rewriteRange(id: string): void {
+    const a = this.annMap.get(id);
+    if (!a) return;
+    const next = this.reanchored(a);
+    this.annMap.set(id, next);
+    this.annVersion++;
+    this.annCache = null;
+    const r = this.resolveRange(next);
+    this.listener?.(null, { kind: 'annRange', id, story: next.story, start: r && !r.orphan ? r.from : null, end: r && !r.orphan ? r.to : null });
+  }
+
+  /** 꼬리 옮기기로 원소가 새 ID를 받았다: 그 원소에 걸린 주석 위치를 새 원소로 (실행 취소 연산) */
+  private remapAnnotations(story: StoryId | null, pairs: Array<[ElementId, ElementId]>): Op[] {
+    if (this.annMap.size === 0) return [];
+    const map = new Map(pairs);
+    const ops: Op[] = [];
+    for (const a of [...this.annMap.values()]) {
+      if (a.story !== story) continue;
+      const s = a.start && map.get(a.start.anchor);
+      const e = a.end && map.get(a.end.anchor);
+      if (!s && !e) continue;
+      ops.push(...this.setAnnotation(a.id, { ...a, start: s ? { ...a.start!, anchor: s } : a.start, end: e ? { ...a.end!, anchor: e } : a.end }));
+    }
+    return ops;
+  }
+
+  /** 되살린 원소에 걸린 주석: 동기화에는 새 글자로 가므로 범위(커서)를 다시 쓴다 */
+  private reviveAnnotations(story: StoryId | null, ids: readonly ElementId[]): void {
+    if (this.annMap.size === 0 || !this.listener) return;
+    const set = new Set(ids);
+    for (const a of this.annMap.values()) {
+      if (a.story !== story) continue;
+      if ((a.start && set.has(a.start.anchor)) || (a.end && set.has(a.end.anchor))) {
+        const r = this.resolveRange(a);
+        this.listener(null, { kind: 'annRange', id: a.id, story: a.story, start: r && !r.orphan ? r.from : null, end: r && !r.orphan ? r.to : null });
+      }
+    }
+  }
 
   /** 스토리 (없으면 만든다) */
   story(id: StoryId): Doc {
@@ -46,12 +126,20 @@ export class Document {
     if (!d) {
       d = this.make(id);
       this.map.set(id, d);
+      this.hook(d, id);
       if (this.listener) {
         const fn = this.listener;
         d.observe((c) => fn(id, c));
       }
     }
     return d;
+  }
+
+  /** 스토리 Doc → ID (본문이면 null, 이 문서의 것이 아니면 undefined) */
+  storyIdOf(doc: Doc): StoryId | null | undefined {
+    if (doc === this.body) return null;
+    for (const [id, d] of this.map) if (d === doc) return id;
+    return undefined;
   }
 
   has(id: StoryId): boolean {
@@ -72,9 +160,157 @@ export class Document {
 
   /** 연산 적용 (실행 취소·다시 하기): story 연산은 그 스토리에, tableMap은 표 레코드에 */
   apply(op: Op): void {
-    if (op.type === 'story') this.story(op.story).apply(op.op);
+    if (op.type === 'story') {
+      // 스토리 Doc의 삭제가 돌려준 주석 연산은 Document 것이다
+      if (op.op.type === 'annotation') this.apply(op.op);
+      else this.story(op.story).apply(op.op);
+    }
     else if (op.type === 'tableMap') this.writeTableMap(op.table, op.map, op.key, op.after);
+    else if (op.type === 'annotation') this.writeAnnotation(op.id, op.after, true);
     else this.body.apply(op);
+  }
+
+  // ── 주석 (14 §2) ─────────────────────────────────────
+
+  /** 스토리 Doc (null이면 본문) */
+  docOf(story: StoryId | null): Doc {
+    return story === null ? this.body : this.story(story);
+  }
+
+  /** 화면 범위 [from, to) → 위치 (시작 = 첫 원소 앞, 끝 = 마지막 원소 뒤). 빈 범위면 둘 다 그 자리 */
+  rangePositions(story: StoryId | null, from: number, to: number): { start: Position; end: Position } {
+    const d = this.docOf(story);
+    const start = d.positionAt(from);
+    if (to <= from) return { start, end: start };
+    return { start, end: { anchor: d.positionAt(to - 1).anchor, side: 'after' } };
+  }
+
+  /** 주석을 건다 (실행 취소 연산). 범위는 그 스토리의 화면 오프셋 */
+  annotate(a: { id: string; type: string; story: StoryId | null; from: number; to: number; data?: Record<string, unknown> }): Op[] {
+    const { start, end } = this.rangePositions(a.story, a.from, a.to);
+    const after: Annotation = { id: a.id, type: a.type, story: a.story, start, end, data: a.data ?? {} };
+    return this.setAnnotation(a.id, after);
+  }
+
+  /** 주석 데이터 바꾸기 (일부 키만, undefined는 지움) */
+  updateAnnotation(id: string, data: Record<string, unknown>): Op[] {
+    const cur = this.annMap.get(id);
+    if (!cur) return [];
+    const next: Record<string, unknown> = { ...cur.data };
+    for (const [k, v] of Object.entries(data)) {
+      if (v === undefined) delete next[k];
+      else next[k] = v;
+    }
+    return this.setAnnotation(id, { ...cur, data: next });
+  }
+
+  /** 주석 지우기 */
+  unannotate(id: string): Op[] {
+    return this.setAnnotation(id, undefined);
+  }
+
+  private setAnnotation(id: string, after: Annotation | undefined): Op[] {
+    const before = this.annMap.get(id);
+    if (before === after || (before && after && JSON.stringify(before) === JSON.stringify(after))) return [];
+    this.writeAnnotation(id, after, true);
+    return [{ type: 'annotation', id, before, after }];
+  }
+
+  /** 주석 표에 쓰고 (local이면) 바뀐 키를 알린다 */
+  private writeAnnotation(id: string, after: Annotation | undefined, local: boolean): void {
+    const before = this.annMap.get(id);
+    if (after) this.annMap.set(id, after);
+    else this.annMap.delete(id);
+    this.annVersion++;
+    this.annCache = null;
+    if (!local || !this.listener) return;
+    const emit = (c: AnnotationChange) => this.listener!(null, c);
+    if (!after) {
+      if (before) emit({ kind: 'annKey', id, key: 'type', value: undefined });
+      return;
+    }
+    if (before?.type !== after.type) emit({ kind: 'annKey', id, key: 'type', value: after.type });
+    if (!before || before.story !== after.story) emit({ kind: 'annKey', id, key: 'story', value: after.story });
+    if (!before || JSON.stringify(before.data) !== JSON.stringify(after.data)) emit({ kind: 'annKey', id, key: 'data', value: after.data });
+    if (!before || JSON.stringify([before.start, before.end]) !== JSON.stringify([after.start, after.end])) {
+      const r = this.resolveRange(after);
+      emit({ kind: 'annRange', id, story: after.story, start: r ? r.from : null, end: r ? r.to : null });
+    }
+  }
+
+  /** 원격 주석 (기록 없음, 알리지 않음). null이면 지움 */
+  applyRemoteAnnotation(id: string, a: Annotation | null): void {
+    const cur = this.annMap.get(id);
+    if (a === null) {
+      if (cur) this.writeAnnotation(id, undefined, false);
+      return;
+    }
+    if (cur && JSON.stringify(cur) === JSON.stringify(a)) return;
+    this.writeAnnotation(id, a, false);
+  }
+
+  /**
+   * 기준 원소가 지워진 주석 (스토리 story, 지금 Doc 기준). 원격 삭제 뒤 동기화 쪽이 Loro 커서에서 다시 풀 대상이다:
+   * 지운 원소의 "있던 자리"는 Doc과 Loro가 다르게 볼 수 있다 (꼬리 옮기기 등)
+   */
+  deadAnchored(story: StoryId | null): string[] {
+    const out: string[] = [];
+    if (this.annMap.size === 0) return out;
+    const d = story === null ? this.body : this.map.get(story);
+    if (!d) return out;
+    for (const a of this.annMap.values()) {
+      if (a.story !== story) continue;
+      if ((a.start && !d.isAlive(a.start.anchor)) || (a.end && !d.isAlive(a.end.anchor))) out.push(a.id);
+    }
+    return out;
+  }
+
+  annotation(id: string): Annotation | undefined {
+    return this.annMap.get(id);
+  }
+
+  annotationIds(): string[] {
+    return [...this.annMap.keys()];
+  }
+
+  /** 주석 범위 (화면 오프셋). 시작이 끝을 넘으면(범위 안 원소가 모두 지워짐) 고아 */
+  resolveRange(a: Annotation): { from: number; to: number; orphan: boolean } | null {
+    if (!a.start) return null;
+    if (a.story !== null && !this.map.has(a.story)) return null;
+    const d = this.docOf(a.story);
+    // 끝이 없으면 고아 (원격에서 범위 안이 모두 지워진 채로 받음)
+    if (!a.end) {
+      const at = d.resolve(a.start);
+      return { from: at, to: at, orphan: true };
+    }
+    const from = d.resolve(a.start);
+    const to = Math.max(from, d.resolve(a.end));
+    const empty = a.start.anchor === a.end.anchor && a.start.side === a.end.side;
+    return { from, to, orphan: to <= from && !empty };
+  }
+
+  /**
+   * 모든 주석의 범위 (스토리별 시작 오프셋 순). 문서 판(스토리 판들)·주석 판이 같으면 캐시. 그리기는 보이는 문단 범위로 이분 탐색한다
+   */
+  annotationRanges(): readonly AnnotationRange[] {
+    let key = `${this.annVersion}:${this.body.version}`;
+    for (const [id, d] of this.map) key += `|${id}:${d.version}`;
+    if (this.annCache?.key === key) return this.annCache.list;
+    const list: AnnotationRange[] = [];
+    for (const a of this.annMap.values()) {
+      const r = this.resolveRange(a);
+      if (!r) continue;
+      list.push({ id: a.id, type: a.type, story: a.story, from: r.from, to: r.to, orphan: r.orphan, data: a.data });
+    }
+    list.sort((x, y) => (x.story ?? '').localeCompare(y.story ?? '') || x.from - y.from || x.to - y.to || (x.id < y.id ? -1 : 1));
+    this.annCache = { key, list };
+    return list;
+  }
+
+  /** 스토리 story의 [from, to)에 걸친 주석 범위 (고아 빼고) */
+  annotationsIn(story: StoryId | null, from: number, to: number): AnnotationRange[] {
+    const s = story ?? '';
+    return this.annotationRanges().filter((r) => (r.story ?? '') === s && !r.orphan && r.from < to && r.to > from);
   }
 
   /** 스토리 연산을 실행 취소 기록용으로 감싼다 */

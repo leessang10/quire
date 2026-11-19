@@ -61,6 +61,8 @@ export function invertOp(op: Op): Op {
       return { type: 'story', story: op.story, op: invertOp(op.op) };
     case 'tableMap':
       return { ...op, before: op.after, after: op.before };
+    case 'annotation':
+      return { type: 'annotation', id: op.id, before: op.after, after: op.before };
   }
 }
 

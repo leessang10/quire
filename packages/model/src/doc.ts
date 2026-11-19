@@ -99,7 +99,9 @@ export type Op =
   /** 다른 스토리의 연산 (11 §2.5: 여러 스토리 트랜잭션). Document가 그 스토리에 적용한다 */
   | { type: 'story'; story: string; op: Op }
   /** 표 레코드의 맵 항목 하나 (11 §2.4: 지운 표시·열 너비·병합·행/셀/표 속성). Document가 적용한다 */
-  | { type: 'tableMap'; table: string; map: import('./tables').TableMapName; key: string; before: unknown; after: unknown };
+  | { type: 'tableMap'; table: string; map: import('./tables').TableMapName; key: string; before: unknown; after: unknown }
+  /** 주석 하나 (14 §2, undefined = 없음). Document가 적용한다 */
+  | { type: 'annotation'; id: string; before: import('./annotations').Annotation | undefined; after: import('./annotations').Annotation | undefined };
 
 /** 글자 서식 묶음 (10 §2.1). 값이 없는 키는 서식 없음. 크기는 1/1000pt */
 export interface MarkSet {
@@ -1298,7 +1300,7 @@ export class Doc {
    * 구간이 구획 끝 ¶를 지우면, 그 구획에 남은 꼬리 글자를 다음 구획 첫 문단 앞으로 옮긴다(복사 + 원본 삭제).
    * @returns 실행 취소용 연산 목록 (보통 delete 하나)
    */
-  deleteRange(from: number, to: number): Op[] {
+  deleteRange(from: number, to: number, internal = false): Op[] {
     from = clamp(from, 0, this.maxCaret);
     to = clamp(to, from, this.maxCaret);
     if (from === to) return [];
@@ -1325,7 +1327,9 @@ export class Doc {
       this.updateParagraphs(from, from, -ids.length);
       this._version++;
       this.emit({ kind: 'delete', at, len: len16 });
-      return [{ type: 'delete', ids }];
+      const out: Op[] = [{ type: 'delete', ids }];
+      if (!internal && this.onDelete) out.push(...this.onDelete(ids));
+      return out;
     }
 
     // 화면 구간을 구획별 raw 구간으로 나눈다
@@ -1386,7 +1390,8 @@ export class Doc {
         const tStart = Math.max(p.start, segStart);
         // 서식도 함께 옮긴다 (런마다 그 서식으로 다시 넣음)
         const tail = this.markRuns(tStart, segEnd).map((r) => ({ text: this.slice(r.from, r.to), marks: r.marks }));
-        ops.push(...this.deleteRange(tStart, segEnd));
+        const removed = this.deleteRange(tStart, segEnd, true);
+        ops.push(...removed);
         // 꼬리를 지우면 첫 구획은 tStart에서 끝나므로, 같은 화면 위치는 다음 구획의 첫 글자를 가리킨다
         const ids: ElementId[] = [];
         let at = tStart;
@@ -1395,8 +1400,14 @@ export class Doc {
           at += Array.from(r.text).length;
         }
         ops.push({ type: 'insert', ids });
+        // 옮긴 글자에 걸린 주석은 새 원소로 (01 §2의 "4단계에서 처리")
+        if (this.onRemap) {
+          const old = removed.find((o) => o.type === 'delete');
+          if (old && old.type === 'delete' && old.ids.length === ids.length) ops.push(...this.onRemap(old.ids.map((o, k) => [o, ids[k]!] as [ElementId, ElementId])));
+        }
       }
     }
+    if (!internal && this.onDelete && ids.length) ops.push(...this.onDelete(ids));
     return ops;
   }
 
@@ -1474,7 +1485,10 @@ export class Doc {
 
   /** 연산 적용 (실행 취소·다시 실행) */
   apply(op: Op): void {
-    if (op.type === 'insert') this.setDead(op.ids, false);
+    if (op.type === 'insert') {
+      this.setDead(op.ids, false);
+      this.onRevive?.(op.ids);
+    }
     else if (op.type === 'delete') this.setDead(op.ids, true);
     else if (op.type === 'move') this.moveSegsBefore(op.segs, op.before);
     else if (op.type === 'hidden') this.setHidden(op.segs, op.value);
@@ -1483,13 +1497,26 @@ export class Doc {
     else if (op.type === 'list') this.writeList(op.id, op.after);
     else if (op.type === 'section') this.writeSection(op.id, op.after);
     else if (op.type === 'obj') this.writeObjAttr(op.ctr, op.key, op.after);
-    else if (op.type === 'story' || op.type === 'tableMap') throw new Error(`Doc.apply: ${op.type} op needs a Document`);
+    else if (op.type === 'story' || op.type === 'tableMap' || op.type === 'annotation') throw new Error(`Doc.apply: ${op.type} op needs a Document`);
     else {
       // 문단 속성: 그사이 다른 사용자가 같은 키를 바꿨으면 두지 않고 덮는다 (¶ 속성은 키 하나의 LWW)
       const i = this.paras.findIndex((p) => p.id === this.idOf(op.ctr));
       this.writeParaAttr(op.ctr, i, op.key, op.after);
     }
   }
+
+  /**
+   * 주석 위치 옮기기 (14 §2): 꼬리 옮기기로 원소가 새 ID를 받으면 (옛 ID, 새 ID) 쌍을 알린다. 돌려준 연산은 그 삭제의 연산에 더한다
+   * (Document가 주석 위치를 새 원소로 옮기는 연산)
+   */
+  onRemap: ((pairs: Array<[ElementId, ElementId]>) => Op[]) | null = null;
+  /** 실행 취소·다시 실행으로 원소가 되살아났다 (동기화에는 새 글자로 간다: 그 원소에 걸린 주석 커서를 다시 쓴다) */
+  onRevive: ((ids: readonly ElementId[]) => void) | null = null;
+  /**
+   * 로컬 삭제 (14 §2.2): 지운 원소에 걸린 주석 위치를 살아 있는 옆 원소로 옮기는 연산 (지운 글자의 "있던 자리"를 피어마다 다르게
+   * 보지 않게: 커서가 지운 글자에 남지 않는다)
+   */
+  onDelete: ((ids: readonly ElementId[]) => Op[]) | null = null;
 
   /** 묘비가 된 원소들을 되살린다 (실행 취소·다시 실행). ids는 문서 순서여야 한다 */
   revive(ids: ElementId[]): void {
@@ -1585,6 +1612,14 @@ export class Doc {
     const { seg, raw } = this.toRaw(at);
     const { chunk, index } = this.insertPoint(seg, raw);
     return { anchor: this.idOf(chunk.ctrs[index]!), side: offset < total ? 'before' : 'after' };
+  }
+
+  /** 원소가 지워지지 않았는가 (묘비가 아님: 숨긴 구획의 원소는 살아 있다) */
+  isAlive(id: ElementId): boolean {
+    const ctr = this.ctrOf(id);
+    const chunk = this.chunkOfCtr(ctr);
+    const i = chunk.find(ctr);
+    return i >= 0 && chunk.dead[i] !== TOMB;
   }
 
   /** 안정적 위치 → 현재 오프셋. 기준 원소가 삭제되었거나 숨긴 구획에 있으면 그 자리의 오프셋 */

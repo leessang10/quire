@@ -11,8 +11,9 @@
  */
 import { DEFAULT_STYLES, MARK_KEYS, OBJ_KEYS, PARA_KEYS, type Doc, type MarkKey } from '@quire/model';
 import type { LoroDoc } from 'loro-crdt';
-import { LoroWriter, documentFromLoro, initLoro, newLoro, readTable, storyIdsOf, storyNames, tableIdsOf, writeFormats, writeTable, writeTableRecord, type PeerId } from './shape';
+import { LoroWriter, docFromLoro, documentFromLoro, initLoro, insertChunked, newLoro, readTable, storyIdsOf, storyNames, tableIdsOf, writeFormats, writeTable, writeTableRecord, type PeerId } from './shape';
 import type { Document } from '@quire/model';
+import { writeAnnKey, writeAnnRange } from './annotations';
 
 export const META = 'meta';
 
@@ -44,10 +45,35 @@ export function compactDocument(document: Document, epoch: string, peer: PeerId)
     const text = d.text().slice(0, -1); // 유령 ¶ 빼고
     const names = storyNames(id);
     if (text === '' && d.plain && Object.keys(d.paraAttrs(0)).length === 0) continue; // 빈 스토리는 쓰지 않는다
-    loro.getText(names.text).insert(0, text);
+    insertChunked(loro.getText(names.text), 0, text);
     writeFormats(loro, d, names);
   }
   for (const id of document.tableIds()) writeTableRecord(loro, document.table(id)!);
+  // 주석 (14 §2.3): 새 판의 텍스트에 커서를 다시 만든다 (화면 오프셋이 같으므로 새 Loro로 만든 Doc에서 UTF-16을 구한다)
+  const ids = document.annotationIds();
+  if (ids.length) {
+    loro.commit();
+    const fresh = new Map<string | null, Doc>();
+    const docAt = (story: string | null): Doc => {
+      const hit = fresh.get(story);
+      if (hit) return hit;
+      const d = docFromLoro(loro, String(peer), story ?? undefined);
+      fresh.set(story, d);
+      return d;
+    };
+    for (const id of ids.sort()) {
+      const a = document.annotation(id)!;
+      writeAnnKey(loro, id, 'type', a.type);
+      writeAnnKey(loro, id, 'story', a.story);
+      writeAnnKey(loro, id, 'data', a.data);
+      const range = document.resolveRange(a);
+      if (!range || range.orphan || range.to <= range.from) writeAnnRange(loro, id, a.story, { start: null, last: null });
+      else {
+        const d = docAt(a.story);
+        writeAnnRange(loro, id, a.story, { start: d.u16OfOffset(range.from), last: d.u16OfOffset(range.to - 1) });
+      }
+    }
+  }
   loro.commit();
   return loro;
 }

@@ -24,7 +24,15 @@ export type RemoteOp = (
 type Fmt = Extract<RemoteOp, { kind: 'format' }>;
 
 /** 로컬 변경: Doc의 변경 기록 + 선택 영역(프레즌스) */
-export type LocalChange = (RawChange | TableChange | { kind: 'sel'; anchor: number; head: number }) & { story?: string };
+export type LocalChange = (
+  | RawChange
+  | TableChange
+  | { kind: 'sel'; anchor: number; head: number }
+  /** 주석 키 (14 §2.2, 위치 없음) */
+  | { kind: 'annKey'; id: string; key: 'type' | 'story' | 'data'; value: unknown }
+  /** 주석 범위: 첫 글자·마지막 글자의 UTF-16 (그 스토리 텍스트, story) */
+  | { kind: 'annRange'; id: string; start: number | null; last: number | null }
+) & { story?: string };
 
 type Del = { kind: 'delete'; at: number; len: number };
 
@@ -148,6 +156,16 @@ function pair(a: LocalChange, b: RemoteOp): [LocalChange[], RemoteOp[]] {
 
 function pairSame(a: LocalChange, b: RemoteOp): [LocalChange[], RemoteOp[]] {
   if (a.kind === 'sel') return [[{ kind: 'sel', anchor: mapPos(a.anchor, b), head: mapPos(a.head, b) }], [b]];
+  if (a.kind === 'annKey') return [[a], [b]];
+  if (a.kind === 'annRange') {
+    // 글자 위치: 앞(같은 자리 포함)에 들어온 삽입만큼 밀리고, 지워졌으면 그 글자가 있던 자리
+    const ch = (p: number | null) => {
+      if (p === null || b.kind === 'format') return p;
+      if (b.kind === 'insert') return b.at <= p ? p + len16(b) : p;
+      return p >= b.at + b.len ? p - b.len : p >= b.at ? b.at : p;
+    };
+    return [[{ ...a, start: ch(a.start), last: ch(a.last) }], [b]];
+  }
   if (b.kind === 'format') return pairFormat(a, b);
   if (a.kind === 'mark') {
     // 서식 범위: 원격 삽입이 안에 들어오면 둘로 나눈다 (넣은 글자는 이 서식 대상이 아니다). 원격 삭제는 범위를 줄인다
@@ -213,7 +231,7 @@ export function transform(A: readonly LocalChange[], B: readonly RemoteOp[]): [L
 }
 
 /** 위치 하나를 로컬 변경 목록 뒤의 좌표로 (원격 캐럿을 메인 Doc 좌표로 옮길 때) */
-export function mapPosThrough(pos: number, changes: readonly LocalChange[]): number {
-  for (const c of changes) if (c.story === undefined) pos = mapPos(pos, c);
+export function mapPosThrough(pos: number, changes: readonly LocalChange[], story?: string): number {
+  for (const c of changes) if (c.story === story) pos = mapPos(pos, c);
   return pos;
 }

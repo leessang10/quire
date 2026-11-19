@@ -29,6 +29,7 @@ import {
 } from './shape';
 import type { TableRecord } from '@quire/model';
 import { PresenceStore } from './presence-store';
+import { ANNOTATIONS, annIdsInLoro, annIdsOf, readAnn, writeAnnKey, writeAnnRange, type AnnWire } from './annotations';
 import type { RemoteSel, StoryDelta, StoryInit, ToMain, ToWorker } from './protocol';
 
 /** 스토리 컨테이너 ID → (역할, 스토리 ID) (storyNames의 접두사) */
@@ -88,6 +89,19 @@ export class SyncCore {
   private storySeg = new Set<string>();
   private storyTail = new Set<string>();
   private tablesDirty = new Set<string>();
+  /** 원격 변경이 있던 주석 (14 §2.2) */
+  private annsDirty = new Set<string>();
+  /**
+   * 원격 텍스트 변경 자리 근처의 주석: 다시 풀어 보낸다. 메인은 원격 연산을 변환해 적용하므로 같은 글자가 이어질 때 Loro와 다른
+   * (같은 모양의) 원소를 지울 수 있다: 메인은 범위가 Loro와 다른 주석만 다시 건다
+   */
+  private annsResync = new Set<string>();
+  /**
+   * 주석 위치 캐시 (Loro 텍스트 u16, 스토리 '' = 본문): 텍스트 변경 근처의 주석만 골라 다시 풀려고. Loro 커서 풀기는 한 덩어리로
+   * 들어간 긴 텍스트 안에서 오프셋에 비례해 비싸므로 입력마다 모든 주석을 풀 수 없다. 변경마다 위치를 옮기고, 다시 푼 주석은 정확한 값으로
+   */
+  private annPos = new Map<string, { story: string; start: number; end: number }>();
+  private readonly annotationsId: string;
   private readonly defIds: Set<string>;
   private readonly unsubscribe: () => void;
   private closed = false;
@@ -110,6 +124,7 @@ export class SyncCore {
     this.opts = opts;
     this.text = loro.getText(TEXT);
     this.defIds = new Set([loro.getMap(STYLES).id, loro.getMap(LISTS).id, loro.getMap(SECTIONS).id]);
+    this.annotationsId = loro.getMap(ANNOTATIONS).id;
     this.writer = new LoroWriter(loro, () => displayOrderFromLoro(loro));
     this.store = new PresenceStore(loro.peerIdStr, opts.presenceTimeoutMs ?? 30000);
     this.exported = loro.oplogVersion();
@@ -119,7 +134,9 @@ export class SyncCore {
     for (const id of storyIdsOf(loro)) stories[id] = storyInit(loro, id);
     const tables: Record<string, TableRecord> = {};
     for (const id of tableIdsOf(loro)) tables[id] = readTable(loro, id);
-    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr, formats: readFormats(loro), stories, tables };
+    const anns: Record<string, AnnWire | null> = {};
+    for (const id of annIdsInLoro(loro)) anns[id] = this.readAnn(id);
+    const init = { raw, keys, state: readState(loro), peer: loro.peerIdStr, formats: readFormats(loro), stories, tables, anns };
     opts.post(opts.reset ? { t: 'reset', ...init, lost: opts.reset.lost } : { t: 'init', ...init });
     this.heartbeat = setInterval(() => this.tick(), (opts.presenceTimeoutMs ?? 30000) / 2);
   }
@@ -217,12 +234,28 @@ export class SyncCore {
     let sel: { anchor: number; head: number } | null = null;
     for (const c of cs) {
       if (c.kind === 'sel') sel = { anchor: c.anchor, head: c.head };
+      else if (c.kind === 'annKey') writeAnnKey(this.loro, c.id, c.key, c.value);
+      else if (c.kind === 'annRange') writeAnnRange(this.loro, c.id, c.story, { start: c.start, last: c.last });
       else if (c.kind === 'tableList' || c.kind === 'tableMap') writeTable(this.loro, c);
       else if (c.story !== undefined) this.writerFor(c.story).apply(c);
       else this.writer.apply(c);
     }
     if (cs.some((c) => c.kind !== 'sel')) this.loro.commit({ origin: LOCAL_ORIGIN });
     this.len++;
+    // 로컬로 바꾼 주석: 적용한 뒤의 상태 (메인이 미뤄 둔 원격 값 대신 쓴다)
+    let anns: Record<string, AnnWire | null> | undefined;
+    for (const c of cs) if (c.kind === 'annKey' || c.kind === 'annRange') (anns ??= {})[c.id] = this.readAnn(c.id);
+    // 로컬 텍스트 변경 자리 근처의 주석: 메인과 다른 원소를 지웠거나 넣었을 수 있다 (같은 글자가 이어질 때)
+    let resync: Record<string, AnnWire> | undefined;
+    if (this.annPos.size) {
+      const near = new Set<string>();
+      for (const c of cs) if (c.kind === 'insert' || c.kind === 'delete') this.shiftAnns(c, near);
+      for (const id of near) {
+        if (anns && id in anns) continue;
+        const w = this.readAnn(id);
+        if (w && w.start !== null && w.end !== null) (resync ??= {})[id] = w;
+      }
+    }
     // 메인의 다음 묶음은 이 ack까지 받은 뒤에 만든 것이므로 지금까지의 항목은 다시 쓰지 않는다
     this.log.clear();
     if (wantState) {
@@ -241,8 +274,10 @@ export class SyncCore {
         defs: readDefs(this.loro),
         ...(Object.keys(stories).length ? { stories } : {}),
         ...(Object.keys(tables).length ? { tables } : {}),
+        ...(anns ? { anns } : {}),
+        ...(resync ? { annsResync: resync } : {}),
       });
-    } else this.opts.post({ t: 'ack' });
+    } else this.opts.post({ t: 'ack', ...(anns ? { anns } : {}), ...(resync ? { annsResync: resync } : {}) });
     if (sel) this.setSelection(sel.anchor, sel.head);
     if (this.pendingExport) this.schedule();
   }
@@ -282,6 +317,10 @@ export class SyncCore {
   private onEvent(e: LoroEventBatch): void {
     if (e.by === 'local') return;
     for (const ev of e.events) {
+      if (ev.target === this.annotationsId) {
+        if (ev.diff.type === 'map') for (const id of annIdsOf(Object.keys(ev.diff.updated))) this.annsDirty.add(id);
+        continue;
+      }
       if (this.defIds.has(ev.target)) {
         this.defsDirty = true;
         continue;
@@ -298,7 +337,9 @@ export class SyncCore {
         const [, role, id] = sm as unknown as [string, string, string];
         if (role === 's' && ev.diff.type === 'text') {
           const delta = ev.diff.diff;
+          const n0 = this.incoming.length;
           deltaToOps(delta, this.incoming, id);
+          this.shiftAnnsBy(n0);
           if (delta.some((d) => d.attributes?.[SEG_MARK] !== undefined)) this.storySeg.add(id);
         } else if (role === 'tp') this.storyTail.add(id);
         else this.storySeg.add(id);
@@ -306,7 +347,9 @@ export class SyncCore {
       }
       if (ev.target === this.text.id && ev.diff.type === 'text') {
         const delta = ev.diff.diff;
+        const n0 = this.incoming.length;
         deltaToOps(delta, this.incoming);
+        this.shiftAnnsBy(n0);
         if (delta.some((d) => d.attributes?.[SEG_MARK] !== undefined)) this.segDirty = true;
       } else {
         this.segDirty = true;
@@ -331,7 +374,19 @@ export class SyncCore {
     for (const id of this.tablesDirty) tables[id] = readTable(this.loro, id);
     this.tablesDirty = new Set();
     const anyTable = Object.keys(tables).length > 0;
-    if (ops.length > 0 || dirty || defs || anyStory || anyTable) {
+    // 주석: 이 항목의 텍스트까지 적용한 Loro 상태로 커서를 푼다 (메인은 같은 항목의 연산을 먼저 적용한다)
+    const anns: Record<string, AnnWire | null> = {};
+    for (const id of this.annsDirty) anns[id] = this.readAnn(id);
+    this.annsDirty = new Set();
+    let resync: Record<string, AnnWire> | undefined;
+    for (const id of this.annsResync) {
+      if (id in anns) continue;
+      const w = this.readAnn(id);
+      if (w && w.start !== null && w.end !== null) (resync ??= {})[id] = w;
+    }
+    this.annsResync = new Set();
+    const anyAnn = Object.keys(anns).length > 0 || !!resync;
+    if (ops.length > 0 || dirty || defs || anyStory || anyTable || anyAnn) {
       this.log.set(this.len, ops);
       this.len++;
       this.opts.post({
@@ -341,9 +396,51 @@ export class SyncCore {
         ...(defs ? { defs: readDefs(this.loro) } : {}),
         ...(anyStory ? { stories } : {}),
         ...(anyTable ? { tables } : {}),
+        ...(Object.keys(anns).length ? { anns } : {}),
+        ...(resync ? { annsResync: resync } : {}),
       });
     }
     if (this.store.states.size > 0) this.postRemotes();
+  }
+
+  /** 주석 하나를 지금 Loro 상태로 풀고 위치 캐시를 맞춘다 */
+  private readAnn(id: string): AnnWire | null {
+    const w = readAnn(this.loro, id);
+    if (w && w.start !== null) this.annPos.set(id, { story: w.story ?? '', start: w.start, end: w.end ?? w.start });
+    else this.annPos.delete(id);
+    return w;
+  }
+
+  /**
+   * 텍스트 변경 하나 (그 앞 변경까지 적용한 위치)를 지난다: 바뀐 자리에 닿거나 붙은 주석을 near에 모으고 캐시 위치를 옮긴다.
+   * 붙은 경우(경계에서 넣기)는 커서 쪽에 따라 달라지므로 다시 풀어 맞춘다
+   */
+  private shiftAnns(c: { kind: string; at: number; story?: string; text?: string; len?: number }, near: Set<string>): void {
+    const story = c.story ?? '';
+    const ins = c.kind === 'insert';
+    const len = ins ? c.text!.length : c.len!;
+    const hi = ins ? c.at : c.at + len;
+    for (const [id, p] of this.annPos) {
+      if (p.story !== story) continue;
+      if (p.start <= hi + 1 && p.end >= c.at - 1) near.add(id);
+      if (ins) {
+        if (p.start >= c.at) p.start += len;
+        if (p.end > c.at) p.end += len;
+      } else {
+        const f = (x: number) => (x >= hi ? x - len : x > c.at ? c.at : x);
+        p.start = f(p.start);
+        p.end = f(p.end);
+      }
+    }
+  }
+
+  /** 원격 연산 incoming[n0..]으로 주석 캐시를 옮기고, 근처 주석을 다시 풀 목록에 */
+  private shiftAnnsBy(n0: number): void {
+    if (!this.annPos.size) return;
+    for (let i = n0; i < this.incoming.length; i++) {
+      const op = this.incoming[i]!;
+      if (op.kind === 'insert' || op.kind === 'delete') this.shiftAnns(op, this.annsResync);
+    }
   }
 
   private postRemotes(): void {

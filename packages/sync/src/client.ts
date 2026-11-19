@@ -11,7 +11,8 @@
  * - 새 판 (09 §9): Worker가 hold를 보내면 보낸 묶음이 끝난 뒤 held로 답하고 그 뒤로는 보내지 않는다. 그때의 화면 텍스트를
  *   기억해 두었다가 reset을 받으면 새 Doc을 만들고, held 뒤에 한 로컬 변경(텍스트 차이)을 새 Doc에 다시 적용한다.
  */
-import { Doc, Document, type Position, type RawChange, type SegState, type TableChange, type TableRecord } from '@quire/model';
+import { Doc, Document, type AnnotationChange, type Position, type RawChange, type SegState, type TableChange, type TableRecord } from '@quire/model';
+import { annFromWire, annRangeToU16, type AnnWire } from './annotations';
 import { applyHunks, diffText, rebaseHunks } from './epoch';
 import { mapPosThrough, opToDelta, transform, type LocalChange } from './ot';
 import type { Defs, RemoteSel, StoryDelta, StoryInit, ToMain, ToWorker } from './protocol';
@@ -38,6 +39,7 @@ const isDef = (c: LocalChange) => c.kind === 'style' || c.kind === 'listDef' || 
 const isTail = (c: LocalChange) => c.kind === 'tail';
 /** 표 레코드 변경 (Worker의 표 레코드는 통째로 오므로 미룬다) */
 const tableOf = (c: LocalChange) => (c.kind === 'tableList' || c.kind === 'tableMap' ? c.table : null);
+const annOf = (c: LocalChange) => (c.kind === 'annKey' || c.kind === 'annRange' ? c.id : null);
 
 export class SyncClient {
   private current: Doc;
@@ -47,6 +49,7 @@ export class SyncClient {
   private deferredStories = new Map<string, SegState>();
   private deferredTails = new Map<string, Record<string, unknown>>();
   private deferredTables = new Map<string, TableRecord>();
+  private deferredAnns = new Map<string, AnnWire | null>();
   private readonly opts: ClientOptions;
   /** 받은 H 항목 수 */
   private rev = 0;
@@ -91,6 +94,7 @@ export class SyncClient {
     formats: FormatState;
     stories?: Record<string, StoryInit>;
     tables?: Record<string, TableRecord>;
+    anns?: Record<string, AnnWire | null>;
   }): Doc {
     const doc = Doc.fromRaw(init.raw, init.keys, init.state, init.peer);
     applyFormats(doc, init.formats);
@@ -110,8 +114,14 @@ export class SyncClient {
     for (const id of Object.keys(stories)) document.story(id);
     for (const t of Object.values(init.tables ?? {})) document.putTable(t);
     document.takeDirtyTables();
-    document.observe((story: string | null, c: RawChange | TableChange) => {
-      this.buffer.push(story === null ? c : { ...c, story });
+    // 주석 (14 §2.2): Worker가 푼 범위
+    for (const [id, w] of Object.entries(init.anns ?? {})) if (w) document.applyRemoteAnnotation(id, annFromWire(document, id, w));
+    document.observe((story: string | null, c: RawChange | TableChange | AnnotationChange) => {
+      if (c.kind === 'annKey') this.buffer.push({ kind: 'annKey', id: c.id, key: c.key, value: c.value });
+      else if (c.kind === 'annRange') {
+        const u = annRangeToU16(document, c);
+        this.buffer.push({ kind: 'annRange', id: c.id, start: u.start, last: u.last, ...(c.story !== null ? { story: c.story } : {}) });
+      } else this.buffer.push(story === null ? c : { ...c, story });
       this.send();
     });
     this.currentDocument = document;
@@ -142,6 +152,8 @@ export class SyncClient {
         this.takeDefs(msg.defs ?? null);
         this.takeStories(msg.stories ?? {});
         this.takeTables(msg.tables ?? {});
+        this.takeAnns(msg.anns ?? {});
+        if (msg.annsResync) this.resyncAnns(msg.annsResync);
         this.send();
         break;
       case 'remote': {
@@ -154,6 +166,8 @@ export class SyncClient {
         if (msg.defs) this.takeDefs(msg.defs);
         if (msg.stories) this.takeStories(msg.stories);
         if (msg.tables) this.takeTables(msg.tables);
+        if (msg.anns) this.takeAnns(msg.anns);
+        if (msg.annsResync) this.resyncAnns(msg.annsResync);
         this.opts.onRemoteChange?.();
         break;
       }
@@ -227,6 +241,7 @@ export class SyncClient {
     this.deferredStories.clear();
     this.deferredTails.clear();
     this.deferredTables.clear();
+    this.deferredAnns.clear();
     this.remotePos.clear();
     this.cache = null;
     this.presenceVersion++;
@@ -295,6 +310,56 @@ export class SyncClient {
       this.deferredTables.delete(id);
       this.currentDocument.applyRemoteTable(t);
     }
+  }
+
+  /**
+   * Worker의 주석 (14 §2.2): 그 주석의 로컬 변경이 아직 가는 중이면 미룬다. 위치는 Worker의 H 기준 UTF-16이므로 보낸 것·대기열의
+   * 같은 스토리 변경을 지나게 해서 지금 Doc 위치로 바꾼다
+   */
+  private takeAnns(anns: Record<string, AnnWire | null>): void {
+    const pendingList = [...(this.outstanding ?? []), ...this.buffer];
+    const pending = (id: string) => pendingList.some((c) => annOf(c) === id);
+    const ids = new Set([...Object.keys(anns), ...this.deferredAnns.keys()]);
+    for (const id of ids) {
+      const w = id in anns ? anns[id]! : this.deferredAnns.get(id)!;
+      if (pending(id)) {
+        this.deferredAnns.set(id, w);
+        continue;
+      }
+      this.deferredAnns.delete(id);
+      const story = w?.story ?? undefined;
+      this.currentDocument.applyRemoteAnnotation(id, w ? annFromWire(this.currentDocument, id, w, (u, end) =>
+              // 끝은 마지막 글자에 붙어 있다: 그 글자 위치로 옮긴 뒤 + 1 (끝 자리에 넣은 로컬 글자는 범위 밖)
+              end && u > 0 ? mapPosThrough(u - 1, pendingList, story) + 1 : mapPosThrough(u, pendingList, story),
+            ) : null);
+      // 커서가 지운 글자에 붙어 있었다: 살아 있는 글자로 다시 쓴다 (모든 피어가 같은 글자를 고른다)
+      if (w?.dead) this.currentDocument.rewriteRange(id);
+    }
+  }
+
+  /**
+   * 원격 텍스트 변경 뒤 Worker가 다시 푼 주석: 지금 Doc의 범위가 Loro에서 푼 범위와 다른 것만 다시 건다 (로컬 변경이 가는 중인 주석은
+   * 그 ack가 맞춘다)
+   */
+  private resyncAnns(wires: Record<string, AnnWire>): void {
+    const pendingList = [...(this.outstanding ?? []), ...this.buffer];
+    const d = this.currentDocument;
+    const pick: Record<string, AnnWire | null> = {};
+    for (const [id, w] of Object.entries(wires)) {
+      if (pendingList.some((c) => annOf(c) === id) || this.deferredAnns.has(id)) continue;
+      const cur = d.annotation(id);
+      if (!cur) {
+        pick[id] = w;
+        continue;
+      }
+      const story = w.story ?? undefined;
+      const want = annFromWire(d, id, w, (u, end) => (end && u > 0 ? mapPosThrough(u - 1, pendingList, story) + 1 : mapPosThrough(u, pendingList, story)));
+      const a = d.resolveRange(cur);
+      const b = d.resolveRange(want);
+      const same = (!a && !b) || (a && b && a.from === b.from && a.to === b.to && a.orphan === b.orphan);
+      if (!same || w.dead) pick[id] = w;
+    }
+    if (Object.keys(pick).length) this.takeAnns(pick);
   }
 
   /** Worker의 정의 상태: 로컬 정의 변경이 아직 가는 중이면 미룬다 */
