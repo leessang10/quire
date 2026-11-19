@@ -8,6 +8,8 @@
 import { Doc, OBJ, type ElementId, type ObjAttrs, type Op, type Position, type RawChange, type SegState } from './doc';
 import type { Annotation, AnnotationChange, AnnotationRange } from './annotations';
 import { threadsFromKeys, type CommentAuthor, type CommentChange, type CommentThread } from './comments';
+import { newAnnotationId } from './annotations';
+import { subtractIntervals, unionIntervals, type Suggester, type SuggestionData, type SuggestionKind } from './suggestions';
 import {
   DEFAULT_COL_WIDTH,
   cellKey,
@@ -39,6 +41,12 @@ export class Document {
   private cmtCache: CommentThread[] | null = null;
   private cmtIndex: Map<string, CommentThread> | null = null;
   private cmtIndexOf: readonly CommentThread[] | null = null;
+  /** 제안 모드 (14 §4): 켠 편집기의 작성자 */
+  private suggester: Suggester | null = null;
+  /** 제안 삭제가 돌려준 연산 (기록할 때 삽입으로 보지 않는다: 꼬리 옮기기의 다시 넣기) */
+  private suggestSkip = new WeakSet<Op>();
+  /** 마지막 제안 삭제 뒤 원래 범위의 끝 (앞으로 지우기의 캐럿) */
+  suggestDeleteEnd = 0;
   /** 댓글이 바뀔 때마다 (창 다시 그리기) */
   commentVersion = 0;
   private listener: DocumentListener | null = null;
@@ -61,6 +69,152 @@ export class Document {
     d.onRemap = (pairs) => this.remapAnnotations(story, pairs);
     d.onRevive = (ids) => this.reviveAnnotations(story, ids);
     d.onDelete = (ids) => this.unanchorDeleted(story, ids);
+    d.deleteHook = this.suggester ? (from, to) => this.suggestDelete(story, d, from, to) : null;
+  }
+
+  // ── 제안 모드 (14 §4) ─────────────────────────────────
+
+  /** 제안 모드 켜기·끄기 (편집기 상태: 이 문서를 편집하는 쪽의 작성자) */
+  setSuggesting(s: Suggester | null): void {
+    this.suggester = s;
+    this.hook(this.body, null);
+    for (const [id, d] of this.map) this.hook(d, id);
+  }
+
+  get suggesting(): Suggester | null {
+    return this.suggester;
+  }
+
+  private now(): number {
+    return this.suggester?.now?.() ?? Date.now();
+  }
+
+  /** 스토리의 제안 범위들 (고아 빼고) */
+  private suggestionRanges(story: StoryId | null, kind: SuggestionKind): AnnotationRange[] {
+    const s = story ?? '';
+    return this.annotationRanges().filter((r) => r.type === 'suggestion' && (r.story ?? '') === s && !r.orphan && r.to > r.from && r.data.kind === kind);
+  }
+
+  private mine(r: AnnotationRange): boolean {
+    return (r.data.author as CommentAuthor | undefined)?.id === this.suggester?.author.id;
+  }
+
+  /** 내 삽입 제안 구간들 */
+  private ownInserts(story: StoryId | null): Array<[number, number]> {
+    return this.suggestionRanges(story, 'insert').filter((r) => this.mine(r)).map((r) => [r.from, r.to] as [number, number]);
+  }
+
+  /**
+   * 삽입·삭제 제안 표시: 붙어 있거나 겹치는 내 같은 종류 제안이 있으면 넓힌다 (여럿이면 하나로 합친다)
+   */
+  private markRange(story: StoryId | null, kind: 'insert' | 'delete', a: number, b: number): Op[] {
+    const near = this.suggestionRanges(story, kind).filter((r) => this.mine(r) && r.from <= b && r.to >= a);
+    if (!near.length) {
+      const data: SuggestionData = { kind, author: this.suggester!.author, time: this.now() };
+      return this.annotate({ id: newAnnotationId(), type: 'suggestion', story, from: a, to: b, data: data as unknown as Record<string, unknown> });
+    }
+    const lo = Math.min(a, ...near.map((r) => r.from));
+    const hi = Math.max(b, ...near.map((r) => r.to));
+    const [keep, ...rest] = near.sort((x, y) => (x.id < y.id ? -1 : 1));
+    const cur = this.annMap.get(keep!.id)!;
+    const ops = this.setAnnotation(keep!.id, { ...cur, ...this.rangePositions(story, lo, hi) });
+    for (const r of rest) ops.push(...this.unannotate(r.id));
+    return ops;
+  }
+
+  /**
+   * 제안 모드의 지우기 (Doc.deleteRange 대신): 내 삽입 제안 부분은 실제로 지우고, 나머지는 삭제 제안으로 표시한다 (이미 삭제 제안인
+   * 글자는 그대로). suggestDeleteEnd = 원래 범위 끝이 지금 있는 자리 (앞으로 지우기의 캐럿)
+   */
+  private suggestDelete(story: StoryId | null, d: Doc, from: number, to: number): Op[] {
+    const real = this.ownInserts(story)
+      .map(([x, y]) => [Math.max(x, from), Math.min(y, to)] as [number, number])
+      .filter(([x, y]) => y > x);
+    const dels = this.suggestionRanges(story, 'delete').map((r) => [r.from, r.to] as [number, number]);
+    const ops: Op[] = [];
+    for (const [a, b] of subtractIntervals(from, to, real))
+      for (const [x, y] of subtractIntervals(a, b, dels)) ops.push(...this.markRange(story, 'delete', x, y));
+    // 실제로 지우기: 뒤에서부터 (앞 구간의 오프셋이 그대로)
+    const hook = d.deleteHook;
+    d.deleteHook = null;
+    let removed = 0;
+    try {
+      for (const [a, b] of unionIntervals(real).reverse()) {
+        ops.push(...d.deleteRange(a, b));
+        removed += b - a;
+      }
+    } finally {
+      d.deleteHook = hook;
+    }
+    for (const op of ops) this.suggestSkip.add(op);
+    this.suggestDeleteEnd = to - removed;
+    return ops;
+  }
+
+  /**
+   * 편집 명령이 만든 연산(스토리 Doc d의 것)을 보고 삽입·서식·문단 제안을 더한다 (제안 모드일 때 편집기가 부른다). 돌려준 연산은 같은
+   * 트랜잭션에 넣는다
+   */
+  recordSuggestions(story: StoryId | null, d: Doc, ops: readonly Op[]): Op[] {
+    if (!this.suggester) return [];
+    const out: Op[] = [];
+    const id = (ctr: number) => `${d.peer}:${ctr}`;
+    // 삽입: 넣은 원소의 연속 구간마다
+    for (const op of ops) {
+      if (op.type !== 'insert' || this.suggestSkip.has(op)) continue;
+      const offs = op.ids.filter((x) => d.isAlive(x)).map((x) => d.resolve({ anchor: x, side: 'before' })).sort((x, y) => x - y);
+      for (const [a, b] of runsOf(offs)) {
+        // 삭제 제안 안에 넣었으면 그 자리에서 나눈다
+        for (const r of this.suggestionRanges(story, 'delete')) {
+          if (!(r.from < a && r.to > b)) continue;
+          const cur = this.annMap.get(r.id)!;
+          out.push(...this.setAnnotation(r.id, { ...cur, ...this.rangePositions(story, r.from, a) }));
+          out.push(...this.annotate({ id: newAnnotationId(), type: 'suggestion', story, from: b, to: r.to, data: structuredClone(cur.data) }));
+        }
+        if (this.ownInserts(story).some(([x, y]) => x <= a && y >= b)) continue;
+        out.push(...this.markRange(story, 'insert', a, b));
+      }
+    }
+    // 서식: 이전 값이 같은 연속 구간마다
+    for (const op of ops) {
+      if (op.type !== 'format' || this.suggestSkip.has(op)) continue;
+      const items: Array<[number, unknown]> = [];
+      for (let i = 0; i < op.ctrs.length; i++) {
+        const x = id(op.ctrs[i]!);
+        if (!d.isAlive(x)) continue;
+        items.push([d.resolve({ anchor: x, side: 'before' }), d.markSet(op.before[i]!)[op.key] ?? null]);
+      }
+      items.sort((p, q) => p[0] - q[0]);
+      for (const [a, b, v] of valueRuns(items)) out.push(...this.markBefore(story, 'format', a, b, op.key, v));
+    }
+    // 문단 속성: ¶ 하나
+    for (const op of ops) {
+      if (op.type !== 'para' || this.suggestSkip.has(op)) continue;
+      const x = id(op.ctr);
+      if (!d.isAlive(x)) continue;
+      const p = d.resolve({ anchor: x, side: 'before' });
+      out.push(...this.markBefore(story, 'para', p, p + 1, op.key, op.before ?? null));
+    }
+    return out;
+  }
+
+  /** 서식·문단 제안: 내 삽입 제안 안은 빼고, 그 키의 이전 값이 이미 있는 곳도 뺀다 (처음 값을 둔다). 같은 구간의 내 제안이면 키를 더한다 */
+  private markBefore(story: StoryId | null, kind: 'format' | 'para', a: number, b: number, key: string, value: unknown): Op[] {
+    const ops: Op[] = [];
+    const same = this.suggestionRanges(story, kind);
+    const has = same.filter((r) => (r.data.before as Record<string, unknown> | undefined)?.[key] !== undefined).map((r) => [r.from, r.to] as [number, number]);
+    for (const [x0, y0] of subtractIntervals(a, b, this.ownInserts(story)))
+      for (const [x, y] of subtractIntervals(x0, y0, has)) {
+        const exact = same.find((r) => r.from === x && r.to === y && this.mine(r));
+        if (exact) {
+          const cur = this.annMap.get(exact.id)!;
+          ops.push(...this.setAnnotation(exact.id, { ...cur, data: { ...cur.data, before: { ...(cur.data.before as Record<string, unknown>), [key]: value } } }));
+        } else {
+          const data: SuggestionData = { kind, author: this.suggester!.author, time: this.now(), before: { [key]: value } };
+          ops.push(...this.annotate({ id: newAnnotationId(), type: 'suggestion', story, from: x, to: y, data: data as unknown as Record<string, unknown> }));
+        }
+      }
+    return ops;
   }
 
   /** 지운 원소에 걸린 주석 위치를 살아 있는 옆 원소로 (실행 취소 연산: 되돌리면 위치도 돌아온다). 범위 안이 다 지워졌으면 고아 */
@@ -560,6 +714,29 @@ export class Document {
     this.tableMap.set(record.id, structuredClone(record));
     this.dirtyTables.add(record.id);
   }
+}
+
+/** 정렬한 오프셋들 → 연속 구간 [a, b) */
+function runsOf(offs: readonly number[]): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const o of offs) {
+    const last = out[out.length - 1];
+    if (last && o === last[1]) last[1]++;
+    else if (!last || o > last[1]) out.push([o, o + 1]);
+  }
+  return out;
+}
+
+/** (오프셋, 값) 정렬 목록 → 값이 같은 연속 구간 [a, b, 값] */
+function valueRuns(items: ReadonlyArray<[number, unknown]>): Array<[number, number, unknown]> {
+  const out: Array<[number, number, unknown, string]> = [];
+  for (const [o, v] of items) {
+    const k = JSON.stringify(v);
+    const last = out[out.length - 1];
+    if (last && o === last[1] && k === last[3]) last[1]++;
+    else out.push([o, o + 1, v, k]);
+  }
+  return out.map(([a, b, v]) => [a, b, v]);
 }
 
 export { OBJ };

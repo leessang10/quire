@@ -12,6 +12,8 @@ export { newAnnotationId } from './annotations';
 export type { Annotation, AnnotationChange, AnnotationKey, AnnotationRange } from './annotations';
 export { newThreadId, newMessageId, threadOfKey, threadsFromKeys, keysOfThread } from './comments';
 export type { CommentAuthor, CommentMessage, CommentThread, CommentChange } from './comments';
+export { isSuggestion, unionIntervals, subtractIntervals } from './suggestions';
+export type { SuggestionData, SuggestionKind, Suggester } from './suggestions';
 export { isNoteStory, noteRefs, noteStoryId } from './notes';
 export type { NoteRefAt } from './notes';
 export type { StoryId } from './document';

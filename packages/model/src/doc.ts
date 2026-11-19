@@ -1306,6 +1306,8 @@ export class Doc {
     from = clamp(from, 0, this.maxCaret);
     to = clamp(to, from, this.maxCaret);
     if (from === to) return [];
+    // 제안 모드 (14 §4): 지우지 않고 삭제 제안으로 표시한다 (Document가 건다)
+    if (!internal && this.deleteHook) return this.deleteHook(from, to);
     if (this.simple) {
       const ids: ElementId[] = [];
       let n = to - from;
@@ -1519,6 +1521,8 @@ export class Doc {
    * 보지 않게: 커서가 지운 글자에 남지 않는다)
    */
   onDelete: ((ids: readonly ElementId[]) => Op[]) | null = null;
+  /** 제안 모드 (14 §4): 로컬 deleteRange 대신 부른다 (내부 삭제·원격·실행 취소는 아님) */
+  deleteHook: ((from: number, to: number) => Op[]) | null = null;
 
   /** 묘비가 된 원소들을 되살린다 (실행 취소·다시 실행). ids는 문서 순서여야 한다 */
   revive(ids: ElementId[]): void {
