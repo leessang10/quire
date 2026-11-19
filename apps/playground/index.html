@@ -126,6 +126,13 @@
       <button id="footnote" title="각주 넣기 (Ctrl+Alt+F): 캐럿에 참조를 넣고 쪽 아래 각주를 편집한다 (Esc로 본문)">각주</button>
       <button id="ann-add" title="선택 범위에 주석(강조)을 건다. 동시 편집 뒤에도 같은 글자를 덮는다 (14 §2)">주석</button>
       <button id="ann-del" title="캐럿이 걸친 주석을 지운다">주석 지우기</button>
+      <label class="view-mode">보기
+        <select id="view-mode" title="제안 포함(편집) / 최종본(모두 수락) / 원본(모두 거부). 뒤 둘은 읽기 전용">
+          <option value="suggestions">제안 포함</option>
+          <option value="final">최종본</option>
+          <option value="original">원본</option>
+        </select>
+      </label>
       <button id="suggest" aria-pressed="false" title="제안 모드 (14 §4): 편집이 문서를 바로 바꾸지 않고 내 제안으로 기록된다. 넣은 글은 밑줄, 지운 글은 취소선">제안 모드</button>
       <button id="page-break" title="쪽 나누기 (Ctrl+Enter): 캐럿 뒤 문단을 새 쪽에서 시작">쪽 나누기</button>
       <button id="col-break" title="단 나누기 (Ctrl+Shift+Enter): 캐럿 뒤 문단을 다음 단에서 시작">단 나누기</button>

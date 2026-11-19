@@ -54,4 +54,54 @@ describe('suggestions over the bridge (14 §4)', () => {
     expect(a.doc.text()).toBe('하나와 둘 셋 \n');
     expect(view(a.document)).toEqual(view(b.document));
   });
+
+  const suggestDelete = (a: SyncBridge, from: number, to: number) => {
+    a.document.setSuggesting({ author: A });
+    a.document.recordSuggestions(null, a.doc, a.doc.deleteRange(from, to));
+    a.document.setSuggesting(null);
+  };
+
+  it('A accepts a delete suggestion while B types inside it: the deletion covers what A saw, text from B stays', () => {
+    const { peers, settle } = network('하나 둘 셋 넷');
+    const [a, b] = peers as [SyncBridge, SyncBridge];
+    suggestDelete(a, 3, 6); // 둘 셋
+    settle();
+    const id = a.document.annotationRanges().find((r) => r.type === 'suggestion')!.id;
+    b.doc.insertText(4, 'X'); // 둘 뒤 (범위 안)
+    a.document.resolveSuggestion(id, true);
+    settle();
+    expect(a.doc.text()).toBe(b.doc.text());
+    expect(a.doc.text()).toBe('하나 X 넷\n');
+    expect(view(a.document)).toEqual([]);
+    expect(view(b.document)).toEqual([]);
+  });
+
+  it('two peers accepting the same suggestion at once end the same (delete and unannotate are idempotent)', () => {
+    const { peers, settle } = network('하나 둘 셋');
+    const [a, b] = peers as [SyncBridge, SyncBridge];
+    suggestDelete(a, 3, 5);
+    settle();
+    const id = a.document.annotationRanges().find((r) => r.type === 'suggestion')!.id;
+    a.document.resolveSuggestion(id, true);
+    b.document.resolveSuggestion(id, true);
+    settle();
+    expect(a.doc.text()).toBe('하나 셋\n');
+    expect(b.doc.text()).toBe(a.doc.text());
+    expect(view(a.document)).toEqual([]);
+  });
+
+  it('one peer accepts and another rejects a delete suggestion at once: the deletion wins and the suggestion is gone', () => {
+    const { peers, settle } = network('하나 둘 셋');
+    const [a, b] = peers as [SyncBridge, SyncBridge];
+    suggestDelete(a, 3, 5);
+    settle();
+    const id = a.document.annotationRanges().find((r) => r.type === 'suggestion')!.id;
+    a.document.resolveSuggestion(id, true);
+    b.document.resolveSuggestion(id, false);
+    settle();
+    expect(a.doc.text()).toBe('하나 셋\n');
+    expect(b.doc.text()).toBe(a.doc.text());
+    expect(view(a.document)).toEqual([]);
+    expect(view(b.document)).toEqual([]);
+  });
 });

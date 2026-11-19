@@ -5,7 +5,7 @@
  * (빈 텍스트 = 빈 문단 하나, 끝 ¶는 Loro에 없는 유령 ¶: Doc.fromRaw(…, story = true)). 실행 취소 연산은 스토리를 감싼
  * { type: 'story', story, op }로 기록하고 Document가 그 스토리에 적용한다. 표 레코드 연산은 { type: 'tableMap' }.
  */
-import { Doc, OBJ, type ElementId, type ObjAttrs, type Op, type Position, type RawChange, type SegState } from './doc';
+import { Doc, OBJ, type ElementId, type MarkKey, type ObjAttrs, type Op, type ParaKey, type Position, type RawChange, type SegState } from './doc';
 import type { Annotation, AnnotationChange, AnnotationRange } from './annotations';
 import { threadsFromKeys, type CommentAuthor, type CommentChange, type CommentThread } from './comments';
 import { newAnnotationId } from './annotations';
@@ -196,6 +196,79 @@ export class Document {
       out.push(...this.markBefore(story, 'para', p, p + 1, op.key, op.before ?? null));
     }
     return out;
+  }
+
+  // ── 수락·거부 (14 §4.2, 4-4) ────────────────────────
+
+  /**
+   * 제안 하나 수락·거부: 보통 편집이다 (제안 모드에서도 새 제안이 되지 않는다). 연산은 실행 취소 기록용 (스토리 연산은 감싼다).
+   * 삽입 거부·삭제 수락은 범위의 원소를 지운다 (편집기 지우기처럼 문단을 합치면 앞 문단 속성을 둔다). 서식·문단 거부는 이전 값으로.
+   * 범위가 지워져 고아가 된 다른 제안은 함께 지운다
+   */
+  resolveSuggestion(id: string, accept: boolean): Op[] {
+    const r = this.annotationRanges().find((x) => x.id === id && x.type === 'suggestion');
+    if (!r) return [];
+    return this.resolveSuggestions([r], accept);
+  }
+
+  /** 모두 수락·거부 (author를 주면 그 작성자의 것만) */
+  resolveAll(accept: boolean, authorId?: string): Op[] {
+    const list = this.annotationRanges().filter((x) => x.type === 'suggestion' && (authorId === undefined || (x.data.author as CommentAuthor | undefined)?.id === authorId));
+    return this.resolveSuggestions(list, accept);
+  }
+
+  /**
+   * 제안들을 한꺼번에: 범위는 처음에 한 번 풀고, 서식·문단 되돌리기(오프셋이 바뀌지 않음) → 지우기(스토리마다 합친 구간을 뒤에서부터)
+   */
+  private resolveSuggestions(list: readonly AnnotationRange[], accept: boolean): Op[] {
+    const saved = this.suggester;
+    if (saved) this.setSuggesting(null);
+    const ops: Op[] = [];
+    try {
+      const byStory = new Map<StoryId | null, AnnotationRange[]>();
+      for (const r of list) {
+        const k = r.story ?? null;
+        byStory.set(k, [...(byStory.get(k) ?? []), r]);
+      }
+      for (const r of list) ops.push(...this.unannotate(r.id));
+      for (const [story, rs] of byStory) {
+        const d = this.docOf(story);
+        const sub: Op[] = [];
+        const cuts: Array<[number, number]> = [];
+        for (const r of rs) {
+          if (r.orphan || r.to <= r.from) continue;
+          const data = r.data as unknown as SuggestionData;
+          const before = (data.before ?? {}) as Record<string, unknown>;
+          if ((data.kind === 'insert' && !accept) || (data.kind === 'delete' && accept)) cuts.push([r.from, r.to]);
+          else if (data.kind === 'format' && !accept) {
+            for (const [k, v] of Object.entries(before)) sub.push(...d.format(r.from, r.to, k as MarkKey, v === null ? undefined : v));
+          } else if (data.kind === 'para' && !accept) {
+            const pi = d.paragraphIndexAt(r.from);
+            for (const [k, v] of Object.entries(before)) sub.push(...d.setParaAttr(pi, k as ParaKey, v === null ? undefined : v));
+          }
+        }
+        for (const [a, b] of unionIntervals(cuts).reverse()) sub.push(...this.deleteKeepingAttrs(d, a, b));
+        ops.push(...(story === null ? sub : Document.tag(story, sub)));
+        // 범위가 다 지워진 다른 제안 (다른 사람 삽입 위의 삭제 제안 등)
+        for (const x of this.annotationRanges()) if (x.type === 'suggestion' && (x.story ?? null) === story && (x.orphan || x.to <= x.from)) ops.push(...this.unannotate(x.id));
+      }
+    } finally {
+      if (saved) this.setSuggesting(saved);
+    }
+    return ops;
+  }
+
+  /** 지우기 (편집기와 같다): 문단 중간부터 ¶를 넘어 지우면 합친 문단은 앞 문단의 속성을 둔다 */
+  private deleteKeepingAttrs(d: Doc, from: number, to: number): Op[] {
+    const pi = d.paragraphIndexAt(from);
+    const p = d.paragraphs()[pi]!;
+    const keep = to > p.end && from !== p.start ? p.attrs : null;
+    const ops = d.deleteRange(from, to);
+    if (keep) {
+      const cur = d.paraAttrs(pi);
+      for (const k of new Set([...Object.keys(keep), ...Object.keys(cur)]) as Set<ParaKey>) ops.push(...d.setParaAttr(pi, k, keep[k]));
+    }
+    return ops;
   }
 
   /** 서식·문단 제안: 내 삽입 제안 안은 빼고, 그 키의 이전 값이 이미 있는 곳도 뺀다 (처음 값을 둔다). 같은 구간의 내 제안이면 키를 더한다 */
