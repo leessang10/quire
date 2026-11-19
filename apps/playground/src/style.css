@@ -137,7 +137,32 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cm-rest summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 .cm-rest-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 
-.editor { min-width: 0; min-height: 0; }
+.editor { min-width: 0; min-height: 0; position: relative; }
+
+/* 찾기 막대 (15 §3.1) */
+.find-bar {
+  position: absolute;
+  top: 8px;
+  right: 24px;
+  max-width: calc(100% - 32px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+.find-bar[hidden] { display: none; }
+.find-row { display: flex; align-items: center; gap: 4px; }
+.find-row[hidden] { display: none; }
+.find-row input { width: 220px; min-width: 60px; flex: 1 1 auto; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+.find-row input.bad { border-color: #d33; }
+.find-row button { min-width: 28px; white-space: nowrap; flex: none; }
+.find-row button[aria-pressed='true'] { background: var(--accent); color: #fff; }
+.find-count { min-width: 72px; color: var(--muted); font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
 
 .panel {
   border-left: 1px solid var(--line);

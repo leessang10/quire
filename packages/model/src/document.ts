@@ -52,6 +52,7 @@ export class Document {
   private listener: DocumentListener | null = null;
   /** 표 레코드가 바뀐 표 (편집기가 그 표 문단을 다시 조판한다) */
   private dirtyTables = new Set<string>();
+  private tableVersion = 0;
   private seq = 0;
 
   /**
@@ -722,6 +723,13 @@ export class Document {
     return list;
   }
 
+  /** 글자·표의 판 (스토리 판들 + 표 판). 같으면 찾기 결과 등 글자에서 구한 값이 그대로다 */
+  contentKey(): string {
+    let key = `${this.tableVersion}:${this.body.version}`;
+    for (const [id, d] of this.map) key += `|${id}:${d.version}`;
+    return key;
+  }
+
   /** 스토리 story의 [from, to)에 걸친 주석 범위 (고아 빼고) */
   annotationsIn(story: StoryId | null, from: number, to: number): AnnotationRange[] {
     const s = story ?? '';
@@ -801,6 +809,7 @@ export class Document {
   private listInsert(t: TableRecord, list: 'rows' | 'cols', id: string, after: string | null): void {
     const arr = t[list];
     arr.splice(after === null ? 0 : arr.indexOf(after) + 1, 0, id);
+    this.tableVersion++;
     this.dirtyTables.add(t.id);
     this.emit({ kind: 'tableList', table: t.id, list, id, after });
   }
@@ -811,6 +820,7 @@ export class Document {
     const m = tableMap(t, map);
     if (value === undefined || value === null) delete m[key];
     else m[key] = value;
+    this.tableVersion++;
     this.dirtyTables.add(table);
     this.emit({ kind: 'tableMap', table, map, key, value: value ?? undefined });
   }
@@ -871,12 +881,14 @@ export class Document {
     const cur = this.tableMap.get(record.id);
     if (cur && JSON.stringify(cur) === JSON.stringify(record)) return;
     this.tableMap.set(record.id, structuredClone(record));
+    this.tableVersion++;
     this.dirtyTables.add(record.id);
   }
 
   /** 시험·저장용: 표 레코드를 그대로 넣는다 (기록 없음) */
   putTable(record: TableRecord): void {
     this.tableMap.set(record.id, structuredClone(record));
+    this.tableVersion++;
     this.dirtyTables.add(record.id);
   }
 }
