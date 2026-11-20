@@ -1,12 +1,12 @@
 /**
- * HTML·Markdown·DOCX 가져오기·내보내기 (15 §6, 5-5·5-6): 정본을 거친다. 변환 모듈은 처음 쓸 때 불러온다.
+ * HTML·Markdown·DOCX·HWPX 가져오기·내보내기 (15 §6, 5-5–5-7): 정본을 거친다. 변환 모듈은 처음 쓸 때 불러온다.
  */
 import type { Editor } from '@quire/editor';
 import { documentFromQuire, quireFromDocument } from '@quire/sync';
 
-export type ConvertKind = 'html' | 'md' | 'docx';
-const LABEL: Record<ConvertKind, string> = { html: 'HTML', md: 'Markdown', docx: 'DOCX' };
-const MIME: Record<ConvertKind, string> = { html: 'text/html', md: 'text/markdown', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+export type ConvertKind = 'html' | 'md' | 'docx' | 'hwpx';
+const LABEL: Record<ConvertKind, string> = { html: 'HTML', md: 'Markdown', docx: 'DOCX', hwpx: 'HWPX' };
+const MIME: Record<ConvertKind, string> = { html: 'text/html', md: 'text/markdown', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', hwpx: 'application/hwp+zip' };
 
 /** 마지막 가져오기·내보내기 결과 (상태 표시) */
 export let lastConvert = '';
@@ -32,6 +32,7 @@ export async function exportAs(editor: Editor, kind: ConvertKind): Promise<strin
     const bytes = await src.asset(id);
     return bytes ? { bytes, type: c.mimeOf(bytes) } : null;
   };
+  if (kind === 'hwpx') return c.exportHwpx(q, { title: src.title, asset });
   return kind === 'html' ? c.exportHtml(q, { title: src.title, asset }) : c.exportDocx(q, { title: src.title, asset });
 }
 
@@ -49,7 +50,8 @@ export async function saveAs(editor: Editor, kind: ConvertKind): Promise<void> {
 /** 가져와 편집기 문서로 바꾼다. 버린 요소를 돌려준다 */
 export async function importAs(editor: Editor, data: string | Uint8Array, kind: ConvertKind): Promise<Record<string, number>> {
   const c = await import('@quire/convert');
-  const r = kind === 'html' ? await c.importHtml(data as string) : kind === 'md' ? await c.importMarkdown(data as string) : await c.importDocx(data as Uint8Array);
+  const r =
+    kind === 'html' ? await c.importHtml(data as string) : kind === 'md' ? await c.importMarkdown(data as string) : kind === 'hwpx' ? await c.importHwpx(data as Uint8Array) : await c.importDocx(data as Uint8Array);
   for (const [, a] of r.assets) await editor.putAsset(new Blob([a.bytes as BlobPart], { type: a.type }));
   editor.setDocument(documentFromQuire(r.doc).document);
   const dropped = Object.entries(r.report.dropped);
@@ -62,6 +64,6 @@ export function importText(editor: Editor, text: string, kind: 'html' | 'md'): P
 }
 
 export async function openFile(editor: Editor, f: File): Promise<void> {
-  if (/\.docx$/i.test(f.name)) await importAs(editor, new Uint8Array(await f.arrayBuffer()), 'docx');
+  if (/\.(docx|hwpx)$/i.test(f.name)) await importAs(editor, new Uint8Array(await f.arrayBuffer()), /\.hwpx$/i.test(f.name) ? 'hwpx' : 'docx');
   else await importAs(editor, await f.text(), /\.(md|markdown|txt)$/i.test(f.name) ? 'md' : 'html');
 }

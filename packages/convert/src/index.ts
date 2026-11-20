@@ -10,3 +10,6 @@ export { exportDocx } from './docx-write';
 export type { DocxExportOptions } from './docx-write';
 export { importDocx } from './docx-read';
 export { storyText } from './elements';
+export { exportHwpx } from './hwpx-write';
+export type { HwpxExportOptions } from './hwpx-write';
+export { importHwpx } from './hwpx-read';
