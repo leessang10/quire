@@ -1,6 +1,6 @@
 # 16. 출시 준비와 안정화 (6단계)
 
-- 상태: 진행 중 (6-6, 6-1 끝남)
+- 상태: 진행 중 (6-6, 6-1, 6-2 끝남)
 - 관련: [06. 로드맵](06-roadmap.md) §3 성능 목표·§4 위험, [08. 앱 통합](08-integration.md), 10–15 각 결과 절의 "한계·남은 것"
 
 ## 1. 목표
@@ -61,9 +61,10 @@
 ## 4. 6-2 성능 벤치마크
 
 - 06 §3의 다섯 지표: 입력 지연 p95, 첫 화면, 전체 조판, 스크롤 fps, 메모리.
-- 플레이그라운드 `?bench=1`: 1,000쪽 문서를 열고 각 지표를 재어 `window.benchResult`(JSON)에 둔다. 입력은 EditContext·textarea에 합성 이벤트를 넣어 키 → 그리기까지 잰다.
-- 결과를 저장소의 `bench/baseline.json`과 비교하는 스크립트. 기준선보다 20% 넘게 나쁘면 실패.
-- CI의 브라우저 실행은 6-1의 범위 밖이다 (이 저장소에 브라우저 자동화 도구가 없다). 손으로 또는 브라우저 창으로 돌린다.
+- 플레이그라운드 `bench.html`: 1,000쪽 문서를 열고 각 지표를 재어 `window.benchResult`(JSON)에 둔다. 입력은 숨긴 textarea에 `beforeinput`을 넣어 실제 입력 경로로 잰다.
+- `scripts/bench.mjs`: 개발 서버를 띄우고 헤드리스 Chrome(없으면 Edge)을 DevTools 프로토콜로 몰아 여러 번 돌린 뒤, 가운뎃값을 `bench/baseline.json`·06 §3 목표와 비교한다. 브라우저 자동화 패키지를 더하지 않는다 (Node 22의 내장 WebSocket).
+- 실패 기준: 목표를 넘거나, 기준선보다 20% 넘게 그리고 지표별 절대 여유보다 많이 나쁨.
+- 창이 보이지 않는 브라우저 탭(백그라운드)에서는 rAF가 멈춰 잴 수 없다. 그래서 헤드리스로 돈다.
 
 ## 5. 6-3 레이아웃 골든 시험
 
@@ -94,21 +95,7 @@
 
 ## 10. 결과
 
-### 10.1 6-1 CI
-
-- `.github/workflows/ci.yml`: 푸시(main)·PR마다 `fast` 작업(`npm ci` → `npm run typecheck` → `vitest.fast.config.ts`). 매일 03:00(KST)과 손으로 돌릴 때 `slow` 작업(`vitest.slow.config.ts`, 제한 180분).
-- `vitest.slow.ts`: 느린 파일 목록. 빠른 설정은 이 목록을 빼고, 느린 설정은 이 목록만 돈다. 기본 `vitest run`(전체)은 그대로다.
-- 시간 표는 §3.1.
-- **첫 CI 실행이 잡은 버그**: 보기 역할 클라이언트가 붙을 때마다 서버에 거부당하고 되돌림·재연결을 되풀이했다 (100ms에 70번). 클라이언트는 SYNC 뒤 서버에 없는 변경을 바이트 길이(`mine.length > 0`)로 판단했는데, Loro는 변경이 없어도 머리만 있는 빈 업데이트를 돌려준다. 보기 역할은 어떤 업데이트든 거부한다. 이 기기에서는 타이밍상 시험이 통과했고, Ubuntu 러너에서 드러났다. 고침: 클라이언트는 버전 비교로 앞설 때만 보내고(`ws.ts`), 서버는 보기·댓글 역할의 새 연산 없는 업데이트를 거부하지 않고 버린다(`decodeImportBlobMeta`). 시험이 붙기만 한 뒤 거부 0을 확인한다.
-
-**한계**
-
-- Ubuntu 러너에는 Windows 글꼴(맑은 고딕·Calibri)이 없어서 셰이핑 시험 둘(`packages/shaping/src/shaper.test.ts`, `spikes/shaping/src/shaping.test.ts`)은 CI에서 건너뛴다. 저장소 글꼴(Noto Sans KR·Pretendard)로 돌리는 시험은 그대로 돈다. 글꼴을 저장소 글꼴로 옮기는 일은 6-3(레이아웃 골든)에서 한다.
-- Word·한글로 다시 저장한 파일을 쓰는 시험(`QUIRE_WORD_RESAVED`·`QUIRE_HWP_RESAVED`)은 환경 변수가 없으면 건너뛴다. 그 파일은 이 기기에서만 만든다.
-- 브라우저 시험(6-2 벤치마크 등)은 CI에서 돌리지 않는다.
-- 첫 CI 실행 시간은 이 PR에서 확인한다.
-
-### 10.2 6-6 패키지와 예제 앱
+### 10.1 6-6 패키지와 예제 앱
 
 **빌드** (`scripts/build-packages.mjs`, 결과는 `.build/`, 저장소에는 넣지 않음)
 
@@ -157,3 +144,48 @@
 - npm 레지스트리 배포는 하지 않았다 (이름·판 정책은 출시 때). 예제는 `file:` tarball로 설치한다.
 - Vue·Svelte용 공식 래퍼는 없다 (예제의 컴포저블·onMount 수준이면 충분해 보인다). 필요해지면 `@quire/vue` 등.
 - Node에서 PDF를 만들려면 앱이 글꼴 바이트를 manifest에서 모아 넘겨야 한다. 편의 함수(`fontsFromManifest`)는 6-5 후보.
+
+### 10.2 6-1 CI
+
+- `.github/workflows/ci.yml`: 푸시(main)·PR마다 `fast` 작업(`npm ci` → `npm run typecheck` → `vitest.fast.config.ts`). 매일 03:00(KST)과 손으로 돌릴 때 `slow` 작업(`vitest.slow.config.ts`, 제한 180분).
+- `vitest.slow.ts`: 느린 파일 목록. 빠른 설정은 이 목록을 빼고, 느린 설정은 이 목록만 돈다. 기본 `vitest run`(전체)은 그대로다.
+- 시간 표는 §3.1.
+- **첫 CI 실행이 잡은 버그**: 보기 역할 클라이언트가 붙을 때마다 서버에 거부당하고 되돌림·재연결을 되풀이했다 (100ms에 70번). 클라이언트는 SYNC 뒤 서버에 없는 변경을 바이트 길이(`mine.length > 0`)로 판단했는데, Loro는 변경이 없어도 머리만 있는 빈 업데이트를 돌려준다. 보기 역할은 어떤 업데이트든 거부한다. 이 기기에서는 타이밍상 시험이 통과했고, Ubuntu 러너에서 드러났다. 고침: 클라이언트는 버전 비교로 앞설 때만 보내고(`ws.ts`), 서버는 보기·댓글 역할의 새 연산 없는 업데이트를 거부하지 않고 버린다(`decodeImportBlobMeta`). 시험이 붙기만 한 뒤 거부 0을 확인한다.
+
+**한계**
+
+- Ubuntu 러너에는 Windows 글꼴(맑은 고딕·Calibri)이 없어서 셰이핑 시험 둘(`packages/shaping/src/shaper.test.ts`, `spikes/shaping/src/shaping.test.ts`)은 CI에서 건너뛴다. 저장소 글꼴(Noto Sans KR·Pretendard)로 돌리는 시험은 그대로 돈다. 글꼴을 저장소 글꼴로 옮기는 일은 6-3(레이아웃 골든)에서 한다.
+- Word·한글로 다시 저장한 파일을 쓰는 시험(`QUIRE_WORD_RESAVED`·`QUIRE_HWP_RESAVED`)은 환경 변수가 없으면 건너뛴다. 그 파일은 이 기기에서만 만든다.
+- 브라우저 시험(6-2 벤치마크 등)은 CI에서 돌리지 않는다.
+- 첫 CI 실행 시간은 이 PR에서 확인한다.
+
+### 10.3 6-2 성능 벤치마크
+
+**재는 법** (`apps/playground/bench.html`, `src/bench.ts`)
+
+| 지표 | 재는 법 |
+|---|---|
+| 입력 p50·p95 | 문서 가운데에서 300번 입력 (40번마다 Enter). 한 번 = `beforeinput` 처리(동기 조판) + 다음 프레임의 그리기. 프레임을 기다리는 시간(vsync)은 뺀다. 프레임 끝까지의 벽시계 값은 `inputWallP95Ms`(참고) |
+| 첫 화면 | `new Editor`부터 엔진 글꼴 준비 뒤 첫 그리기까지. 글꼴 전 시스템 글꼴 화면은 `firstFrameMs` |
+| 전체 조판 | `new Editor`부터 백그라운드 쪽 조립이 끝날 때까지 (메인 스레드, 유휴 조각) |
+| 스크롤 | 프레임마다 화면 높이의 40%씩 3초 동안 스크롤, 프레임 수와 간격 p95 |
+| 메모리 | 끝난 뒤 GC 한 번, JS 힙 + DOM + ArrayBuffer·WASM (`Runtime.getHeapUsage`). 캔버스(GPU) 메모리는 빠진다 |
+
+**기준선** (이 기기, Chrome 157 헤드리스, 1,001쪽·문단 10,007개, 3번의 가운뎃값)
+
+| 지표 | 값 | 06 §3 목표 |
+|---|---|---|
+| 입력 p95 | 3.2 ms (p50 1.9) | 16 ms |
+| 첫 화면 | 295 ms (첫 프레임 84 ms) | 1초 |
+| 전체 조판 | 817 ms | 10초 |
+| 스크롤 | 75 fps (화면 주사율), 프레임 p95 13.4 ms | 60 fps |
+| 메모리 | 52 MB | 500 MB |
+
+다섯 지표 모두 목표 안이다. 실행마다 흔들림: 첫 화면 270–545 ms, 전체 조판 790–1,460 ms (그래서 3번의 가운뎃값과 절대 여유).
+
+- 처음에는 한 탭에서 연달아 돌려 앞 실행의 힙이 남았다(74 → 106 → 185 MB). 실행마다 새 탭을 열고 GC 뒤에 잰다.
+- `performance.memory`는 JS 객체만 세어 20 MB로 나왔다. 글꼴 조각·HarfBuzz WASM의 ArrayBuffer(약 32 MB)를 더한다.
+- CI: 매일 작업(`bench`)에서 Ubuntu 러너로 돌리되 기준선 없이 목표만 본다 (`--targets-only`, 기기가 다름). 결과 JSON을 아티팩트로 남긴다.
+- 첫 CI 실행 (GitHub ubuntu-latest, Chrome 157 헤드리스): 입력 p95 2.9 ms, 첫 화면 673 ms (첫 프레임 295 ms), 전체 조판 1,230 ms, 60 fps, 52 MB — 모두 목표 안. 쪽 수도 1,001쪽으로 같다.
+
+**한계**: 전체 조판은 Worker가 아니라 메인 스레드 유휴 조각이다 (06 §3 "Worker 사용" 조건과 다르지만 목표 안). 스크롤 fps는 화면 주사율에 묶인다. 실제 키보드·IME 지연은 6-7에서 본다.

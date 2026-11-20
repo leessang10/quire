@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-20T05:28:37.306Z",
+  "machine": "Windows 11 데스크톱 (개발 기기), Chrome 헤드리스",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+  "pages": 1001,
+  "paragraphs": 10007,
+  "keys": 300,
+  "runs": 3,
+  "metrics": {
+    "inputP50Ms": 1.9,
+    "inputP95Ms": 3.2,
+    "inputWallP95Ms": 13.6,
+    "firstFrameMs": 84.2,
+    "firstScreenMs": 295.4,
+    "fullLayoutMs": 817.4,
+    "scrollFps": 75,
+    "scrollP95FrameMs": 13.4,
+    "heapMB": 51.6
+  }
+}
