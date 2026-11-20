@@ -6,7 +6,7 @@
 — 진짜 페이지 레이아웃, 정밀한 한글 조판, IME 완전 제어, 초대형 문서, 블록 이동까지 포함한 협업 —
 를 처음부터 다른 구조로 풀기 위한 프로젝트입니다.
 
-> 상태: **6단계 (출시 준비·안정화)** — 1–5단계 완료 ([로드맵](docs/design/06-roadmap.md)). 0단계 결과: [편집기·성능](docs/spikes/phase0-baseline.md), [동기화(CRDT) 비교](docs/spikes/phase0-crdt.md)
+> 상태: **6단계 (출시 준비·안정화)** — 1–5단계 완료, 6단계는 6-1–6-6 완료·6-7(실제 환경 확인) 남음 ([로드맵](docs/design/06-roadmap.md)). 0단계 결과: [편집기·성능](docs/spikes/phase0-baseline.md), [동기화(CRDT) 비교](docs/spikes/phase0-crdt.md)
 
 ## 실행
 
@@ -16,6 +16,9 @@ npm run dev     # 플레이그라운드 http://localhost:5173
 npm test        # 단위 테스트
 npm run bench   # 엔진 벤치마크 (모델 + 레이아웃, DOM 없음)
 npm run typecheck
+npm run fonts && npm run bench:browser  # 1,000쪽 성능 다섯 지표 (헤드리스 Chrome, bench/baseline.json과 비교)
+npm run golden  # 기준 문서 레이아웃이 브라우저에서도 같은지 (헤드리스 Chrome·Edge)
+node scripts/build-packages.mjs  # @quire/* 패키지 빌드 (.build/packs) → examples/의 예제 앱 6개
 ```
 
 ## 문서

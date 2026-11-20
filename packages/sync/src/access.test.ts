@@ -7,7 +7,8 @@ import { LoroDoc } from 'loro-crdt';
 import { commentOnlyUpdate, startServer, type ServerOptions, type SyncServer } from '../../../apps/sync-server/src/server';
 import { memoryStorage } from '../../../apps/sync-server/src/store';
 import { serveSyncWorker, startSyncWorker, type WorkerClient } from './host';
-import { SyncBridge } from './index';
+import { SyncBridge, assetIdOf } from './index';
+import { HttpAssets } from '../../editor/src/assets';
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => {
@@ -158,5 +159,27 @@ describe('access control (14 §6)', () => {
     expect(commentOnlyUpdate(doc, bad)).toBe(false);
     console.log(`댓글 검사 (1만 문단): ${ms.toFixed(1)} ms`);
     expect(ms).toBeLessThan(500);
+  });
+
+  it('assets in a room with access control need a token, and the client sends it (11 §2.2, 14 §6)', async () => {
+    const storage = memoryStorage();
+    const name = room();
+    storage.room(name).putAccess({ 'tok-e': 'edit', 'tok-v': 'view' });
+    const s = await serve({ storage, versionIdleMs: null });
+    const base = `http://localhost:${s.port}/${name}/assets/`;
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+    const id = await assetIdOf(png);
+    // 토큰 없이는 거부
+    expect((await fetch(base + id, { method: 'PUT', body: png, headers: { 'content-type': 'image/png' } })).status).toBe(403);
+    // 편집 토큰으로 올리고 (보기 토큰은 올리지 못함), 보기 토큰으로 받는다
+    const editor = new HttpAssets(base, 'quire-test-e', 'tok-e');
+    expect(await editor.put(new Blob([png], { type: 'image/png' }))).toBe(id);
+    await until(async () => (await fetch(`${base}${id}?token=tok-v`)).status === 200, 5000, 'uploaded');
+    const viewer = new HttpAssets(base, 'quire-test-v', 'tok-v');
+    const got = await viewer.get(id);
+    expect(new Uint8Array(await got!.arrayBuffer())).toEqual(png);
+    expect((await fetch(base + id)).status).toBe(403);
+    // 권한이 걸린 방의 자산은 공유 캐시에 두지 않는다
+    expect((await fetch(`${base}${id}?token=tok-v`)).headers.get('cache-control')).toMatch(/^private/);
   });
 });
