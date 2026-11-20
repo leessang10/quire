@@ -157,3 +157,42 @@ export async function stopBrowser(b) {
     }
   }
 }
+
+/** 아무 개발 서버나 띄운다: node로 실행할 스크립트와 인자 (예: 예제의 vite·next). 주소가 출력되면 준비된 것으로 본다 */
+export async function startDevServer(args, port, timeoutMs = 90000) {
+  const p = spawn(process.execPath, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, BROWSER: 'none' } });
+  const out = { buf: '' };
+  p.stderr.on('data', (d) => (out.buf += d.toString()));
+  await waitFor(p.stdout, new RegExp(`(localhost|127\.0\.0\.1):\x1b?\[?[0-9;]*m?${port}`), timeoutMs, `dev server ${args[0]}`);
+  return p;
+}
+
+/** 페이지 안 요소의 가운데 (CSS 선택자, 또는 text:글 = 그 글로 시작하는 단추·메뉴 항목) */
+export async function centerOf(page, target) {
+  const expr = `(() => {
+    const t = ${JSON.stringify(target)};
+    const el = t.startsWith('text:')
+      ? [...document.querySelectorAll('button,[role=menuitem],[role=menuitemcheckbox],[role=tab],[role=option],[aria-haspopup],a')].find((e) => e.offsetParent !== null && e.textContent.trim().startsWith(t.slice(5)))
+      : document.querySelector(t);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`;
+  return evaluate(page, expr);
+}
+
+/** 실제 마우스로 누른다 (DevTools Input: 포인터 이벤트까지 나간다) */
+export async function click(page, target) {
+  const c = await centerOf(page, target);
+  if (!c) throw new Error(`누를 것을 찾지 못함: ${target}`);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y });
+  await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'left', clickCount: 1 });
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', clickCount: 1 });
+}
+
+/** 마우스를 올린다 */
+export async function hover(page, target) {
+  const c = await centerOf(page, target);
+  if (!c) throw new Error(`올릴 것을 찾지 못함: ${target}`);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y });
+}
