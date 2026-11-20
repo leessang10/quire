@@ -172,12 +172,12 @@ export function spellPlugin(checker: SpellChecker, opts: { lang?: string } = {})
       return at ? menuFor(at, select) : null;
     },
     decorations: () => ({ decorationsIn: decorations }),
-    contextMenu(_c, at) {
+    contextMenu(c, at) {
       const m = menuFor(at, true);
       if (!m) return [];
       const items: MenuItem[] = m.suggestions.slice(0, 5).map((s) => ({ label: s, run: () => void m.apply(s) }));
-      if (!items.length) items.push({ label: '고칠 말 없음', run: () => {}, disabled: true });
-      items.push({ label: '이 문서에서 무시', run: () => m.ignore(), separator: true }, { label: '사전에 더하기', run: () => m.addWord() });
+      if (!items.length) items.push({ label: c.t('spell.noSuggestions'), run: () => {}, disabled: true });
+      items.push({ label: c.t('spell.ignore'), run: () => m.ignore(), separator: true }, { label: c.t('spell.addWord'), run: () => m.addWord() });
       return items;
     },
     commands: {

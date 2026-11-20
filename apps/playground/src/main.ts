@@ -351,6 +351,8 @@ const editor = new Editor({
   // 보기 모드 (14 §4.3): 최종본·원본은 정본 왕복으로 복제한 파생 문서
   cloneDocument: (d) => documentFromQuire(quireFromDocument(d)).document,
   text: SAMPLE,
+  // 화면 언어 (18): ?lang=en 이면 캔버스 표시·접근성 이름을 영어로 (플레이그라운드 자체 UI는 한국어)
+  locale: params.get('lang') ?? 'ko',
   onInputLog,
   onChange: () => {
     showStats();

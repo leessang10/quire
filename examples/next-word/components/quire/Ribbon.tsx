@@ -229,6 +229,10 @@ export function Ribbon({ ui, act, a, editor, panels, file }: { ui: Ui | null; ac
             <Big label="밝게" icon={<Sun />} pressed={ui?.appearance.colorScheme !== 'dark'} onClick={() => act((e) => e.setColorScheme('light'))} />
             <Big label="어둡게" icon={<Moon />} pressed={ui?.appearance.colorScheme === 'dark'} onClick={() => act((e) => e.setColorScheme('dark'))} />
           </Group>
+          <Group label="편집기 언어">
+            <Big label="한국어" icon={<Languages />} pressed={ui?.locale === 'ko'} onClick={() => act((e) => e.setLocale('ko'))} />
+            <Big label="English" icon={<Languages />} pressed={ui?.locale === 'en'} onClick={() => act((e) => e.setLocale('en'))} />
+          </Group>
         </TabsContent>
       </div>
     </Tabs>

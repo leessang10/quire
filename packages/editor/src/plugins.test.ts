@@ -2,6 +2,7 @@
  * 플러그인 API (15 §7): 내장 찾기 플러그인과 예제 플러그인이 PluginContext만으로 돈다 (편집기 내부를 쓰지 않는다).
  * 시험은 문서 하나 위의 가짜 컨텍스트로 돌린다: 트랜잭션은 Document 연산을 받아 기록하고, 장식은 소스를 직접 부른다.
  */
+import { Messages } from './i18n';
 import { describe, expect, it } from 'vitest';
 import { Doc, Document, type Op } from '@quire/model';
 import { findPlugin } from './find-plugin';
@@ -21,6 +22,7 @@ function host(text: string) {
   let readOnly = false;
   const ctxFor = (p: QuirePlugin): PluginContext => ({
     name: p.name,
+    t: new Messages().t,
     document: () => document,
     story: () => null,
     doc: () => document.body,

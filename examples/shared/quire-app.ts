@@ -54,6 +54,8 @@ export interface Ui {
   viewMode: ViewMode;
   /** 화면 테마·색 모드·쪽 보기 (17) */
   appearance: { theme: 'classic' | 'minimal' | 'modern'; colorScheme: 'light' | 'dark' | 'auto'; pageView: 'print' | 'continuous' };
+  /** 편집기 화면 언어 (18): 캔버스 표시·접근성 이름. 앱 UI의 번역은 앱이 한다 */
+  locale: string;
   spell: boolean;
   pages: number;
   threads: number;
@@ -110,6 +112,7 @@ export function readUi(e: Editor): Ui {
     section: { index: sec.index, count: sec.count },
     suggesting: e.suggesting,
     appearance: { ...e.appearance },
+    locale: e.locale,
     viewMode: (e.viewMode === 'preview' ? 'suggestions' : e.viewMode) as ViewMode,
     spell: !!e.spellSession,
     pages: e.stats.pages,

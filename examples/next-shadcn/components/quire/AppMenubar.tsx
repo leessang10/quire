@@ -168,6 +168,14 @@ export function AppMenubar({ ui, act, a, panels }: { ui: Ui | null; act: Act; a:
             <MenubarRadioItem value="original">원본</MenubarRadioItem>
           </MenubarRadioGroup>
         </MenubarGroup>
+        <MenubarSeparator />
+        <MenubarGroup>
+          <MenubarLabel>편집기 언어</MenubarLabel>
+          <MenubarRadioGroup value={ui?.locale ?? 'ko'} onValueChange={(v) => act((e) => e.setLocale(String(v)))}>
+            <MenubarRadioItem value="ko">한국어</MenubarRadioItem>
+            <MenubarRadioItem value="en">English</MenubarRadioItem>
+          </MenubarRadioGroup>
+        </MenubarGroup>
       </Menu>
 
       <Menu label="삽입">

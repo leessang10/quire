@@ -8,6 +8,10 @@ import { CELL_PAD, cellGroups, cpSlice, lineX, rowParts, type PageSetup, type Pa
 import { NOTE_INDENT, PLAIN_DRAW, type DrawStyle, type FieldValues, type Formatter, type TableView } from './formatter';
 import { dateText, layoutHF, pageHF, type PageHF } from './headers';
 import type { FontRef, ImageSource, PaintTarget } from './paint';
+import { Messages, type MessageKey, type MessageParams, type Translate } from './i18n';
+
+/** env.t가 없을 때 (PDF 등): 한국어 */
+let defaultMessages: Messages | null = null;
 
 /** 글꼴 치수 (em 비율): 기준선·밑줄·취소선 */
 export interface FontMetrics {
@@ -59,6 +63,8 @@ export interface PainterEnv {
   readonly images: ImageSource;
   /** 화면 테마의 그리기 색 (17). 없으면 기본 색 (PDF는 늘 기본: 문서 그대로) */
   readonly colors?: PaintColors;
+  /** 캔버스 표시 문구의 번역 (18). 없으면 한국어 */
+  readonly t?: Translate;
 }
 
 export type PaintColors = typeof PAINT_COLORS;
@@ -195,6 +201,12 @@ export class PagePainter {
   private t!: PaintTarget;
 
   constructor(readonly env: PainterEnv) {}
+
+  private msg(key: MessageKey, params?: MessageParams): string {
+    if (this.env.t) return this.env.t(key, params);
+    defaultMessages ??= new Messages();
+    return defaultMessages.t(key, params);
+  }
 
   /** 그리기 색: 화면 테마가 주면 그것, 아니면 기본 */
   private get c(): PaintColors {
@@ -668,11 +680,11 @@ export class PagePainter {
     const kern = !!env.shapedFonts;
     t.fillRect(x, y, w, h, this.c.placeholder);
     if (float) {
-      t.text({ text: alt ?? '이미지', font, kern, maxWidth: w - 12 }, x + 6, y + 18, this.c.placeholderText);
+      t.text({ text: alt ?? this.msg('a11y.image'), font, kern, maxWidth: w - 12 }, x + 6, y + 18, this.c.placeholderText);
       return;
     }
     t.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1, this.c.placeholderBorder, 1);
-    const text = st === 'error' ? `이미지 없음${alt ? `: ${alt}` : ''}` : (alt ?? '불러오는 중…');
+    const text = st === 'error' ? (alt ? this.msg('image.missingAlt', { alt }) : this.msg('image.missing')) : (alt ?? this.msg('image.loading'));
     t.text({ text, font, kern, maxWidth: w - 12 }, x + 6, y + Math.min(h - 6, 18), this.c.placeholderText);
   }
 

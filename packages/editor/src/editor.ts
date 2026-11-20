@@ -66,6 +66,7 @@ import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragme
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 import type { SpellChecker } from './spell';
 import { CanvasTarget } from './paint';
+import { Messages, type MessageKey, type MessageParams, type MessageTable } from './i18n';
 import type { PainterEnv } from './painter';
 import { DEFAULT_METRICS, PagePainter, noteLayout as noteLayoutOf, noteSlots as noteSlotsOf, type FontMetrics, type LinePaint, type NoteSlot, type ObjectPaint, type PaintOverlay, type StoryOverlay } from './painter';
 
@@ -98,6 +99,10 @@ export interface EditorOptions {
   colorScheme?: ColorScheme;
   /** print(기본: 쪽마다 종이와 틈)·continuous(쪽 경계 없이 이어서). 레이아웃은 같다 */
   pageView?: PageView;
+  /** 화면 언어 (18, BCP 47: ko·en·en-GB). 기본 ko. 정확히 없으면 앞부분(en)으로, 빠진 키는 영어 → 한국어 순으로 */
+  locale?: string;
+  /** 언어별 메시지 덮어쓰기·추가 언어 (키 단위, 18 §5): { en: { 'break.page': 'Page break' } } */
+  messages?: Record<string, MessageTable>;
   /** 글꼴을 다 불러와 셰이핑으로 바꿨을 때 (실패하면 error) */
   onFontsReady?: (editor: Editor, error?: unknown) => void;
   /**
@@ -215,7 +220,12 @@ export interface EditorStats {
 }
 
 /** 구역 나눔 표시의 시작 방식 이름 */
-const SECTION_LABELS: Record<SectionStart, string> = { nextPage: '다음 쪽', continuous: '이어서', evenPage: '짝수 쪽', oddPage: '홀수 쪽' };
+const SECTION_LABELS: Record<SectionStart, MessageKey> = {
+  nextPage: 'section.nextPage',
+  continuous: 'section.continuous',
+  evenPage: 'section.evenPage',
+  oddPage: 'section.oddPage',
+};
 
 /** 입력이 멈춘 뒤 캐럿 문단을 검사하기까지 (15 §4.2) */
 
@@ -469,8 +479,13 @@ export class Editor {
   private remotes: RemoteCaret[] = [];
   /** 마지막으로 onSelectionChange로 알린 선택 (같은 객체면 바뀌지 않음) */
   private reportedSel: Selection | null = null;
+  /** 화면 언어의 메시지 (18) */
+  private readonly i18n: Messages;
+  /** 메시지 키 → 지금 화면 언어의 문장 (18 §5). 앱·플러그인이 같은 번역을 쓸 때. 떼어 써도 된다 */
+  readonly t = (key: MessageKey, params?: MessageParams): string => this.i18n.t(key, params);
 
   constructor(private readonly opts: EditorOptions) {
+    this.i18n = new Messages(opts.locale, opts.messages);
     this.fontSize = opts.fontSize ?? 16;
     this.assets = opts.assets ?? new MemoryAssets();
     const family = opts.fontFamily ?? `'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`;
@@ -537,7 +552,7 @@ export class Editor {
     // 접근성 미러 (04 §3) — 0단계 최소 구현: 화면에 보이는 문단만
     const mirror = document.createElement('div');
     mirror.setAttribute('role', 'document');
-    mirror.setAttribute('aria-label', '문서 내용');
+    mirror.setAttribute('aria-label', this.t('a11y.document'));
     Object.assign(mirror.style, {
       position: 'absolute', width: '1px', height: '1px', overflow: 'hidden',
       clipPath: 'inset(50%)', whiteSpace: 'pre-wrap', left: '0', top: '0',
@@ -597,6 +612,7 @@ export class Editor {
     host.appendChild(probe);
     this.themeProbe = probe;
     this.applyThemeAttrs();
+    this.applyLocale();
     this.readTheme();
     const themeObserver = new MutationObserver(() => this.refreshTheme());
     const attrs = ['class', 'style', 'data-theme', 'data-quire-theme', 'data-quire-scheme'];
@@ -621,7 +637,7 @@ export class Editor {
       this.loadFonts(opts.fonts).then(
         () => opts.onFontsReady?.(this),
         (e: unknown) => {
-          this.textEngine = 'canvas (글꼴 불러오기 실패)';
+          this.textEngine = 'canvas (font loading failed)';
           opts.onFontsReady?.(this, e);
         },
       );
@@ -633,7 +649,7 @@ export class Editor {
     const shaping = await import('@quire/shaping');
     const fetchBytes = async (url: string) => {
       const r = await fetch(url);
-      if (!r.ok) throw new Error(`글꼴을 불러오지 못함: ${url} (${r.status})`);
+      if (!r.ok) throw new Error(`Failed to load font: ${url} (${r.status})`);
       return new Uint8Array(await r.arrayBuffer());
     };
     // 글꼴 자리: 파일 하나는 바로 불러온 자리, 조각 목록은 조각마다 아직 안 불러온 자리
@@ -641,7 +657,7 @@ export class Editor {
     const ready: Array<{ i: number; data: Uint8Array }> = [];
     const readManifest = async (url: string) => {
       const r = await fetch(url);
-      if (!r.ok) throw new Error(`글꼴 목록을 불러오지 못함: ${url} (${r.status})`);
+      if (!r.ok) throw new Error(`Failed to load font manifest: ${url} (${r.status})`);
       const m = (await r.json()) as import('@quire/shaping').FontManifest;
       return shaping.slotsFromManifest(m, new URL(url, location.href));
     };
@@ -670,7 +686,7 @@ export class Editor {
     const describe = () => {
       const lazy = slots.filter((s) => s.url);
       const done = lazy.filter((s) => s.font).length;
-      this.textEngine = `HarfBuzz (${sources.map((s) => s.name).join(', ')}${lazy.length ? ` · 조각 ${done}/${lazy.length}, ${(loadedBytes / 1e6).toFixed(2)} MB` : ''})`;
+      this.textEngine = `HarfBuzz (${sources.map((s) => s.name).join(', ')}${lazy.length ? ` · chunks ${done}/${lazy.length}, ${(loadedBytes / 1e6).toFixed(2)} MB` : ''})`;
     };
     /** 조각 i(face 1이면 그 굵은 얼굴)를 받아 셰이퍼와 캔버스에 등록 */
     const loadChunk = async (key: number) => {
@@ -831,6 +847,29 @@ export class Editor {
     this.paintBackground();
     this.render();
     this.opts.onChange?.(this);
+  }
+
+  // ── 화면 언어 (18) ───────────────────────────────────
+
+  /** 지금 화면 언어 (BCP 47) */
+  get locale(): string {
+    return this.i18n.locale;
+  }
+
+  /** 화면 언어를 바꾼다: 캔버스 표시·접근성 이름을 다시 그린다. 문서·레이아웃은 그대로 (18 §2) */
+  setLocale(locale: string): void {
+    if (!this.i18n.setLocale(locale)) return;
+    this.applyLocale();
+    delete this.mirror.dataset.key;
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 호스트의 lang (스크린 리더 발음, CSS :lang()), 입력 층·미러의 접근성 이름 */
+  private applyLocale(): void {
+    this.opts.host.lang = this.i18n.locale;
+    this.input.setLabel(this.t('a11y.input'));
+    this.mirror.setAttribute('aria-label', this.t('a11y.document'));
   }
 
   /** 지금 테마·색 모드(auto면 auto)·쪽 보기 */
@@ -1199,6 +1238,9 @@ export class Editor {
       get document() {
         return self.document;
       },
+      get t() {
+        return self.t;
+      },
       get colors() {
         const c = self.colors;
         return { text: c.text, columnRule: c.mark, tableBorder: c.tableBorder, field: c.field, placeholder: c.placeholder, placeholderBorder: c.mark, placeholderText: c.placeholderText };
@@ -1374,7 +1416,9 @@ export class Editor {
     if (!editing) return null;
     const { ctx } = this;
     const y = (part === 'header' ? info.bodyTop : info.bodyBottom) - top;
-    const label = `${part === 'header' ? '머리말' : '꼬리말'}${info.kind === 'first' ? ' (첫 쪽)' : info.kind === 'even' ? ' (짝수 쪽)' : ''}${this.headerFooterInfo()?.linked ? ' · 이전과 연결' : ''}`;
+    const kind = info.kind === 'first' ? 'First' : info.kind === 'even' ? 'Even' : '';
+    const name = this.t(`hf.${part}${kind}` as MessageKey);
+    const label = this.headerFooterInfo()?.linked ? this.t('hf.linked', { label: name }) : name;
     ctx.save();
     ctx.strokeStyle = this.colors.gripActive;
     ctx.setLineDash([4, 3]);
@@ -1710,27 +1754,25 @@ export class Editor {
   /** 제안 목록 (14 §4.4): 범위가 있는 것은 y 순, 요약 포함 */
   suggestionViews(): SuggestionView[] {
     const out: SuggestionView[] = [];
-    const LABEL: Record<string, string> = {
-      bold: '굵게', italic: '기울임', underline: '밑줄', strike: '취소선', size: '크기', color: '색', highlight: '형광펜', font: '글꼴',
-      sup: '위 첨자', sub: '아래 첨자', link: '링크', align: '정렬', style: '스타일', list: '목록', indent: '들여쓰기', spacing: '줄 간격',
-    };
+    const t = this.t;
+    const attrName = (k: string) => (this.i18n.has(`attr.${k}`) ? t(`attr.${k}` as MessageKey) : k);
     for (const a of this.suggestions()) {
       if (a.orphan || a.to <= a.from || a.data.kind === 'moveFrom') continue;
       const text = Array.from(this.document.docOf(a.story).text()).slice(a.from, a.to).join('').replace(/\n/g, '¶').replace(/\uFFFC/g, '▣');
       const short = text.length > 24 ? `${text.slice(0, 24)}…` : text;
-      const keys = Object.keys((a.data.before as Record<string, unknown> | undefined) ?? {}).map((k) => LABEL[k] ?? k).join(', ');
+      const keys = Object.keys((a.data.before as Record<string, unknown> | undefined) ?? {}).map(attrName).join(t('list.separator'));
       const summary =
         a.data.kind === 'insert'
-          ? `‘${short}’ 넣음`
+          ? t('suggestion.insert', { text: short })
           : a.data.kind === 'delete'
-            ? `‘${short}’ 지움`
+            ? t('suggestion.delete', { text: short })
             : a.data.kind === 'format'
-              ? `서식: ${keys} (‘${short}’)`
+              ? t('suggestion.format', { attrs: keys, text: short })
               : a.data.kind === 'move'
-                ? `문단 옮김 (‘${short}’)`
+                ? t('suggestion.move', { text: short })
                 : a.data.kind === 'table'
-                  ? `표: ${a.data.axis === 'row' ? '행' : '열'} ${a.data.op === 'insert' ? '넣음' : '지움'}`
-                  : `문단: ${keys}`;
+                  ? t(a.data.axis === 'row' ? (a.data.op === 'insert' ? 'suggestion.rowInsert' : 'suggestion.rowDelete') : a.data.op === 'insert' ? 'suggestion.columnInsert' : 'suggestion.columnDelete')
+                  : t('suggestion.paragraph', { attrs: keys });
       out.push({ ...a, y: this.storyY(a.story ?? null, a.from), summary });
     }
     out.sort((x, y) => (x.y ?? Infinity) - (y.y ?? Infinity) || x.from - y.from);
@@ -1858,7 +1900,7 @@ export class Editor {
   }
 
   private get author(): CommentAuthor {
-    return this.opts.user ?? { id: 'local', name: '나', color: '#2563eb' };
+    return this.opts.user ?? { id: 'local', name: this.t('author.me'), color: '#2563eb' };
   }
 
   /** 선택 범위에 댓글 스레드를 만든다 (주석 + 첫 메시지, 실행 취소 한 단계). 범위가 없거나 글이 비면 null */
@@ -2019,11 +2061,11 @@ export class Editor {
     const b = this.body;
     if (b.paraAttrs(i).section !== undefined) {
       const start = fullSection(b.sectionDef(b.sectionOf(i + 1).id)).start;
-      return `구역 나눔 (${SECTION_LABELS[start]})`;
+      return this.t('break.section', { start: this.t(SECTION_LABELS[start]) });
     }
     const next = this.bodyLayout.paras[i + 1];
-    if (next?.layout.box?.keep?.breakBefore) return '쪽 나눔';
-    if (next?.layout.box?.keep?.column) return '단 나눔';
+    if (next?.layout.box?.keep?.breakBefore) return this.t('break.page');
+    if (next?.layout.box?.keep?.column) return this.t('break.column');
     return null;
   }
 
@@ -2848,7 +2890,7 @@ export class Editor {
     ctx.fillStyle = this.colors.placeholderText;
     ctx.font = this.font;
     ctx.textAlign = 'center';
-    ctx.fillText(`쪽 조립 중… ${pct}%`, Math.min(px + setup.width / 2, w / 2), Math.max(from, 0) + (h - from) / 2);
+    ctx.fillText(this.t('layout.progress', { percent: pct }), Math.min(px + setup.width / 2, w / 2), Math.max(from, 0) + (h - from) / 2);
     ctx.textAlign = 'start';
   }
 
@@ -2986,7 +3028,7 @@ export class Editor {
       if (o) {
         const img = document.createElement('span');
         img.setAttribute('role', 'img');
-        img.setAttribute('aria-label', o.alt || '이미지');
+        img.setAttribute('aria-label', o.alt || this.t('a11y.image'));
         p.append(img);
         k++;
         continue;
@@ -4618,7 +4660,7 @@ export class Editor {
   /** 플러그인이 더한 내보내기 형식 ('플러그인.형식' → 정보) */
   exporters(): Array<{ id: string; label: string; extension: string; mime: string }> {
     const out: Array<{ id: string; label: string; extension: string; mime: string }> = [];
-    for (const p of this.plugins) for (const [k, ex] of Object.entries(p.plugin.exporters ?? {})) out.push({ id: `${p.plugin.name}.${k}`, label: ex.label, extension: ex.extension, mime: ex.mime });
+    for (const p of this.plugins) for (const [k, ex] of Object.entries(p.plugin.exporters ?? {})) out.push({ id: `${p.plugin.name}.${k}`, label: typeof ex.label === 'function' ? ex.label(this.t) : ex.label, extension: ex.extension, mime: ex.mime });
     return out;
   }
 
@@ -4660,6 +4702,7 @@ export class Editor {
     };
     return {
       name: plugin.name,
+      t: (key, params) => self.t(key, params),
       document: () => self.document,
       story: () => self.storyId,
       doc: () => self.doc,

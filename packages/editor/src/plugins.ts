@@ -5,6 +5,7 @@
  * 찾기(find-plugin)와 맞춤법(spell-plugin)이 이 API만으로 다시 짠 내장 플러그인이다.
  */
 import type { Doc, Document, Op } from '@quire/model';
+import type { Translate } from './i18n';
 
 /** 스토리 안의 자리 (story null = 본문) */
 export interface StoryPos {
@@ -63,7 +64,8 @@ export interface MenuItem {
 
 /** 내보내기 형식 (15 §6): 지금 문서 → 파일 */
 export interface Exporter {
-  label: string;
+  /** 메뉴 이름. 함수면 지금 화면 언어로 (18) */
+  label: string | ((t: Translate) => string);
   /** 파일 확장자 (점 없이) */
   extension: string;
   mime: string;
@@ -111,6 +113,8 @@ export interface PluginContext {
   /** 이 플러그인의 문서 데이터 (정본 x.<name>, 07 §4). 없으면 undefined */
   getData<T = unknown>(): T | undefined;
   setData(value: unknown): void;
+  /** 편집기의 화면 언어로 번역 (18). 메뉴 이름 등 */
+  t: Translate;
 }
 
 export interface QuirePlugin {
