@@ -52,6 +52,8 @@ export interface Ui {
   section: { index: number; count: number };
   suggesting: boolean;
   viewMode: ViewMode;
+  /** 화면 테마·색 모드·쪽 보기 (17) */
+  appearance: { theme: 'classic' | 'minimal' | 'modern'; colorScheme: 'light' | 'dark' | 'auto'; pageView: 'print' | 'continuous' };
   spell: boolean;
   pages: number;
   threads: number;
@@ -107,6 +109,7 @@ export function readUi(e: Editor): Ui {
     note: note ? { number: note.number } : null,
     section: { index: sec.index, count: sec.count },
     suggesting: e.suggesting,
+    appearance: { ...e.appearance },
     viewMode: (e.viewMode === 'preview' ? 'suggestions' : e.viewMode) as ViewMode,
     spell: !!e.spellSession,
     pages: e.stats.pages,

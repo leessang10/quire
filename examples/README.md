@@ -4,6 +4,15 @@
 
 - **기본 앱 6개**: 환경마다 붙이는 법. 프레임워크 다섯 개에 CSS 방식을 하나씩 짝지어 두 축(에디터 수명주기·전역 스타일 충돌)을 덮는다 ([16 §8](../docs/design/16-release.md)).
 - **전체 기능 앱 2개**: Word·Google Docs식 화면으로 편집기의 기능을 모두 보인다. 같은 기능을 두 가지 UI로.
+- **스타일 예제 3개** (Next.js + Tailwind + shadcn/ui): 같은 편집기를 **Google Docs식**([next-shadcn](next-shadcn))·**Word식**([next-word](next-word))·**Notion식**([next-notion](next-notion))으로 꾸민다. 편집기는 화면 틀을 정하지 않고 테마(CSS 변수)·쪽 보기·API만 준다 ([17 테마](../docs/design/17-themes.md)).
+
+<table>
+<tr>
+<td width="33%"><a href="next-shadcn"><img src="next-shadcn/screenshots/overview.webp" alt="Google Docs식"></a><br><b>Google Docs식</b> · 메뉴 막대 + 한 줄 도구 막대</td>
+<td width="33%"><a href="next-word"><img src="next-word/screenshots/overview.webp" alt="Word식"></a><br><b>Word식</b> · 리본, 인쇄 모양</td>
+<td width="33%"><a href="next-notion"><img src="next-notion/screenshots/overview.webp" alt="Notion식"></a><br><b>Notion식</b> · 연속 보기, <code>/</code> 메뉴, 떠 있는 서식 막대</td>
+</tr>
+</table>
 
 <table>
 <tr>
@@ -32,6 +41,8 @@
 |---|---|---|---|
 | [react-full](react-full) | React 19 + Vite + Tailwind 4 | 직접 만든 Tailwind 컴포넌트 (Google Docs식) | 5306 |
 | [next-shadcn](next-shadcn) | Next.js 16 App Router + Tailwind 4 + [shadcn/ui](https://ui.shadcn.com) (Base UI) | shadcn 컴포넌트만 (Menubar, DropdownMenu, Dialog, Select, Toggle, Popover, Tabs, ContextMenu, Tooltip, sonner …) | 5307 |
+| [next-word](next-word) | Next.js 16 + Tailwind 4 + shadcn/ui | Word식: 리본(Tabs + 그룹), 파란 제목 줄, 인쇄 모양 | 5308 |
+| [next-notion](next-notion) | Next.js 16 + Tailwind 4 + shadcn/ui | Notion식: 페이지 목록, 연속 보기, `/` 메뉴, 떠 있는 서식 막대, 어두운 종이 | 5309 |
 
 담은 기능:
 
@@ -75,7 +86,9 @@ npm install
 npm run dev          # http://localhost:5302
 
 cd examples/react-full && npm install && npm run dev     # 전체 기능, http://localhost:5306
-cd examples/next-shadcn && npm install && npm run dev    # 전체 기능 (shadcn), http://localhost:5307
+cd examples/next-shadcn && npm install && npm run dev    # 전체 기능 (shadcn, Google Docs식), http://localhost:5307
+cd examples/next-word && npm install && npm run dev      # Word식, http://localhost:5308
+cd examples/next-notion && npm install && npm run dev    # Notion식, http://localhost:5309
 
 # Node 변환기
 cd examples/node && npm install

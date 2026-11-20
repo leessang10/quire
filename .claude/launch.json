@@ -121,6 +121,30 @@
         "5307"
       ],
       "port": 5307
+    },
+    {
+      "name": "example-next-word",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "examples/next-word/node_modules/next/dist/bin/next",
+        "dev",
+        "examples/next-word",
+        "-p",
+        "5308"
+      ],
+      "port": 5308
+    },
+    {
+      "name": "example-next-notion",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "examples/next-notion/node_modules/next/dist/bin/next",
+        "dev",
+        "examples/next-notion",
+        "-p",
+        "5309"
+      ],
+      "port": 5309
     }
   ]
 }

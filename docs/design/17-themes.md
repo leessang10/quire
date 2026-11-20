@@ -235,3 +235,6 @@ editor.refreshTheme(); // 앱이 스타일시트를 바꾼 뒤
 - **연속 보기**: 책상도 종이 색으로 칠하고 쪽 그림자·테두리를 그리지 않는다. 쪽 틈은 레이아웃 그대로 남는다 (빈 종이로 보인다). 쪽 경계선은 그리지 않는다.
 - 주석 범위 색(댓글·고른 주석)은 변수로 열지 않았다 (나중).
 - 나중: 클래스 이름 고정과 `tokens.scss`(T-3), 집중 모드·떠 있는 서식 막대(T-4 일부: 예제 앱이 앱 쪽에서 만든다), 어두운 종이 예제(T-5), 고대비 모드, 협업 팔레트 변수.
+- **스타일 예제** (Next.js + Tailwind + shadcn/ui): 같은 편집기를 Google Docs식(`examples/next-shadcn`)·Word식(`examples/next-word`: 리본, 클래식·인쇄 모양)·Notion식(`examples/next-notion`: 미니멀·연속 보기, `/` 메뉴, 떠 있는 서식 막대)으로 꾸민다. Notion식의 어두운 화면은 앱 CSS가 `.dark .quire { --quire-page; --quire-text … }`를 덮어써 문서 면까지 어둡게 한다 (T-5 "어두운 종이"를 예제로).
+- 앱 명령용 공개 API를 더했다: `replaceRange(from, to, text)`, `insertText(text)` (Notion식 `/` 메뉴가 "/찾을 말"을 지울 때).
+
