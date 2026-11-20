@@ -23,7 +23,7 @@ async function until(cond: () => boolean | Promise<boolean>, ms = 8000, what = '
 }
 
 async function serve(opts: ServerOptions): Promise<SyncServer> {
-  const s = await startServer(0, (l) => (globalThis as any).__log?.push(`${Date.now() % 100000} ${l}`), opts);
+  const s = await startServer(0, () => {}, opts);
   let closed = false;
   const close = s.close.bind(s);
   s.close = () => {
@@ -74,7 +74,6 @@ describe('access control (14 §6)', () => {
   });
 
   it('view and comment tokens: the server rejects disallowed changes and the client falls back to the server state', async () => {
-    (globalThis as any).__log = [];
     const storage = memoryStorage();
     const name = room();
     storage.room(name).putAccess({ 'tok-e': 'edit', 'tok-c': 'comment', 'tok-v': 'view' });
@@ -86,10 +85,13 @@ describe('access control (14 §6)', () => {
     const v = await peer(url('tok-v'), 13);
     await until(() => c.client.doc.text() === '하나 둘 셋\n' && v.client.doc.text() === '하나 둘 셋\n', 5000, 'joined');
     await until(() => c.roles.includes('comment') && v.roles.includes('view'), 5000, 'roles');
+    // 붙는 것만으로는 거부되지 않는다 (변경 없는 SYNC 뒤 빈 업데이트를 보내지 않는다)
+    await new Promise((r) => setTimeout(r, 100));
+    expect(s.stats.denied).toBe(0);
+    expect(v.resets).toEqual([]);
     // view의 본문 편집: 거부되고 서버 상태로 돌아간다
     v.client.doc.insertText(0, 'V');
     await until(() => v.resets.length > 0, 5000, 'view reset');
-    if (v.resets.length !== 1) console.log('DEBUG', JSON.stringify({ resets: v.resets, roles: v.roles, denied: s.stats.denied, log: (globalThis as any).__log }));
     expect(v.resets).toEqual([true]);
     await until(() => v.client.doc.text() === '하나 둘 셋\n', 5000, 'view back to server');
     // comment의 댓글: 받아들인다
