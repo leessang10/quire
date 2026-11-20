@@ -68,7 +68,8 @@ const snapshotText = async (port: number, name: string, id: string) => {
 describe('version history (14 §5)', () => {
   it('records automatic versions after an edit pause and when the room empties, with authors from presence', async () => {
     const name = room();
-    const s = await serve({ storage: memoryStorage(), versionIdleMs: 80 });
+    // 쉼 간격은 넉넉히: 부하가 걸리면 처음 글과 덧붙인 글 사이가 벌어져 첫 버전이 앞 글만 담을 수 있다
+    const s = await serve({ storage: memoryStorage(), versionIdleMs: 300 });
     const url = `ws://localhost:${s.port}/${name}`;
     const a = await peer(url, 41, '가영', '#2563eb', '하나');
     const b = await peer(url, 42, '나래', '#c2410c');

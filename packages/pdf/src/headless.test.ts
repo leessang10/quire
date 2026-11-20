@@ -28,4 +28,19 @@ describe('pdfFromQuire (headless)', () => {
     expect(r.fonts).toBe(3);
     expect(new TextDecoder('latin1').decode(r.bytes.subarray(0, 8))).toBe('%PDF-1.7');
   }, 60_000);
+
+  it('writes link annotations only for safe links (16 §6)', async () => {
+    const q = quireFromText('링크 문단');
+    (q.stories.body[0] as { c: Array<{ t: string; m?: Record<string, unknown> }> }).c = [
+      { t: '안전한 링크 ', m: { link: 'https://ok.example.com/' } },
+      { t: '위험한 링크', m: { link: 'javascript:alert(1)' } },
+    ];
+    const r = await pdfFromQuire(q, {
+      fonts: [{ name: 'Pretendard', bytes: bytes('fonts/pretendard/Pretendard-Regular.otf') }, { name: 'Noto Sans KR', bytes: bytes('fonts/noto-sans-kr/NotoSansKR-Regular.otf') }],
+      subsetter: await loadSubsetter(readFileSync(root('node_modules/harfbuzzjs/dist/harfbuzz-subset.wasm'))),
+    });
+    const text = new TextDecoder('latin1').decode(r.bytes);
+    expect(text).toContain('https://ok.example.com/');
+    expect(text).not.toMatch(/javascript/i);
+  }, 60_000);
 });

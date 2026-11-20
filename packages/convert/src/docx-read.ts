@@ -6,7 +6,7 @@
  */
 import { PAPER_SIZES, defaultListDef, noteStoryId, type CommentThread, type FloatAttrs, type ListDef, type ListLevel, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quire/model';
 import { readZip, type QuireDoc, type QuireParagraph, type QuireRun, type QuireTable } from '@quire/sync';
-import { Report, addAsset, addUsedStyles, emptyQuire, mimeOf, type ImportResult, type ImportedAsset } from './common';
+import { Report, finishImport, addAsset, addUsedStyles, emptyQuire, mimeOf, type ImportResult, type ImportedAsset } from './common';
 import { NUM_FMT, STYLE_IDS } from './docx-write';
 import { descendants, kid, kids, parseXml, path, textOf, type XNode } from './xml';
 
@@ -139,6 +139,9 @@ const clean = <T extends Record<string, unknown>>(o: T): T => {
 };
 
 /** DOCX → 정본 */
+/** 표 열 수·칸 합치기 상한 (Word는 63열) */
+const MAX_TABLE_COLS = 1000;
+
 export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
   const report = new Report();
   const assets = new Map<string, ImportedAsset>();
@@ -334,10 +337,11 @@ export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
       if (h) row.h = h;
       if (on(kid(trPr, 'w:tblHeader'))) row.header = true;
       if (on(kid(trPr, 'w:cantSplit'))) row.cantSplit = true;
-      let x = Number(kid(trPr, 'w:gridBefore')?.attrs['w:val'] ?? 0);
+      let x = Math.min(MAX_TABLE_COLS, Math.max(0, Math.floor(Number(kid(trPr, 'w:gridBefore')?.attrs['w:val'] ?? 0)) || 0));
       for (const tc of kids(tr).flatMap((c) => (c.name === 'w:tc' ? [c] : c.name === 'w:sdt' ? kids(kid(c, 'w:sdtContent'), 'w:tc') : []))) {
         const tcPr = kid(tc, 'w:tcPr');
-        const span = Math.max(1, Number(kid(tcPr, 'w:gridSpan')?.attrs['w:val'] ?? 1));
+        // 망가진 값이 칸을 수억 개 만들지 않게 (16 §6): 열 수 상한 안으로
+        const span = Math.min(MAX_TABLE_COLS, Math.max(1, Math.floor(Number(kid(tcPr, 'w:gridSpan')?.attrs['w:val'] ?? 1)) || 1));
         const vm = kid(tcPr, 'w:vMerge');
         if (vm && vm.attrs['w:val'] !== 'restart') {
           const above = owners.get(`${y - 1},${x}`);
@@ -773,6 +777,7 @@ export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
   if (Object.keys(bodyMarks).length || Object.keys(bodyPara).length)
     q.styles.body = { name: 'body', label: '본문', ...(Object.keys(bodyPara).length ? { para: bodyPara } : {}), ...(Object.keys(bodyMarks).length ? { marks: bodyMarks } : {}) };
   addUsedStyles(q);
+  finishImport(q, report);
   return { doc: q, assets, report };
 }
 

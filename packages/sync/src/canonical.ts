@@ -273,8 +273,25 @@ export function quireFromDocument(document: Document): QuireDoc {
   return q;
 }
 
+/**
+ * 망가진 정본(다른 도구·손으로 고친 document.json)에서 난 내부 오류(TypeError 등)를 설명 있는 오류로 (16 §6).
+ * 이미 "document.json: …"처럼 설명한 오류는 그대로
+ */
+function described<T>(f: () => T): T {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof TypeError || e instanceof RangeError) throw new Error(`document.json: malformed document (${e.message})`, { cause: e });
+    throw e;
+  }
+}
+
 /** QuireDoc → 여러 스토리 문서 (스토리는 가벼운 모양) */
 export function documentFromQuire(q: QuireDoc, peer?: string): { document: Document; notes: string[] } {
+  return described(() => documentFromQuireUnchecked(q, peer));
+}
+
+function documentFromQuireUnchecked(q: QuireDoc, peer?: string): { document: Document; notes: string[] } {
   // 표 블록 → 표 원소 문단 + 새 표 레코드 (새 ID). 셀 스토리 이름 → (표, 행, 열) 스토리 ID
   const tables: TableRecord[] = [];
   const rename = new Map<string, string>();
@@ -383,6 +400,10 @@ export function quireFromDoc(doc: Doc): QuireDoc {
  * QuireDoc → 서식·문단 속성이 있는 문서. 모르는 서식 키·문단 속성은 버리고 notes에 적는다 (07 §4의 "모르는 속성 보존"은 아직 없음).
  */
 export function docFromQuire(q: QuireDoc, peer?: string): { doc: Doc; notes: string[] } {
+  return described(() => docFromQuireUnchecked(q, peer));
+}
+
+function docFromQuireUnchecked(q: QuireDoc, peer?: string): { doc: Doc; notes: string[] } {
   textFromQuire(q); // 구조 확인 (필드 등 아직 담을 수 없는 내용은 오류)
   // 표 블록은 본문 하나만 여는 이 함수에서는 빈 문단 (표는 documentFromQuire가 연다)
   const blocks = q.stories.body.map((b): QuireParagraph => ('table' in b ? { p: {}, c: [] } : b));

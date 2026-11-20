@@ -100,13 +100,22 @@ export interface OpenedQuire {
   notes: string[];
 }
 
+/** JSON 항목 읽기: 문법 오류는 어느 항목인지 밝힌다 (16 §6) */
+function parseJson(bytes: Uint8Array, name: string): unknown {
+  try {
+    return JSON.parse(decoder.decode(bytes));
+  } catch (e) {
+    throw new Error(`.quire: ${name} is not valid JSON (${e instanceof Error ? e.message : String(e)})`);
+  }
+}
+
 export async function openQuire(bytes: Uint8Array): Promise<OpenedQuire> {
   const entries = await readZip(bytes);
   const get = (name: string) => entries.find((e) => e.name === name)?.data;
   if (entries[0]?.name !== 'mimetype' || entries[0].method !== 0 || decoder.decode(entries[0].data) !== MIMETYPE) throw new Error('.quire: mimetype must be the first entry');
   const m = get('manifest.json');
   if (!m) throw new Error('.quire: manifest.json is missing');
-  const manifest = JSON.parse(decoder.decode(m)) as Manifest;
+  const manifest = parseJson(m, 'manifest.json') as Manifest;
   if (manifest.format !== 'quire' || typeof manifest.formatVersion !== 'number') throw new Error('.quire: bad manifest');
   const notes: string[] = [];
   const j = get('document.json');
@@ -115,7 +124,7 @@ export async function openQuire(bytes: Uint8Array): Promise<OpenedQuire> {
     const data = get(name);
     if (data && info.sha256 && (await sha256Hex(data)) !== info.sha256) notes.push(`${name}: manifest hash differs (edited outside Quire?)`);
   }
-  const { doc, readOnly: newerSchema } = migrateQuire(JSON.parse(decoder.decode(j)));
+  const { doc, readOnly: newerSchema } = migrateQuire(parseJson(j, 'document.json'));
   const readOnly = newerSchema || manifest.formatVersion > FORMAT_VERSION;
   const text = textFromQuire(doc);
   let crdt: Uint8Array | null = get('history/crdt.bin') ?? null;
