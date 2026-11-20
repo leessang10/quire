@@ -1,6 +1,6 @@
 # 08. 앱 통합 (React, Next.js, 서버)
 
-- 상태: 초안
+- 상태: 구현됨 (5-8 SDK·React, 6-6 패키지·예제 앱). 아래는 실제 API에 맞춰 고친 것 (6단계 문서 정리)
 
 ## 1. 요구사항
 
@@ -14,32 +14,45 @@
 
 | 패키지 | 의존 | 환경 |
 |---|---|---|
-| `@quire/model`, `text`, `layout`, `sync`, `commands` | 없음 | 브라우저, Worker, Node |
-| `@quire/editor` | DOM | 브라우저. 순수 JS 클래스 |
+| `@quire/model`, `@quire/layout`, `@quire/shaping` | 없음 (셰이핑은 HarfBuzz WASM) | 브라우저, Worker, Node |
+| `@quire/sync` | Loro (WASM) | 브라우저, Worker, Node. 정본·`.quire`·동기화 |
+| `@quire/editor` | DOM | 브라우저. 순수 JS 클래스 `Editor` |
+| `@quire/sdk` | `@quire/editor` | 브라우저. 프레임워크 무관 `createEditor` (§3) |
 | `@quire/react` | React 18+ | 브라우저 (클라이언트 컴포넌트) |
-| `@quire/server` (예정) | Node | PDF·썸네일·검증 |
+| `@quire/convert` | `@quire/sync` | 브라우저, Node. HTML·Markdown·DOCX·HWPX |
+| `@quire/pdf` | `@quire/editor`·`@quire/sync` | 브라우저, Node. `pdfFromQuire`는 DOM 없이 |
+| `@quire/fonts` | 없음 | 자산 패키지: 엔진 글꼴 조각과 `manifest.json` |
 
-## 3. 에디터 공개 API (프레임워크 무관)
+`@quire/server`(예정이었던 것)는 두지 않았다. 서버에서 할 일은 `@quire/convert`·`@quire/pdf`를 Node에서 그대로 쓴다 (예제 `examples/node`). 빌드는 `scripts/build-packages.mjs`(ESM + 타입, 16 §10.1).
+
+## 3. 에디터 공개 API (프레임워크 무관, `@quire/sdk`)
 
 ```ts
 const editor = await createEditor({
   host: HTMLElement,
-  doc: QuireDoc,
-  plugins: Plugin[],
-  assets: { wasmUrl?: string; workerUrl?: string; fontBaseUrl: string },
+  doc?: QuireDoc,                 // 없으면 빈 문서
+  plugins?: QuirePlugin[],
+  fonts?: FontSource[],           // 엔진 글꼴: { name, manifest, bold? } (조각) 또는 { name, url | data }
+  assets?: AssetStore,            // 이미지 자산 저장소 (MemoryAssets, HttpAssets(base, cache, token))
+  // 그 밖의 Editor 옵션 (input, user, spellChecker, …)
 });
 
-editor.run('toggleBold');                       // 명령 실행
-editor.getState();                              // 불변 스냅샷
+editor.run('toggleBold');                       // 명령 실행 (내장 또는 '플러그인.명령')
+editor.getState();                              // 불변 스냅샷 (EditorState)
 editor.subscribe(listener): () => void;         // 상태 변경 알림
-editor.caretRect(); editor.rangeRects(range);   // UI 배치용 화면 좌표
+editor.caretRect(); editor.rangeRects(from, to);// UI 배치용 화면 좌표
 editor.toJSON(): QuireDoc;
-editor.destroy();                               // Worker, WASM, 이벤트 정리
+editor.load(doc, assets?);                      // 문서 바꾸기 (가져오기 결과)
+editor.use(plugin): () => void;
+editor.destroy();                               // 이벤트·자원 정리
+editor.editor;                                  // 탈출구: Editor 자체 (넓은 API)
 ```
+
+- 처음 설계의 `assets: { wasmUrl, workerUrl, fontBaseUrl }`는 두지 않았다 (6-5 §10.6). 글꼴은 `fonts`로, HarfBuzz 셰이핑 WASM은 패키지가 스스로 찾고, Loro는 base64 진입점이라 번들러 설정이 필요 없다. 앱이 둘 것은 글꼴 조각(`/quire/fonts/`)과 PDF 부분화용 `harfbuzz-subset.wasm`뿐이다 (`examples/README.md`).
 
 원칙:
 - **문서 상태는 에디터가 소유한다.** 앱은 문서를 state로 들고 있지 않는다. 저장이 필요하면 `subscribe` + 디바운스로 `toJSON()`을 받는다.
-- `destroy()` 후 같은 host에 다시 `createEditor`를 해도 문제가 없어야 한다 (React StrictMode의 이중 마운트).
+- `destroy()` 후 같은 host에 다시 `createEditor`를 해도 문제가 없어야 한다 (React StrictMode의 이중 마운트). 같은 플러그인 객체를 두 편집기가 써도 상태가 섞이지 않는다 (6-6).
 
 ## 4. React 래퍼
 
@@ -48,12 +61,12 @@ editor.destroy();                               // Worker, WASM, 이벤트 정�
 import { QuireEditor, useQuire, useEditorState } from '@quire/react';
 
 export function ReportEditor({ doc }: { doc: QuireDoc }) {
-  const editor = useQuire({ doc, plugins: [tables(), comments()] });
-  const isBold = useEditorState(editor, (s) => s.marksAtCaret.bold);
+  const editor = useQuire({ doc, fonts, plugins: [wordCountPlugin()] });
+  const isBold = useEditorState(editor, (s) => !!s.marksAtCaret.bold);
 
   return (
     <>
-      <button onClick={() => editor?.run('toggleBold')} aria-pressed={isBold}>굵게</button>
+      <button onClick={() => editor.run('toggleBold')} aria-pressed={isBold}>굵게</button>
       <QuireEditor editor={editor} className="h-full" />
     </>
   );
@@ -63,31 +76,38 @@ export function ReportEditor({ doc }: { doc: QuireDoc }) {
 - `useEditorState(editor, selector)`는 `useSyncExternalStore` 기반이다. 선택한 값이 바뀔 때만 리렌더한다 (R2).
 - 떠 있는 UI(슬래시 메뉴, 링크 편집 팝오버, 댓글 버튼)는 `editor.caretRect()` 좌표로 React 포털에 띄운다 (R3). 스크롤·줌 시 좌표 변경 이벤트를 구독한다.
 - `useQuire`의 옵션 객체가 매 렌더마다 새로 만들어져도 에디터를 다시 만들지 않는다 (최초 1회만 사용, 변경이 필요한 값은 명령으로).
+- `useQuire`는 에디터가 준비되기 전에도 컨트롤러를 돌려준다 (`run`은 준비 전이면 false, `editor.handle`은 null). 컴포넌트 밖에서 쓸 때는 `createController`.
+- 예제: `examples/react-vite` (Tailwind), `examples/next` (styled-components).
 
 ## 5. Next.js
 
-| 항목 | 방침 |
+| 항목 | 방침 (6-6 예제 `examples/next`, Next.js 16에서 확인) |
 |---|---|
-| SSR | `@quire/react`의 컴포넌트는 `'use client'`. 서버에서 import만 해도 터지지 않게 모듈 최상위에서 DOM에 접근하지 않는다. 필요하면 `next/dynamic`으로 `ssr: false` |
-| WASM·Worker | 라이브러리는 `new URL('./x.wasm', import.meta.url)` 패턴으로 참조해 번들러가 자산을 복사하게 한다. 번들러가 처리하지 못하는 환경을 위해 `assets.wasmUrl`, `assets.workerUrl`로 직접 지정 가능 |
-| 글꼴 | 레이아웃용 글꼴은 `next/font`가 아니라 에디터가 직접 로드한다 (`assets.fontBaseUrl`, `public/` 또는 CDN) |
-| 번들 크기 | 에디터 페이지에서만 지연 로드. 코어와 WASM은 별도 청크 |
-| 협업 서버 | 실시간 동기화는 오래 유지되는 WebSocket이 필요해 서버리스 함수에 맞지 않는다. 동기화 서버는 별도 프로세스로 둔다 |
+| SSR | `@quire/react`의 컴포넌트는 `'use client'`. 에디터는 브라우저에서만 만든다: `next/dynamic`으로 `ssr: false` |
+| Turbopack | harfbuzzjs(Emscripten)가 Node에서만 부르는 `import("module")`을 브라우저 묶음에서도 찾는다 → `turbopack.resolveAlias: { module: { browser: './empty-module.js' } }`. webpack은 `resolve.fallback.module = false` |
+| WASM | HarfBuzz 셰이핑 WASM은 패키지가 찾고, Loro는 base64 진입점이라 따로 설정할 것이 없다 |
+| 글꼴 | 레이아웃용 글꼴은 `next/font`가 아니라 에디터가 직접 로드한다 (`fonts`의 manifest 주소, `public/quire/fonts/`). PDF 부분화는 `public/quire/harfbuzz-subset.wasm` |
+| styled-components | 서버 렌더링 스타일 레지스트리(`useServerInsertedHTML`)와 `compiler.styledComponents` |
+| 번들 크기 | 에디터 페이지에서만 지연 로드 (dynamic import) |
+| 협업 서버 | 실시간 동기화는 오래 유지되는 WebSocket이 필요해 서버리스 함수에 맞지 않는다. 동기화 서버는 별도 프로세스로 둔다 (`apps/sync-server`) |
+
+다른 프레임워크: Vue(`examples/vue`, 작은 컴포저블), SvelteKit(`examples/svelte`, `onMount`에서 동적 import), 바닐라(`examples/vanilla`). 공식 래퍼는 React만 둔다 (O-18).
 
 ## 6. 서버 실행 (R5)
 
 레이아웃 엔진이 DOM에 의존하지 않으므로(02 R6) Node에서 같은 결과를 낸다.
 
-| 기능 | 위치 예 | 설명 |
+| 기능 | 위치 예 | 상태 |
 |---|---|---|
-| PDF 내보내기 | Route Handler | 편집 화면과 같은 쪽 나눔 |
-| 썸네일 | 저장 후 백그라운드 작업 | 첫 쪽 PNG |
-| 읽기 전용 SSR 보기 | Server Component | 레이아웃 트리를 정적 HTML/SVG로 그려 첫 화면을 빠르게 표시. 편집 모드 진입 시 캔버스 에디터로 교체 |
-| 저장 검증 | Server Action | `document.json` 스키마 검증과 정규화 |
+| PDF 내보내기 | Route Handler, CLI | **구현**: `pdfFromQuire(q, { fonts, subsetter })` (5-4, 6-6). 편집 화면과 같은 쪽 나눔 (6-3 골든) |
+| 형식 변환 | Route Handler, CLI | **구현**: `@quire/convert` (HTML·Markdown·DOCX·HWPX). 예제 `examples/node/convert.mjs` |
+| 저장 검증 | Server Action | **구현**: `migrateQuire`·`documentFromQuire` (망가진 정본은 설명 있는 오류, 6-4) |
+| 썸네일 | 저장 후 백그라운드 작업 | 나중 |
+| 읽기 전용 SSR 보기 | Server Component | 나중 (O-19) |
 
 서버에서 같은 쪽 나눔을 내려면 서버도 같은 글꼴 파일에 접근할 수 있어야 한다.
 
 ## 7. 열린 질문
 
-- O-18. Vue, Svelte 래퍼를 공식 제공할지.
+- ~~O-18. Vue, Svelte 래퍼를 공식 제공할지.~~ 하지 않음 (6-5): 예제의 컴포저블·`onMount` 수십 줄이면 된다.
 - O-19. SSR 읽기 전용 보기를 HTML(검색 엔진 친화)로 할지 SVG(정확한 재현)로 할지.
