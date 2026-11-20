@@ -57,7 +57,11 @@ export interface PainterEnv {
   /** 날짜 필드 값 (없으면 오늘) */
   readonly today?: string;
   readonly images: ImageSource;
+  /** 화면 테마의 그리기 색 (17). 없으면 기본 색 (PDF는 늘 기본: 문서 그대로) */
+  readonly colors?: PaintColors;
 }
+
+export type PaintColors = typeof PAINT_COLORS;
 
 /** 줄 하나의 덧그리기 정보 */
 export interface LinePaint {
@@ -192,6 +196,11 @@ export class PagePainter {
 
   constructor(readonly env: PainterEnv) {}
 
+  /** 그리기 색: 화면 테마가 주면 그것, 아니면 기본 */
+  private get c(): PaintColors {
+    return this.env.colors ?? PAINT_COLORS;
+  }
+
   /**
    * 쪽 하나의 내용 (편집기 덧그리기 없이). 대상 좌표는 쪽 왼쪽 위가 (0, 0)이다.
    * 조판이 끝난 레이아웃을 받는다
@@ -224,7 +233,7 @@ export class PagePainter {
           const b = cols[i]!;
           if (!b.sep || b.frame.column === 0 || a.frame.top !== b.frame.top) continue;
           const x = (a.frame.x + a.frame.width + b.frame.x) / 2;
-          t.fillRect(px + x - 0.5, b.frame.top - top, 1, b.frame.height, PAINT_COLORS.columnRule);
+          t.fillRect(px + x - 0.5, b.frame.top - top, 1, b.frame.height, this.c.columnRule);
         }
       }
 
@@ -354,7 +363,7 @@ export class PagePainter {
             let i = segStart;
             for (const _ of seg) positions.push(xs[i++]! - xs[segStart]!);
           }
-          t.text({ text: seg, font: base, kern, positions }, x0 + xs[segStart]!, baseY, PAINT_COLORS.text);
+          t.text({ text: seg, font: base, kern, positions }, x0 + xs[segStart]!, baseY, this.c.text);
         };
         while (u < text.length) {
           const c = text.charCodeAt(u);
@@ -375,7 +384,7 @@ export class PagePainter {
           let j = i + 1;
           while (j < ln.end && !para.layout.stops[j]) j++;
           const g = cpSlice(para.layout, i, j);
-          if (g !== ' ' && g !== '\t') t.text({ text: g, font: base, kern }, x0 + xs[i]!, baseY, PAINT_COLORS.text);
+          if (g !== ' ' && g !== '\t') t.text({ text: g, font: base, kern }, x0 + xs[i]!, baseY, this.c.text);
           i = j;
         }
       }
@@ -413,7 +422,7 @@ export class PagePainter {
     for (const s0 of slots) {
       if (!s0.first) continue;
       const lineW = s0.cont ? s0.width + NOTE_INDENT : Math.min(160, (s0.width + NOTE_INDENT) / 3);
-      t.fillRect(px + s0.x, s0.y - sep / 2 - top, lineW, 0.75, PAINT_COLORS.text);
+      t.fillRect(px + s0.x, s0.y - sep / 2 - top, lineW, 0.75, this.c.text);
     }
     t.restore();
     for (const s of slots) {
@@ -425,7 +434,7 @@ export class PagePainter {
         const ln = L.paras[0]?.lines[0];
         if (ln) {
           const size = Math.round(env.fontSize * 0.75);
-          t.text({ text: String(s.num), font: { css: `${size}px ${env.family}`, slot: -1, size, bold: false }, kern: !!env.shapedFonts }, px + s.x, ln.baseline - top - env.fontSize * 0.3, PAINT_COLORS.text);
+          t.text({ text: String(s.num), font: { css: `${size}px ${env.family}`, slot: -1, size, bold: false }, kern: !!env.shapedFonts }, px + s.x, ln.baseline - top - env.fontSize * 0.3, this.c.text);
         }
       }
       this.lines(L, doc, px, top, h, null, Infinity);
@@ -472,7 +481,7 @@ export class PagePainter {
       }
       t.restore();
       if (!repeat) this.ov.cell?.(v, info.start, x, y, cx, cy, cw, ch);
-      t.strokeRect(Math.round(cx) + 0.5, Math.round(cy) + 0.5, Math.round(cw), Math.round(ch), PAINT_COLORS.tableBorder, 1);
+      t.strokeRect(Math.round(cx) + 0.5, Math.round(cy) + 0.5, Math.round(cw), Math.round(ch), this.c.tableBorder, 1);
     };
     for (let y = 0; y < v.grid.cells.length; y++) {
       const row = v.grid.cells[y]!;
@@ -526,7 +535,7 @@ export class PagePainter {
         positions = [];
         for (let i = k; i < j; i++) positions.push(px + lineX(pl, ln, i) - x);
       }
-      t.text({ text: cpSlice(pl, k, j), font: this.fontOf(f, d), kern, skew: d.italic ? ITALIC_SKEW : undefined, positions }, x, baseY + d.shift, d.color ?? PAINT_COLORS.text);
+      t.text({ text: cpSlice(pl, k, j), font: this.fontOf(f, d), kern, skew: d.italic ? ITALIC_SKEW : undefined, positions }, x, baseY + d.shift, d.color ?? this.c.text);
       k = j;
     }
   }
@@ -566,7 +575,7 @@ export class PagePainter {
       const x = px + lineX(pl, ln, k);
       const w = px + lineX(pl, ln, j) - x;
       const y = baseY + d.shift;
-      const color = d.color ?? PAINT_COLORS.text;
+      const color = d.color ?? this.c.text;
       if (d.underline) {
         const th = Math.max(1, m.underlineThickness * em);
         this.t.fillRect(x, y - m.underlinePosition * em - th / 2, w, th, color);
@@ -594,7 +603,7 @@ export class PagePainter {
     const { t, env } = this;
     const mk = pl.marker!;
     const d = env.fmt.drawStyle(mk.id, sty, this.doc);
-    const color = d.color ?? PAINT_COLORS.text;
+    const color = d.color ?? this.c.text;
     const cps = Array.from(mk.text);
     let x = left + (pl.box?.left ?? 0) + mk.x;
     let k = 0;
@@ -627,7 +636,7 @@ export class PagePainter {
         // 각주 참조: 번호를 위 첨자로 (12 §6.2)
         const d = env.fmt.drawStyle(pl.fmt?.[k] ?? 0, env.fmt.styleKey(info), this.doc);
         const font = this.fontOf(0, { ...d, run: { ...d.run, scale: d.run.scale * 0.65 } });
-        t.text({ text: String(env.fmt.noteNumber(attrs.id ?? '') || '?'), font, kern }, x, baseY - env.fontSize * d.run.scale * 0.33, d.color ?? PAINT_COLORS.text);
+        t.text({ text: String(env.fmt.noteNumber(attrs.id ?? '') || '?'), font, kern }, x, baseY - env.fontSize * d.run.scale * 0.33, d.color ?? this.c.text);
         continue;
       }
       let { w, h } = box;
@@ -657,14 +666,14 @@ export class PagePainter {
     const size = Math.min(13, env.fontSize);
     const font: FontRef = { css: `${size}px ${env.family}`, slot: -1, size, bold: false };
     const kern = !!env.shapedFonts;
-    t.fillRect(x, y, w, h, PAINT_COLORS.placeholder);
+    t.fillRect(x, y, w, h, this.c.placeholder);
     if (float) {
-      t.text({ text: alt ?? '이미지', font, kern, maxWidth: w - 12 }, x + 6, y + 18, PAINT_COLORS.placeholderText);
+      t.text({ text: alt ?? '이미지', font, kern, maxWidth: w - 12 }, x + 6, y + 18, this.c.placeholderText);
       return;
     }
-    t.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1, PAINT_COLORS.placeholderBorder, 1);
+    t.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1, this.c.placeholderBorder, 1);
     const text = st === 'error' ? `이미지 없음${alt ? `: ${alt}` : ''}` : (alt ?? '불러오는 중…');
-    t.text({ text, font, kern, maxWidth: w - 12 }, x + 6, y + Math.min(h - 6, 18), PAINT_COLORS.placeholderText);
+    t.text({ text, font, kern, maxWidth: w - 12 }, x + 6, y + Math.min(h - 6, 18), this.c.placeholderText);
   }
 
   /** 필드 (12 §5.1): 그 쪽의 값을 글자 서식으로. 덧그리기가 바라면 회색 바탕으로 필드임을 보인다 */
@@ -672,9 +681,9 @@ export class PagePainter {
     const { t, env } = this;
     const d = env.fmt.drawStyle(pl.fmt?.[k] ?? 0, env.fmt.styleKey(info), this.doc);
     const em = env.fontSize * d.run.scale;
-    if (this.ov.fieldShading) t.fillRect(x, baseY - em * 0.85, w, em * 1.1, PAINT_COLORS.field);
+    if (this.ov.fieldShading) t.fillRect(x, baseY - em * 0.85, w, em * 1.1, this.c.field);
     const text = this.fields && kind ? this.fields[kind] : env.fmt.fieldText(kind);
-    t.text({ text, font: this.fontOf(0, d), kern }, x, baseY + d.shift, d.color ?? PAINT_COLORS.text);
+    t.text({ text, font: this.fontOf(0, d), kern }, x, baseY + d.shift, d.color ?? this.c.text);
   }
 
   /** 떠 있는 개체 하나 */

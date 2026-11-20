@@ -17,8 +17,10 @@ export { composeReference, summarizeLayout, type LayoutSummary } from './referen
 export type { PageHF } from './headers';
 export { CanvasTarget, RecordingTarget } from './paint';
 export type { FontRef, ImageSource, PaintCommand, PaintTarget, TextRun } from './paint';
-export { DEFAULT_METRICS, PagePainter, noteLayout, noteSlots } from './painter';
-export type { FontMetrics, LinePaint, NoteSlot, ObjectPaint, PaintOverlay, PaintRegion, PainterEnv, StoryOverlay } from './painter';
+export { DEFAULT_METRICS, PAINT_COLORS, PagePainter, noteLayout, noteSlots } from './painter';
+export { THEME_CSS, THEME_TOKENS, ensureThemeStyles } from './theme';
+export type { ColorScheme, PageView, ThemeColors, ThemeName } from './theme';
+export type { FontMetrics, LinePaint, NoteSlot, ObjectPaint, PaintColors, PaintOverlay, PaintRegion, PainterEnv, StoryOverlay } from './painter';
 export { eventKey, normalizeKey } from './plugins';
 export type { Exporter, MenuItem, PluginContext, PluginEvent, QuirePlugin, Rect, StoryPos } from './plugins';
 export { findPlugin } from './find-plugin';

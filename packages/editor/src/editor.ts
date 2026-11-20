@@ -60,6 +60,7 @@ import { EditContextInput, editContextSupported } from './edit-context';
 import { MemoryAssets, type AssetStore } from './assets';
 import { Formatter, NOTE_INDENT, defaultPageSetup, hasKeys, type TableView } from './formatter';
 import { summarizeLayout, type LayoutSummary } from './reference';
+import { defaultThemeColors, ensureThemeStyles, readThemeColors, sameColors, type ColorScheme, type PageView, type ThemeColors, type ThemeName } from './theme';
 import { dateText, layoutHF, pageHF, type PageHF } from './headers';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
@@ -91,6 +92,12 @@ export interface EditorOptions {
    * 측정하고, 다 불러오면 HarfBuzz 셰이핑으로 바꿔 다시 조판한다. 그리기도 같은 파일(FontFace)로 한다.
    */
   fonts?: FontSource[];
+  /** 화면 테마 (17): classic(기본)·minimal·modern. 문서·레이아웃은 바뀌지 않는다 */
+  theme?: ThemeName;
+  /** light(기본)·dark·auto(시스템 설정을 따름). 다크에서도 쪽은 흰 종이 */
+  colorScheme?: ColorScheme;
+  /** print(기본: 쪽마다 종이와 틈)·continuous(쪽 경계 없이 이어서). 레이아웃은 같다 */
+  pageView?: PageView;
   /** 글꼴을 다 불러와 셰이핑으로 바꿨을 때 (실패하면 error) */
   onFontsReady?: (editor: Editor, error?: unknown) => void;
   /**
@@ -221,29 +228,11 @@ const DECORATION_STYLES: Record<string, DecorationStyle> = {
   'spell-grammar': { wave: '#2563eb' },
 };
 
+/** 화면 색 중 테마로 열지 않는 것 (주석 범위, 14 §2.4: 댓글, 그 밖, 고른 것). 나머지는 테마 (theme.ts) */
 const COLORS = {
-  desk: '#e9e9ec',
-  /** 단 구분선 */
-  columnRule: '#9a9aa2',
-  /** 주석 범위 (14 §2.4): 댓글, 그 밖, 고른 것 */
   annComment: 'rgba(255, 196, 0, 0.28)',
   annOther: 'rgba(80, 150, 255, 0.2)',
   annFocus: 'rgba(255, 170, 0, 0.55)',
-  /** 머리말·꼬리말을 편집할 때 필드 바탕 */
-  field: '#e4e4ea',
-  page: '#ffffff',
-  pageShadow: 'rgba(0,0,0,0.12)',
-  text: '#1d1d1f',
-  selection: 'rgba(56, 132, 255, 0.28)',
-  selectionBlur: 'rgba(0, 0, 0, 0.12)',
-  preedit: '#1d1d1f',
-  placeholder: 'rgba(233, 233, 236, 0.85)',
-  placeholderText: '#6e6e73',
-  grip: '#a1a1a6',
-  gripActive: '#3884ff',
-  dragSource: 'rgba(56, 132, 255, 0.10)',
-  dropLine: '#3884ff',
-  tableBorder: '#8e8e93',
 };
 
 /** 문단 손잡이 영역: 본문 왼쪽 여백 안 [margin - GRIP_LEFT, margin - GRIP_RIGHT) */
@@ -456,6 +445,13 @@ export class Editor {
   /** 캔버스에서 커닝을 끌 수 있는가 (줄 단위 그리기 가능 여부) */
   /** 쪽 그리기기 (15 §5.1)와 화면 대상 */
   private readonly target: CanvasTarget;
+  /** 화면 색 (17): 호스트의 CSS 변수에서 읽은 계산된 값 */
+  private colors: ThemeColors = defaultThemeColors();
+  private themeName: ThemeName = 'classic';
+  private scheme: ColorScheme = 'light';
+  private pageViewMode: PageView = 'print';
+  /** 색을 풀어 쓰는 숨긴 요소 */
+  private themeProbe: HTMLElement | null = null;
   private readonly painter = new PagePainter(this.painterEnv());
   /** 편집기 덧그리기: 쪽 그리기기가 쪽 내용 사이사이에 부른다 */
   private readonly overlay: PaintOverlay = this.makeOverlay();
@@ -498,7 +494,7 @@ export class Editor {
     const scroller = document.createElement('div');
     Object.assign(scroller.style, {
       position: 'relative', width: '100%', height: '100%', overflow: 'auto',
-      background: COLORS.desk, cursor: 'text', outline: 'none',
+      background: this.colors.desk, cursor: 'text', outline: 'none',
     } satisfies Partial<CSSStyleDeclaration>);
     host.appendChild(scroller);
     this.scroller = scroller;
@@ -520,7 +516,7 @@ export class Editor {
     const caret = document.createElement('div');
     caret.className = 'quire-caret';
     Object.assign(caret.style, {
-      position: 'absolute', width: '2px', background: COLORS.text, pointerEvents: 'none', display: 'none',
+      position: 'absolute', width: '2px', background: this.colors.text, pointerEvents: 'none', display: 'none',
     });
     scroller.appendChild(caret);
     this.caretEl = caret;
@@ -588,6 +584,35 @@ export class Editor {
     this.listen(this.input.el, 'blur', () => { this.focused = false; this.scheduleRender(); });
     this.resizeObserver = new ResizeObserver(() => this.refresh());
     this.resizeObserver.observe(scroller);
+
+    // 화면 테마 (17): 기본 테마 스타일시트, 호스트 속성, 바뀜 감지
+    ensureThemeStyles(host.ownerDocument);
+    host.classList.add('quire');
+    this.themeName = opts.theme ?? 'classic';
+    this.scheme = opts.colorScheme ?? 'light';
+    this.pageViewMode = opts.pageView ?? 'print';
+    const probe = document.createElement('span');
+    probe.setAttribute('aria-hidden', 'true');
+    Object.assign(probe.style, { position: 'absolute', width: '0', height: '0', overflow: 'hidden', visibility: 'hidden' });
+    host.appendChild(probe);
+    this.themeProbe = probe;
+    this.applyThemeAttrs();
+    this.readTheme();
+    const themeObserver = new MutationObserver(() => this.refreshTheme());
+    const attrs = ['class', 'style', 'data-theme', 'data-quire-theme', 'data-quire-scheme'];
+    themeObserver.observe(host, { attributes: true, attributeFilter: attrs });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: attrs });
+    this.disposers.push(() => themeObserver.disconnect());
+    const dark = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (dark) {
+      const onScheme = () => {
+        if (this.scheme !== 'auto') return;
+        this.applyThemeAttrs();
+        this.refreshTheme();
+      };
+      dark.addEventListener('change', onScheme);
+      this.disposers.push(() => dark.removeEventListener('change', onScheme));
+    }
 
     this.resetLayouts();
     this.relayout();
@@ -760,6 +785,65 @@ export class Editor {
   layoutSummary(today?: string): LayoutSummary | null {
     if (!this.bodyLayout.complete) return null;
     return summarizeLayout(this.document, this.bodyLayout, this.fmt, today);
+  }
+
+  // ── 화면 테마 (17) ───────────────────────────────────
+
+  /** 테마를 바꾼다 (문서·레이아웃은 그대로, 다시 그리기만) */
+  setTheme(theme: ThemeName, colorScheme?: ColorScheme): void {
+    this.themeName = theme;
+    if (colorScheme) this.scheme = colorScheme;
+    this.applyThemeAttrs();
+    this.refreshTheme();
+    this.opts.onChange?.(this);
+  }
+
+  setColorScheme(colorScheme: ColorScheme): void {
+    this.setTheme(this.themeName, colorScheme);
+  }
+
+  /** 쪽 보기: print(쪽마다 종이), continuous(쪽 경계 없이). 레이아웃은 같다 */
+  setPageView(view: PageView): void {
+    if (view === this.pageViewMode) return;
+    this.pageViewMode = view;
+    this.applyThemeAttrs();
+    this.paintBackground();
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 지금 테마·색 모드(auto면 auto)·쪽 보기 */
+  get appearance(): { theme: ThemeName; colorScheme: ColorScheme; pageView: PageView } {
+    return { theme: this.themeName, colorScheme: this.scheme, pageView: this.pageViewMode };
+  }
+
+  /** CSS 변수를 다시 읽는다 (앱이 스타일시트를 바꾼 뒤). 값이 같으면 다시 그리지 않는다 */
+  refreshTheme(): void {
+    if (this.readTheme()) this.render();
+  }
+
+  /** 변수를 읽어 색을 바꿨으면 true */
+  private readTheme(): boolean {
+    if (!this.themeProbe) return false;
+    const next = readThemeColors(this.opts.host, this.themeProbe);
+    if (sameColors(this.colors, next)) return false;
+    this.colors = next;
+    this.paintBackground();
+    this.caretEl.style.background = next.caret;
+    return true;
+  }
+
+  /** 스크롤 영역 바탕 (캔버스 밖으로 보이는 부분) */
+  private paintBackground(): void {
+    this.scroller.style.background = this.pageViewMode === 'continuous' ? this.colors.page : this.colors.desk;
+  }
+
+  private applyThemeAttrs(): void {
+    const h = this.opts.host;
+    const dark = this.scheme === 'dark' || (this.scheme === 'auto' && !!window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+    h.dataset.quireTheme = this.themeName;
+    h.dataset.quireScheme = dark ? 'dark' : 'light';
+    h.dataset.quirePageView = this.pageViewMode;
   }
 
   /** 쓰고 있는 입력 층 */
@@ -997,24 +1081,35 @@ export class Editor {
     const px = this.pageLeft() - left;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = COLORS.desk;
+    const C = this.colors;
+    // 연속 보기 (17 §3.2): 책상도 종이 색, 쪽 그림자·테두리 없이 (레이아웃은 그대로, 그리기만)
+    const continuous = this.pageViewMode === 'continuous';
+    ctx.fillStyle = continuous ? C.page : C.desk;
     ctx.fillRect(0, 0, w, h);
 
     // 쪽
     // 쪽 상자는 레이아웃이 낸다 (12 §2: 구역마다 쪽 크기가 다를 수 있다)
-    for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
-      const pb = layout.pageBox(p);
-      const y = pb.top - top;
-      if (y > h) break;
-      ctx.shadowColor = COLORS.pageShadow;
-      ctx.shadowBlur = 8;
-      ctx.shadowOffsetY = 1;
-      ctx.fillStyle = COLORS.page;
-      ctx.fillRect(px + pb.x, y, pb.width, pb.height);
-    }
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = 0;
+    if (!continuous)
+      for (let p = layout.pageAt(top); p < layout.pageCount; p++) {
+        const pb = layout.pageBox(p);
+        const y = pb.top - top;
+        if (y > h) break;
+        if (C.pageShadow) {
+          ctx.shadowColor = C.pageShadow.color;
+          ctx.shadowBlur = C.pageShadow.blur;
+          ctx.shadowOffsetY = C.pageShadow.offsetY;
+        }
+        ctx.fillStyle = C.page;
+        ctx.fillRect(px + pb.x, y, pb.width, pb.height);
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+        if (C.pageBorder) {
+          ctx.strokeStyle = C.pageBorder;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(Math.round(px + pb.x) + 0.5, Math.round(y) + 0.5, Math.round(pb.width) - 1, Math.round(pb.height) - 1);
+        }
+      }
 
     // 쪽 내용 (15 §5.1): 단 구분선, 머리말·꼬리말, 떠 있는 개체, 줄, 각주. 편집기 것은 덧그리기 갈고리로
     const visibleParas = new Set<number>();
@@ -1083,6 +1178,10 @@ export class Editor {
       get document() {
         return self.document;
       },
+      get colors() {
+        const c = self.colors;
+        return { text: c.text, columnRule: c.mark, tableBorder: c.tableBorder, field: c.field, placeholder: c.placeholder, placeholderBorder: c.mark, placeholderText: c.placeholderText };
+      },
       get layout() {
         return self.bodyLayout;
       },
@@ -1149,7 +1248,7 @@ export class Editor {
         }
         const box = this.cellSelBox(v);
         if (bodySel || (box && y >= box.y0 && y <= box.y1 && x >= box.x0 && x <= box.x1)) {
-          this.ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
+          this.ctx.fillStyle = this.focused ? this.colors.selection : this.colors.selectionInactive;
           this.ctx.fillRect(cx, cy, cw, ch);
         }
       },
@@ -1178,7 +1277,7 @@ export class Editor {
       back: (l) => {
         // 끌고 있는 문단
         if (isBody && this.drag && l.index >= this.drag.i && l.index <= this.drag.j) {
-          ctx.fillStyle = COLORS.dragSource;
+          ctx.fillStyle = this.colors.dragSource;
           ctx.fillRect(l.px + l.para.frameLeft - 6, l.y, l.para.width + 12, l.ln.height);
         }
       },
@@ -1202,7 +1301,7 @@ export class Editor {
             const sx = X(da);
             let ex = X(db);
             if (isLast && b > pStart + ln.end) ex += this.fontSize * 0.5; // ¶ 표시 폭
-            ctx.fillStyle = this.focused ? COLORS.selection : COLORS.selectionBlur;
+            ctx.fillStyle = this.focused ? this.colors.selection : this.colors.selectionInactive;
             ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
           }
         }
@@ -1235,7 +1334,7 @@ export class Editor {
           const a = Math.max(preedit[0], ln.start);
           const b = Math.min(preedit[1], ln.end);
           if (a < b) {
-            ctx.fillStyle = COLORS.preedit;
+            ctx.fillStyle = this.colors.preedit;
             ctx.fillRect(X(a), y + ln.height - 5, X(b) - X(a), 1.5);
           }
         }
@@ -1256,7 +1355,7 @@ export class Editor {
     const y = (part === 'header' ? info.bodyTop : info.bodyBottom) - top;
     const label = `${part === 'header' ? '머리말' : '꼬리말'}${info.kind === 'first' ? ' (첫 쪽)' : info.kind === 'even' ? ' (짝수 쪽)' : ''}${this.headerFooterInfo()?.linked ? ' · 이전과 연결' : ''}`;
     ctx.save();
-    ctx.strokeStyle = COLORS.gripActive;
+    ctx.strokeStyle = this.colors.gripActive;
     ctx.setLineDash([4, 3]);
     ctx.beginPath();
     ctx.moveTo(px + info.box.x, y + 0.5);
@@ -1266,7 +1365,7 @@ export class Editor {
     ctx.font = `${Math.min(12, this.fontSize)}px ${this.family}`;
     const w = ctx.measureText(label).width + 10;
     const ly = part === 'header' ? y : y - 18;
-    ctx.fillStyle = COLORS.gripActive;
+    ctx.fillStyle = this.colors.gripActive;
     ctx.fillRect(px + info.box.x, ly, w, 18);
     ctx.fillStyle = '#ffffff';
     ctx.textBaseline = 'middle';
@@ -1282,7 +1381,7 @@ export class Editor {
     if (to - from !== 1 || from !== o.offset) return;
     const { ctx } = this;
     const { x, y, w, h } = o;
-    ctx.strokeStyle = COLORS.gripActive;
+    ctx.strokeStyle = this.colors.gripActive;
     ctx.lineWidth = 1.5;
     ctx.strokeRect(x, y, w, h);
     ctx.lineWidth = 1;
@@ -1294,7 +1393,7 @@ export class Editor {
     const ln = o.float ? o.para.lines[0] : undefined;
     if (ln) {
       ctx.save();
-      ctx.fillStyle = COLORS.gripActive;
+      ctx.fillStyle = this.colors.gripActive;
       ctx.font = `12px ${this.family}`;
       ctx.textBaseline = 'alphabetic';
       ctx.fillText('⚓', o.px + o.para.frameLeft - 18, ln.baseline - o.top);
@@ -1914,7 +2013,7 @@ export class Editor {
     ctx.font = `11px ${this.family}`;
     const tw = ctx.measureText(label).width;
     const mid = Math.max(x0 + 8, (x0 + x1 - tw) / 2);
-    ctx.strokeStyle = COLORS.placeholderText;
+    ctx.strokeStyle = this.colors.placeholderText;
     ctx.setLineDash([3, 3]);
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -1923,7 +2022,7 @@ export class Editor {
     ctx.moveTo(mid + tw + 6, y + 0.5);
     ctx.lineTo(Math.max(mid + tw + 6, x1), y + 0.5);
     ctx.stroke();
-    ctx.fillStyle = COLORS.placeholderText;
+    ctx.fillStyle = this.colors.placeholderText;
     ctx.textBaseline = 'middle';
     ctx.fillText(label, mid, y);
     ctx.restore();
@@ -2570,7 +2669,7 @@ export class Editor {
       const ln = layout.paras[g]!.lines[0]!;
       const cx = px + layout.paras[g]!.frameLeft - (GRIP_LEFT + GRIP_RIGHT) / 2;
       const cy = ln.y - top + ln.height / 2;
-      ctx.fillStyle = this.drag || this.hoverGrip ? COLORS.gripActive : COLORS.grip;
+      ctx.fillStyle = this.drag || this.hoverGrip ? this.colors.gripActive : this.colors.grip;
       for (let r = -1; r <= 1; r++) {
         for (const c of [-2.5, 2.5]) {
           ctx.beginPath();
@@ -2593,7 +2692,7 @@ export class Editor {
     const at = layout.paras[Math.min(to, n - 1)]!;
     const x = px + at.frameLeft - 8;
     const y = yLine - top;
-    ctx.fillStyle = COLORS.dropLine;
+    ctx.fillStyle = this.colors.dropLine;
     ctx.fillRect(x, y - 1, at.width + 16, 2);
     ctx.beginPath();
     ctx.arc(x, y, 4, 0, Math.PI * 2);
@@ -2721,11 +2820,11 @@ export class Editor {
     const layout = this.bodyLayout;
     const from = Math.max(0, layout.validBottom - top);
     if (from >= h) return;
-    ctx.fillStyle = COLORS.placeholder;
+    ctx.fillStyle = this.colors.placeholder;
     ctx.fillRect(px, from, setup.width, h - from);
     const total = this.body.paragraphs().length;
     const pct = total ? Math.floor((layout.validCount / total) * 100) : 100;
-    ctx.fillStyle = COLORS.placeholderText;
+    ctx.fillStyle = this.colors.placeholderText;
     ctx.font = this.font;
     ctx.textAlign = 'center';
     ctx.fillText(`쪽 조립 중… ${pct}%`, Math.min(px + setup.width / 2, w / 2), Math.max(from, 0) + (h - from) / 2);
@@ -3190,7 +3289,7 @@ export class Editor {
       if (this.preedit) {
         ctx.globalAlpha = 0.45;
         ctx.font = this.font;
-        ctx.fillStyle = COLORS.text;
+        ctx.fillStyle = this.colors.text;
         const ln = this.layout.line(r.ref);
         ctx.fillText(this.preedit, px + r.x, ln.baseline - top);
         const w = ctx.measureText(this.preedit).width;
@@ -3198,7 +3297,7 @@ export class Editor {
         ctx.globalAlpha = 1;
       }
       if (this.focused) {
-        ctx.fillStyle = COLORS.text;
+        ctx.fillStyle = this.colors.text;
         ctx.fillRect(Math.round(px + r.x), y + 3, 2, r.height - 6);
       }
     }
