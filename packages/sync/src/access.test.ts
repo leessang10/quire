@@ -23,7 +23,7 @@ async function until(cond: () => boolean | Promise<boolean>, ms = 8000, what = '
 }
 
 async function serve(opts: ServerOptions): Promise<SyncServer> {
-  const s = await startServer(0, () => {}, opts);
+  const s = await startServer(0, (l) => (globalThis as any).__log?.push(`${Date.now() % 100000} ${l}`), opts);
   let closed = false;
   const close = s.close.bind(s);
   s.close = () => {
@@ -74,6 +74,7 @@ describe('access control (14 §6)', () => {
   });
 
   it('view and comment tokens: the server rejects disallowed changes and the client falls back to the server state', async () => {
+    (globalThis as any).__log = [];
     const storage = memoryStorage();
     const name = room();
     storage.room(name).putAccess({ 'tok-e': 'edit', 'tok-c': 'comment', 'tok-v': 'view' });
@@ -88,6 +89,7 @@ describe('access control (14 §6)', () => {
     // view의 본문 편집: 거부되고 서버 상태로 돌아간다
     v.client.doc.insertText(0, 'V');
     await until(() => v.resets.length > 0, 5000, 'view reset');
+    if (v.resets.length !== 1) console.log('DEBUG', JSON.stringify({ resets: v.resets, roles: v.roles, denied: s.stats.denied, log: (globalThis as any).__log }));
     expect(v.resets).toEqual([true]);
     await until(() => v.client.doc.text() === '하나 둘 셋\n', 5000, 'view back to server');
     // comment의 댓글: 받아들인다
