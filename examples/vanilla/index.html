@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quire 예제 · 바닐라</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <strong class="brand">Quire · 바닐라 JS</strong>
+      <div class="group">
+        <button data-cmd="toggleBold" data-mark="bold" title="굵게 (Ctrl+B)"><b>가</b></button>
+        <button data-cmd="toggleItalic" data-mark="italic" title="기울임 (Ctrl+I)"><i>가</i></button>
+        <button data-cmd="toggleUnderline" data-mark="underline" title="밑줄 (Ctrl+U)"><u>가</u></button>
+      </div>
+      <div class="group">
+        <button data-cmd="undo" id="undo" title="실행 취소 (Ctrl+Z)">↶</button>
+        <button data-cmd="redo" id="redo" title="다시 실행 (Ctrl+Shift+Z)">↷</button>
+      </div>
+      <select id="style" title="문단 스타일">
+        <option value="body">본문</option>
+        <option value="h1">제목 1</option>
+        <option value="h2">제목 2</option>
+        <option value="h3">제목 3</option>
+      </select>
+      <div class="group">
+        <button id="open">열기</button>
+        <input id="file" type="file" hidden />
+        <button data-save="hwpx">HWPX</button>
+        <button data-save="docx">DOCX</button>
+        <button data-save="md">MD</button>
+        <button data-save="pdf">PDF</button>
+      </div>
+    </header>
+    <main id="editor" class="editor"></main>
+    <footer class="status" id="status">불러오는 중…</footer>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

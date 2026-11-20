@@ -1,0 +1,23 @@
+{
+  "name": "quire-example-node",
+  "private": true,
+  "type": "module",
+  "description": "브라우저 없이 문서 변환 (HWPX·DOCX·MD·HTML → PDF·HWPX·DOCX·MD·HTML)",
+  "bin": {
+    "quire-convert": "./convert.mjs"
+  },
+  "scripts": {
+    "demo": "node convert.mjs sample.md out/sample.pdf && node convert.mjs sample.md out/sample.hwpx && node convert.mjs sample.md out/sample.docx && node convert.mjs out/sample.hwpx out/roundtrip.md"
+  },
+  "dependencies": {
+    "@quire/convert": "file:../../.build/packs/quire-convert-0.1.0.tgz",
+    "@quire/editor": "file:../../.build/packs/quire-editor-0.1.0.tgz",
+    "@quire/fonts": "file:../../.build/packs/quire-fonts-0.1.0.tgz",
+    "@quire/layout": "file:../../.build/packs/quire-layout-0.1.0.tgz",
+    "@quire/model": "file:../../.build/packs/quire-model-0.1.0.tgz",
+    "@quire/pdf": "file:../../.build/packs/quire-pdf-0.1.0.tgz",
+    "@quire/shaping": "file:../../.build/packs/quire-shaping-0.1.0.tgz",
+    "@quire/sync": "file:../../.build/packs/quire-sync-0.1.0.tgz",
+    "harfbuzzjs": "1.6.4"
+  }
+}

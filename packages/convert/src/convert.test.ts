@@ -145,6 +145,12 @@ describe('Markdown (15 §6.5)', () => {
     expect(Object.keys(q.stories).filter((k) => k.startsWith('fn|'))).toHaveLength(1);
   });
 
+  it('keeps adjacent lists apart (bullet then numbered)', async () => {
+    const md = ['- 가', '- 나', '', '1. 첫째', '2. 둘째', ''].join('\n');
+    const r = await importMarkdown(md);
+    expect(exportMarkdown(r.doc)).toBe(md);
+  });
+
   it('reads data URL images as assets with their size', async () => {
     const bytes = await png();
     const r = await importMarkdown(`![작은 그림](${toDataUrl({ bytes, type: 'image/png' })})\n`);

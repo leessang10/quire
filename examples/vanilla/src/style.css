@@ -1,0 +1,12 @@
+/* 예제 1: 순수 CSS (리셋 포함) */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { display: grid; grid-template-rows: auto 1fr auto; font: 14px/1.5 system-ui, 'Malgun Gothic', sans-serif; color: #1d1d1f; background: #f2f2f5; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; background: #fff; border-bottom: 1px solid #d8d8de; }
+.brand { margin-right: 8px; }
+.group { display: flex; gap: 4px; }
+button, select { font: inherit; padding: 4px 10px; border: 1px solid #c7c7cc; border-radius: 6px; background: #fff; cursor: pointer; }
+button[aria-pressed='true'] { background: #dbe8ff; border-color: #6c95e0; }
+button:disabled { opacity: 0.45; cursor: default; }
+.editor { position: relative; min-height: 0; }
+.status { padding: 4px 12px; font-size: 12px; color: #555; background: #fff; border-top: 1px solid #d8d8de; }

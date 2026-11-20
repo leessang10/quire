@@ -101,6 +101,7 @@ describe('React wrapper (08 §4)', () => {
         rangeRects: () => [],
         toJSON: () => ({ marker: created.indexOf(rec) }) as never,
         use: () => () => {},
+        load: async () => {},
         destroy: () => void (rec.destroyed = true),
       };
     };

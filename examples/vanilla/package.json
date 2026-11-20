@@ -1,0 +1,27 @@
+{
+  "name": "quire-example-vanilla",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "postinstall": "node ../shared/copy-assets.mjs public",
+    "dev": "vite --port 5301 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --port 5301"
+  },
+  "dependencies": {
+    "@quire/convert": "file:../../.build/packs/quire-convert-0.1.0.tgz",
+    "@quire/editor": "file:../../.build/packs/quire-editor-0.1.0.tgz",
+    "@quire/fonts": "file:../../.build/packs/quire-fonts-0.1.0.tgz",
+    "@quire/layout": "file:../../.build/packs/quire-layout-0.1.0.tgz",
+    "@quire/model": "file:../../.build/packs/quire-model-0.1.0.tgz",
+    "@quire/pdf": "file:../../.build/packs/quire-pdf-0.1.0.tgz",
+    "@quire/sdk": "file:../../.build/packs/quire-sdk-0.1.0.tgz",
+    "@quire/shaping": "file:../../.build/packs/quire-shaping-0.1.0.tgz",
+    "@quire/sync": "file:../../.build/packs/quire-sync-0.1.0.tgz",
+    "harfbuzzjs": "1.6.4"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "vite": "8.3.8"
+  }
+}

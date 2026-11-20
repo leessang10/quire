@@ -8,3 +8,5 @@ export type { Subsetter } from './subset';
 export { PdfWriter, streamDeflate, streamInflate } from './writer';
 export type { Deflate } from './writer';
 export { writeImage } from './images';
+export { pdfFromQuire } from './headless';
+export type { HeadlessFont, PdfFromQuireOptions } from './headless';

@@ -42,6 +42,8 @@ export interface QuireHandle {
   caretRect(): Rect | null;
   rangeRects(from: number, to: number): Rect[];
   toJSON(): QuireDoc;
+  /** 문서를 바꾼다 (가져오기 결과). assets는 문서가 쓰는 새 자산 (이미지 바이트) */
+  load(doc: QuireDoc, assets?: Iterable<[string, { bytes: Uint8Array; type: string }]>): Promise<void>;
   use(plugin: QuirePlugin): () => void;
   destroy(): void;
 }
@@ -144,6 +146,10 @@ export async function createEditor(opts: CreateEditorOptions): Promise<QuireHand
     caretRect: () => pluginCtx?.caretRect() ?? null,
     rangeRects: (from, to) => pluginCtx?.rangeRects(from, to) ?? [],
     toJSON: () => quireFromDocument(editor.document),
+    async load(next, assets) {
+      for (const [, a] of assets ?? []) await editor.putAsset(new Blob([a.bytes as BlobPart], { type: a.type }));
+      editor.setDocument(documentFromQuire(next).document);
+    },
     use: (plugin) => editor.use(plugin),
     destroy() {
       if (destroyed) return;

@@ -38,6 +38,8 @@ export interface QuireController extends EditorStore {
   caretRect(): Rect | null;
   rangeRects(from: number, to: number): Rect[];
   toJSON(): QuireDoc | null;
+  /** 문서를 바꾼다 (가져오기 결과). 붙기 전이면 붙을 때 그것으로 만든다 */
+  load(doc: QuireDoc, assets?: Iterable<[string, { bytes: Uint8Array; type: string }]>): Promise<void>;
   /** QuireEditor가 부른다 */
   mount(host: HTMLElement): void;
   unmount(): void;
@@ -66,6 +68,10 @@ export function createController(options: QuireOptions, create: (o: CreateEditor
     caretRect: () => handle?.caretRect() ?? null,
     rangeRects: (from, to) => handle?.rangeRects(from, to) ?? [],
     toJSON: () => handle?.toJSON() ?? saved ?? null,
+    async load(doc, assets) {
+      if (handle) return handle.load(doc, assets);
+      saved = doc;
+    },
     mount(host) {
       const my = ++token;
       void create({ ...options, host, doc: saved }).then((h) => {
