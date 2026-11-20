@@ -118,6 +118,14 @@ export function AppMenus({ ui, act, a, panels }: { ui: Ui | null; act: Act; a: M
         <MenuItem checked={ui?.viewMode === 'original'} onSelect={() => act((e) => e.setViewMode('original'))}>
           원본
         </MenuItem>
+        <MenuSeparator />
+        <MenuLabel>편집기 언어</MenuLabel>
+        <MenuItem checked={ui?.locale === 'ko'} onSelect={() => act((e) => e.setLocale('ko'))}>
+          한국어
+        </MenuItem>
+        <MenuItem checked={ui?.locale === 'en'} onSelect={() => act((e) => e.setLocale('en'))}>
+          English
+        </MenuItem>
       </BarMenu>
 
       <BarMenu label="삽입">

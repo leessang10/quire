@@ -4,7 +4,7 @@
  * 글을 고르면 뜨는 서식 막대, `/` 명령 메뉴, 오른쪽 위 `···` 메뉴. 편집기는 미니멀 테마 + 연속 보기.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Download, FileText, FolderOpen, Moon, MoreHorizontal, MessageSquare, Plus, Printer, ScrollText, Search, Sparkles, Sun, Type } from 'lucide-react';
+import { ChevronRight, Download, FileText, FolderOpen, Languages, Moon, MoreHorizontal, MessageSquare, Plus, Printer, ScrollText, Search, Sparkles, Sun, Type } from 'lucide-react';
 import { toast } from 'sonner';
 import { QuireEditor, useEditorState, useQuire } from '@quire/react';
 import { highlightWordsPlugin, wordCountPlugin, type Editor, type MenuItem as PluginMenuItem, type SpellMenu, type WordCount } from '@quire/editor';
@@ -185,6 +185,14 @@ export default function QuireApp() {
         <div className="border-t p-2">
           <button type="button" onClick={() => act((e) => e.setColorScheme(dark ? 'light' : 'dark'))} className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted">
             {dark ? <Sun className="size-4" /> : <Moon className="size-4" />} {dark ? '밝게' : '어둡게'}
+          </button>
+          {/* 편집기 화면 언어 (18): 캔버스 표시·접근성 이름만. 앱 UI는 앱이 번역한다 */}
+          <button
+            type="button"
+            onClick={() => act((e) => e.setLocale(ui?.locale === 'en' ? 'ko' : 'en'))}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
+          >
+            <Languages className="size-4" /> 편집기 언어: {ui?.locale === 'en' ? 'English' : '한국어'}
           </button>
         </div>
       </aside>

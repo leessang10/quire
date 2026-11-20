@@ -44,12 +44,12 @@ export function wordCountPlugin(onCount?: (c: WordCount) => void): QuirePlugin &
     },
     exporters: {
       stats: {
-        label: '문서 통계 (글)',
+        label: (t) => t('wordCount.exporter'),
         extension: 'txt',
         mime: 'text/plain',
         export: (c) => {
           const n = countOf(c);
-          return `글자 ${n.chars} (공백 빼고 ${n.charsNoSpace})\n어절 ${n.words}\n문단 ${n.paragraphs}\n`;
+          return c.t('wordCount.report', { ...n });
         },
       },
     },
@@ -172,14 +172,14 @@ export function highlightWordsPlugin(initial: string[] = [], color = '#ffe08a'):
     contextMenu: (ctx, at): MenuItem[] => {
       const sel = ctx.selection();
       const items: MenuItem[] = [];
-      if (sel.from !== sel.to) items.push({ label: '강조 낱말로 더하기', run: () => void ctx.run('highlightWords.addSelection') });
+      if (sel.from !== sel.to) items.push({ label: ctx.t('highlightWords.add'), run: () => void ctx.run('highlightWords.addSelection') });
       const para = ctx.doc().paragraphs()[ctx.doc().paragraphIndexAt(at.offset)];
       if (para) {
         const rel = at.offset - para.start;
         const hit = rangesIn(ctx, para.text).find(([a, b]) => a <= rel && rel <= b);
         if (hit) {
           const w = Array.from(para.text).slice(hit[0], hit[1]).join('');
-          items.push({ label: `강조 빼기: ${w}`, run: () => void ctx.run('highlightWords.remove', w) });
+          items.push({ label: ctx.t('highlightWords.remove', { word: w }), run: () => void ctx.run('highlightWords.remove', w) });
         }
       }
       return items;

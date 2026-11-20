@@ -117,7 +117,6 @@ export class EditContextInput implements InputBackend {
     this.rect = deps.rect ?? ((x, y, w, h) => new DOMRect(x, y, w, h));
     const el = deps.createElement ? deps.createElement() : document.createElement('div');
     el.setAttribute('role', 'textbox');
-    el.setAttribute('aria-label', '문서 편집 영역');
     el.setAttribute('aria-multiline', 'true');
     el.tabIndex = 0;
     Object.assign(el.style, {
@@ -245,6 +244,10 @@ export class EditContextInput implements InputBackend {
       this.log('paste', `text=${fmt(text.slice(0, 40))}${html ? ' html' : ''}${quire ? ' quire' : ''}${files.length ? ` images=${files.length}` : ''}`);
       if (text || html || quire || files.length) this.onIntent({ kind: 'paste', text, ...(html ? { html } : {}), ...(quire ? { quire } : {}), ...(files.length ? { files } : {}) });
     });
+  }
+
+  setLabel(label: string): void {
+    this.el.setAttribute('aria-label', label);
   }
 
   focus(): void {

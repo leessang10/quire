@@ -48,6 +48,8 @@ export interface InputBackend {
    * 위치. IME의 재변환·문맥 처리에 쓴다. 조합 중에는 부르지 않는다.
    */
   sync?(text: string, base: number, anchor: number, head: number): void;
+  /** 접근성 이름 (UI 언어, 18) */
+  setLabel(label: string): void;
   destroy(): void;
 }
 
@@ -70,7 +72,6 @@ export class TextareaInput implements InputBackend {
     ta.setAttribute('autocomplete', 'off');
     ta.setAttribute('autocorrect', 'off');
     ta.spellcheck = false;
-    ta.setAttribute('aria-label', '문서 편집 영역');
     ta.setAttribute('aria-multiline', 'true');
     Object.assign(ta.style, {
       position: 'absolute',
@@ -158,6 +159,10 @@ export class TextareaInput implements InputBackend {
       this.log('paste', `text=${fmt(text.slice(0, 40))}${html ? ' html' : ''}${quire ? ' quire' : ''}${files.length ? ` images=${files.length}` : ''}`);
       if (text || html || quire || files.length) this.onIntent({ kind: 'paste', text, ...(html ? { html } : {}), ...(quire ? { quire } : {}), ...(files.length ? { files } : {}) });
     });
+  }
+
+  setLabel(label: string): void {
+    this.el.setAttribute('aria-label', label);
   }
 
   focus(): void {
