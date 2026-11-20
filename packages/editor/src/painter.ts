@@ -336,6 +336,7 @@ export class PagePainter {
         this.runs(para.layout, ln, px, baseY, sty, kern);
         if (para.layout.objs) this.objects(layout, para, ln, px, baseY, kern);
         if (para.layout.fmt) this.textLines(para.layout, ln, px, baseY, sty);
+        if (para.layout.fmt && t.link) this.links(para.layout, ln, px, baseY, sty);
       } else if (t.exactRuns) {
         // 커닝을 끄면 문자열 폭 = 글자 폭의 합이므로 탭 사이 구간을 한 번에 그린다 (그리기 호출 수 ↓)
         const text = cpSlice(para.layout, ln.start, ln.end);
@@ -344,7 +345,15 @@ export class PagePainter {
         let u = 0;
         let segU = 0;
         const flush = (endU: number) => {
-          if (endU > segU) t.text({ text: text.slice(segU, endU), font: base, kern }, x0 + xs[segStart]!, baseY, PAINT_COLORS.text);
+          if (endU <= segU) return;
+          const seg = text.slice(segU, endU);
+          let positions: number[] | undefined;
+          if (t.wantsPositions) {
+            positions = [];
+            let i = segStart;
+            for (const _ of seg) positions.push(xs[i++]! - xs[segStart]!);
+          }
+          t.text({ text: seg, font: base, kern, positions }, x0 + xs[segStart]!, baseY, PAINT_COLORS.text);
         };
         while (u < text.length) {
           const c = text.charCodeAt(u);
@@ -510,7 +519,13 @@ export class PagePainter {
       let j = k + 1;
       while (j < end && !(perChar && pl.stops[j]) && fontAt(j) === f && idAt(j) === id && !blank(cpSlice(pl, j, j + 1))) j++;
       const d = env.fmt.drawStyle(id, sty, this.doc);
-      t.text({ text: cpSlice(pl, k, j), font: this.fontOf(f, d), kern, skew: d.italic ? ITALIC_SKEW : undefined }, px + lineX(pl, ln, k), baseY + d.shift, d.color ?? PAINT_COLORS.text);
+      const x = px + lineX(pl, ln, k);
+      let positions: number[] | undefined;
+      if (t.wantsPositions) {
+        positions = [];
+        for (let i = k; i < j; i++) positions.push(px + lineX(pl, ln, i) - x);
+      }
+      t.text({ text: cpSlice(pl, k, j), font: this.fontOf(f, d), kern, skew: d.italic ? ITALIC_SKEW : undefined, positions }, x, baseY + d.shift, d.color ?? PAINT_COLORS.text);
       k = j;
     }
   }
@@ -559,6 +574,17 @@ export class PagePainter {
         const th = Math.max(1, m.strikeThickness * em);
         this.t.fillRect(x, y - m.strikePosition * em - th / 2, w, th, color);
       }
+    });
+  }
+
+  /** 링크 영역 (PDF): 글자 높이의 상자 */
+  private links(pl: ParaLayout, ln: PlacedLine, px: number, baseY: number, sty: string): void {
+    const { ascent, descent } = this.env.metrics;
+    this.eachFormatRun(pl, ln, sty, (k, j, d) => {
+      if (!d.link) return;
+      const em = this.env.fontSize * d.run.line;
+      const x = px + lineX(pl, ln, k);
+      this.t.link!(x, baseY - ascent * em, px + lineX(pl, ln, j) - x, (ascent + descent) * em, d.link);
     });
   }
 

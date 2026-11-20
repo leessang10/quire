@@ -21,6 +21,8 @@ export interface TextRun {
   readonly maxWidth?: number;
   /** 커닝 (셰이핑한 글꼴이면 켠다: 레이아웃이 HarfBuzz로 잰 폭과 같게) */
   readonly kern: boolean;
+  /** 코드포인트마다 레이아웃 x (조각 시작 기준). 대상이 wantsPositions일 때만 채운다 */
+  readonly positions?: readonly number[];
 }
 
 export interface PaintTarget {
@@ -28,6 +30,8 @@ export interface PaintTarget {
    * 글자열을 한 번에 그려도 레이아웃 위치와 같은가 (커닝을 끌 수 있다). false면 그리기기가 글자(그래핌)마다 나눠 그린다
    */
   readonly exactRuns: boolean;
+  /** 글자 조각에 코드포인트별 레이아웃 위치를 받을까 (PDF: 글리프를 레이아웃 자리에 놓는다) */
+  readonly wantsPositions?: boolean;
   save(): void;
   restore(): void;
   /** 투명도를 곱한다 (restore까지) */
@@ -41,6 +45,8 @@ export interface PaintTarget {
   measure(text: string, font: FontRef): number;
   /** 자산 이미지 (준비된 것만 부른다: ImageSource.state가 'ready') */
   image(asset: string, x: number, y: number, w: number, h: number): void;
+  /** 링크 영역 (PDF 링크 주석). 화면은 없다 */
+  link?(x: number, y: number, w: number, h: number, href: string): void;
 }
 
 /** 이미지 준비 상태: 화면은 비동기로 디코드하고, PDF는 미리 모은다 */
