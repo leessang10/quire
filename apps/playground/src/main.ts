@@ -1,4 +1,4 @@
-import { Editor, type InputLogEntry } from '@quire/editor';
+import { Editor, highlightWordsPlugin, wordCountPlugin, type InputLogEntry, type WordCount } from '@quire/editor';
 import { CommentsPane } from './comments-pane';
 import { FindBar } from './find-bar';
 import { openPdf } from './pdf-export';
@@ -301,6 +301,8 @@ function showStats() {
       ['선택', sel.anchor === sel.head ? `${sel.head}` : `${sel.anchor} → ${sel.head}`],
       ['실행 취소', editor.history.canUndo ? '가능' : '-'],
       ['가져오기·내보내기', lastConvert || '-'],
+      ['글자 수 (플러그인)', wordCount ? `${wordCount.chars.toLocaleString()}자 · ${wordCount.words.toLocaleString()}어절` : '-'],
+      ['플러그인', editor.pluginNames().join(', ')],
       ['맞춤법 검사', editor.spellSession ? `${editor.spellSession.stats.checked.toLocaleString()} 문단 (그만둠 ${editor.spellSession.stats.aborted})` : '꺼짐'],
     ];
     statsEl.replaceChildren(
@@ -341,6 +343,7 @@ const fonts =
         ];
 let pane: CommentsPane | null = null;
 let findBar: FindBar | null = null;
+let wordCount: WordCount | null = null;
 const spellMenu = new SpellContextMenu(() => editor);
 const spellChecker = new DemoChecker();
 const editor = new Editor({
@@ -366,7 +369,9 @@ const editor = new Editor({
   onFindRequest: (replace) => findBar?.open(replace),
   // 맞춤법 (15 §4): 데모 검사기, 오류 위 오른쪽 클릭 메뉴
   spellChecker,
-  onContextMenu: (e, spell) => spellMenu.open(e, spell),
+  onContextMenu: (e, spell, items) => spellMenu.open(e, spell, items),
+  // 예제 플러그인 (15 §7): 글자 수(상태 칸), 강조 낱말(오른쪽 클릭·Ctrl+Alt+K 더하기·Ctrl+Alt+J 다음)
+  plugins: [wordCountPlugin((c) => ((wordCount = c), queueMicrotask(showStats))), highlightWordsPlugin(['Quire'])],
   input: inputMode,
   fonts,
   onFontsReady: (_e, err) => {

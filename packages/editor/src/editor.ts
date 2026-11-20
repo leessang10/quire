@@ -42,11 +42,6 @@ import {
   type SectionProps,
   type SectionStart,
   type Style,
-  FindCache,
-  compileFind,
-  findInDocument,
-  replaceMatches,
-  type FindMatch,
   type FindQuery,
 } from '@quire/model';
 import {
@@ -67,60 +62,18 @@ import { Formatter, NOTE_INDENT, defaultPageSetup, hasKeys, type TableView } fro
 import { dateText, layoutHF, pageHF, type PageHF } from './headers';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
-import { SpellSession, carryIssues, type SpellChecker, type SpellIssue, type SpellKind } from './spell';
+import type { SpellChecker } from './spell';
 import { CanvasTarget } from './paint';
 import type { PainterEnv } from './painter';
 import { DEFAULT_METRICS, PagePainter, noteLayout as noteLayoutOf, noteSlots as noteSlotsOf, type FontMetrics, type LinePaint, type NoteSlot, type ObjectPaint, type PaintOverlay, type StoryOverlay } from './painter';
 
-/** 찾기 상태 (15 §3.1): 결과 수, 지금 결과 번호(-1이면 없음), 상한에 닿았나, 틀린 조건 */
-export interface FindStatus {
-  count: number;
-  current: number;
-  truncated: boolean;
-  error?: string;
-}
-
-/** 장식 (15 §2): 저장·동기화·실행 취소에 들어가지 않는 범위. 오프셋은 그 스토리의 화면 오프셋 */
-export interface Decoration {
-  from: number;
-  to: number;
-  /** 'find' | 'find-current' | 'spell-spelling' | 'spell-spacing' | 'spell-grammar' | 앱이 정한 종류 */
-  kind: string;
-  data?: unknown;
-}
-
-/** 장식 소스가 받는 문단 (그 스토리의 오프셋 start, ¶를 뺀 글자 text, 문단 ID) */
-export interface DecorationPara {
-  readonly id: string;
-  readonly start: number;
-  readonly text: string;
-}
-
-/** 장식 소스: 그리기마다 보이는 문단마다 부른다. 시작 순, 그 문단 안의 범위만 */
-export interface DecorationSource {
-  decorationsIn(story: string | null, para: DecorationPara): readonly Decoration[] | null | undefined;
-}
-
-/** 장식 겉모양: 바탕은 글자 아래, 물결·밑줄은 글자 위 */
-export interface DecorationStyle {
-  fill?: string;
-  wave?: string;
-  underline?: string;
-}
-
-/** 맞춤법 오류 위의 오른쪽 클릭 (15 §4.3) */
-export interface SpellMenu {
-  word: string;
-  kind: SpellKind;
-  message?: string;
-  suggestions: string[];
-  /** 고칠 말로 바꾼다 (제안 모드면 제안). 바꿨으면 true */
-  apply(text: string): boolean;
-  /** 이 문서에서 이 낱말을 모두 무시 */
-  ignore(): void;
-  /** 사전에 더하기 (검사기의 addWord) */
-  addWord(): void;
-}
+import type { Decoration, DecorationPara, DecorationSource, DecorationStyle, MenuItem, PluginContext, PluginEvent, QuirePlugin, Rect, StoryPos } from './plugins';
+import { eventKey, normalizeKey } from './plugins';
+import { findPlugin, type FindPlugin, type FindStatus } from './find-plugin';
+import { spellPlugin, type SpellMenu, type SpellPlugin } from './spell-plugin';
+export type { Decoration, DecorationPara, DecorationSource, DecorationStyle } from './plugins';
+export type { FindStatus } from './find-plugin';
+export type { SpellMenu } from './spell-plugin';
 
 export interface EditorOptions {
   host: HTMLElement;
@@ -154,10 +107,12 @@ export interface EditorOptions {
   /** 검사 언어 (기본 ko) */
   spellLang?: string;
   /**
-   * 오른쪽 클릭: 앱이 메뉴를 연다. spell은 맞춤법 오류 위면 그 메뉴 (그 낱말을 선택해 둔다).
+   * 오른쪽 클릭: 앱이 메뉴를 연다. spell은 맞춤법 오류 위면 그 메뉴 (그 낱말을 선택해 둔다), items는 플러그인들의 메뉴 항목.
    * false를 돌려주면 브라우저 기본 메뉴. 없으면 늘 브라우저 기본 메뉴
    */
-  onContextMenu?: (e: MouseEvent, spell: SpellMenu | null) => boolean | void;
+  onContextMenu?: (e: MouseEvent, spell: SpellMenu | null, items: MenuItem[]) => boolean | void;
+  /** 플러그인 (15 §7): 만들 때 붙인다. 나중에 use()로도 붙인다 */
+  plugins?: QuirePlugin[];
   /** 이미지 원본 저장소 (11 §2.2). 없으면 메모리 */
   assets?: AssetStore;
   /** 댓글 작성자 (14 §3.1: 4단계는 접속할 때의 사용자 정보). 없으면 "나" */
@@ -255,7 +210,6 @@ export interface EditorStats {
 const SECTION_LABELS: Record<SectionStart, string> = { nextPage: '다음 쪽', continuous: '이어서', evenPage: '짝수 쪽', oddPage: '홀수 쪽' };
 
 /** 입력이 멈춘 뒤 캐럿 문단을 검사하기까지 (15 §4.2) */
-const SPELL_PAUSE_MS = 500;
 
 /** 내장 장식 겉모양 */
 const DECORATION_STYLES: Record<string, DecorationStyle> = {
@@ -435,37 +389,17 @@ export class Editor {
   private note: ActiveNote | null = null;
   /** 진하게 칠할 주석 */
   private focusAnn: string | null = null;
-  /** 찾기 상태 (15 §3): 결과는 글자 판(contentKey)이 바뀌면 다시 구한다 */
-  private findState: {
-    query: FindQuery;
-    cache: FindCache;
-    regex: RegExp | null;
-    key: string;
-    document: Document;
-    matches: FindMatch[];
-    byStory: Map<string, FindMatch[]>;
-    truncated: boolean;
-    current: number;
-  } | null = null;
-  /** 장식 소스 (15 §2): 찾기, 맞춤법, 앱이 더한 것 */
-  private readonly decoSources: DecorationSource[] = [
-    { decorationsIn: (story, para) => this.findDecorations(story, para) },
-    { decorationsIn: (story, para) => this.spellDecorations(story, para) },
-  ];
+  /** 장식 소스 (15 §2): 찾기, 맞춤법, 앱·플러그인이 더한 것 */
+  private readonly decoSources: DecorationSource[] = [];
   private readonly decoStyles = new Map<string, DecorationStyle>(Object.entries(DECORATION_STYLES));
-  /** 맞춤법 검사 (15 §4): 세션, 문단마다 마지막으로 보인 결과, 이번 그리기에서 원한 문단, 캐럿 문단의 입력 시각 */
-  private spell: {
-    session: SpellSession;
-    shown: Map<string, { text: string; issues: readonly SpellIssue[] }>;
-    wanted: string[];
-    /** 지난 그리기에서 보인 문단 텍스트 (그 결과가 오면 다시 그린다) */
-    visible: Set<string>;
-    caret: { key: string; text: string; at: number } | null;
-    timer: ReturnType<typeof setTimeout> | null;
-    idle: number | null;
-    cursor: number;
-    cursorVersion: number;
-  } | null = null;
+  /** 플러그인 (15 §7): 붙인 것, 명령, 단축키, 이벤트 듣는 함수 */
+  private readonly plugins: Array<{ plugin: QuirePlugin; ctx: PluginContext; dispose: Array<() => void> }> = [];
+  private readonly commands = new Map<string, { plugin: string; fn: (...args: unknown[]) => boolean }>();
+  private readonly keys = new Map<string, string>();
+  private readonly listeners = new Map<PluginEvent, Set<() => void>>();
+  /** 내장 플러그인: 찾기 (늘), 맞춤법 (검사기가 있을 때) */
+  private findP!: FindPlugin;
+  private spellP: SpellPlugin | null = null;
   /** 다음 붙여넣기는 글자만 (Ctrl+Shift+V) */
   private plainPaste = false;
   /** 다중 커서 (11 §5.2): 첫 캐럿(sel) 말고 다른 캐럿들. 같은 스토리, 겹치지 않음 */
@@ -627,6 +561,9 @@ export class Editor {
     this.listen(scroller, 'mouseleave', () => this.setHover(-1, false));
     this.listen(scroller, 'scroll', () => this.scheduleRender());
     this.listen(scroller, 'contextmenu', (e) => this.onContextMenu(e as MouseEvent));
+    this.findP = findPlugin({ onOpen: opts.onFindRequest });
+    this.use(this.findP);
+    for (const pl of opts.plugins ?? []) this.use(pl);
     if (opts.spellChecker) this.setSpellChecker(opts.spellChecker, opts.spellLang);
     // 이미지 끌어 놓기 (11 §5.3): 놓은 자리에 넣는다
     this.listen(scroller, 'dragover', (e) => {
@@ -937,7 +874,8 @@ export class Editor {
 
   destroy(): void {
     if (this.bgTimer !== null) clearTimeout(this.bgTimer);
-    this.setSpellChecker(null);
+    for (const p of [...this.plugins].reverse()) this.unuse(p.plugin.name);
+    this.spellP = null;
     this.resizeObserver.disconnect();
     for (const d of this.disposers) d();
     this.input.destroy();
@@ -1030,8 +968,7 @@ export class Editor {
 
   private render(): void {
     const t0 = performance.now();
-    this.refreshFind();
-    if (this.spell) this.spell.visible.clear();
+    this.emit('beforeRender');
     const { scroller, canvas, ctx } = this;
     const layout = this.bodyLayout;
     const dpr = window.devicePixelRatio || 1;
@@ -1084,7 +1021,7 @@ export class Editor {
     this.releaseImages();
     this.updateCaret();
     this.updateMirror(visibleParas);
-    this.flushSpell();
+    this.emit('afterRender');
     this.reportSelection();
     this.stats.renderMs = performance.now() - t0;
   }
@@ -1682,111 +1619,36 @@ export class Editor {
 
   /**
    * 모두 찾고 캐럿 뒤 첫 결과를 지금 결과로 고른다 (선택하지는 않는다: 찾기 막대에서 Enter로 간다).
-   * 조건이 틀리면(빈 글자, 틀린 정규식) 결과 없이 error.
+   * 조건이 틀리면(빈 글자, 틀린 정규식) 결과 없이 error. 내장 찾기 플러그인(find-plugin)이 한다
    */
   find(query: FindQuery): FindStatus {
-    const c = compileFind(query);
-    if ('error' in c) {
-      this.findState = null;
-      this.render();
-      return { count: 0, current: -1, truncated: false, error: c.error };
-    }
-    this.findState = {
-      query,
-      cache: new FindCache(c.matcher),
-      regex: query.regex ? c.regex : null,
-      key: '',
-      document: this.document,
-      matches: [],
-      byStory: new Map(),
-      truncated: false,
-      current: -1,
-    };
-    this.refreshFind();
-    const s = this.findState!;
-    s.current = this.matchAfterCaret();
-    this.render();
-    return this.findStatus()!;
+    return this.findP.find(query);
   }
 
   /** 찾기 상태 (찾는 중이 아니면 null) */
   findStatus(): FindStatus | null {
-    const s = this.findState;
-    if (!s) return null;
-    this.refreshFind();
-    return { count: s.matches.length, current: s.current, truncated: s.truncated };
+    return this.findP.status();
   }
 
   /** 다음(dir = 1)·앞(-1) 결과로 가서 선택한다 (끝에서 처음으로 돈다) */
   findNext(dir: 1 | -1 = 1): FindStatus | null {
-    const s = this.findState;
-    if (!s) return null;
-    this.refreshFind();
-    const n = s.matches.length;
-    if (!n) return this.findStatus();
-    const cur = s.matches[s.current];
-    // 지금 결과가 선택돼 있으면 그다음, 아니면 캐럿에서 가까운 것
-    const selected = cur && this.isSelected(cur);
-    if (selected || s.current < 0) s.current = selected ? (s.current + dir + n) % n : dir > 0 ? Math.max(0, this.matchAfterCaret()) : (this.matchAfterCaret() - 1 + n) % n;
-    this.goToMatch(s.matches[s.current]!);
-    return this.findStatus();
+    return this.findP.next(dir);
   }
 
   /** 찾기를 끝낸다 (칠한 것을 지운다) */
   clearFind(): void {
-    if (!this.findState) return;
-    this.findState = null;
-    this.render();
+    this.findP.clear();
   }
 
-  /**
-   * 지금 결과를 바꾸고 다음 결과로 간다. 지금 결과가 선택돼 있지 않으면 거기로 가기만 한다 (Word와 같다).
-   * 바꿨으면 true
-   */
+  /** 지금 결과를 바꾸고 다음 결과로 간다. 지금 결과가 선택돼 있지 않으면 거기로 가기만 한다 (Word와 같다). 바꿨으면 true */
   replace(text: string): boolean {
-    const s = this.findState;
-    if (!s || !this.canEditText) return false;
-    this.refreshFind();
-    const m = s.matches[s.current];
-    if (!m || !this.isSelected(m)) {
-      this.findNext(1);
-      return false;
-    }
-    const before: Selection = { ...this.sel };
-    const { ops, count } = replaceMatches(this.document, [m], s.cache.matcher, s.regex, text);
-    if (!count) {
-      this.findNext(1);
-      return false;
-    }
-    this.history.seal();
-    this.commitRaw(ops, before);
-    this.history.seal();
-    this.refreshFind();
-    // 바꾼 자리 뒤 첫 결과
-    const at = s.matches.findIndex((x) => this.matchOrder(x, m) > 0 || (x.story === m.story && x.from >= m.from + Array.from(text).length));
-    s.current = at;
-    if (at >= 0) this.goToMatch(s.matches[at]!);
-    else this.render();
-    return true;
+    return this.findP.replace(text);
   }
 
   /** 모든 결과를 바꾼다: 한 트랜잭션 (실행 취소 한 번). 바꾼 수 */
   replaceAll(text: string): number {
-    const s = this.findState;
-    if (!s || !this.canEditText) return 0;
     this.input.commitComposition();
-    this.refreshFind();
-    if (!s.matches.length) return 0;
-    const before: Selection = { ...this.sel };
-    const { ops, count } = replaceMatches(this.document, s.matches, s.cache.matcher, s.regex, text);
-    if (!count) return 0;
-    this.history.seal();
-    this.commitRaw(ops, before);
-    this.history.seal();
-    this.refreshFind();
-    s.current = -1;
-    this.render();
-    return count;
+    return this.findP.replaceAll(text);
   }
 
   /** 본문 글자를 바꿀 수 있는가 (읽기 전용 보기·보기·댓글 역할이면 아니다) */
@@ -1794,86 +1656,9 @@ export class Editor {
     return this.role === 'edit' && !this.readOnly;
   }
 
-  /** 글자 판이 바뀌었으면 결과를 다시 구한다 (바뀌지 않은 문단은 캐시). 지금 결과는 같은 자리에 가까운 것으로 */
-  private refreshFind(): void {
-    const s = this.findState;
-    if (!s) return;
-    const key = this.document.contentKey();
-    if (s.key === key && s.document === this.document) return;
-    const cur = s.matches[s.current];
-    const r = findInDocument(this.document, s.cache, { stories: s.query.stories });
-    s.key = key;
-    s.document = this.document;
-    s.matches = r.matches;
-    s.truncated = r.truncated;
-    s.byStory = new Map();
-    for (const m of r.matches) {
-      const k = m.story ?? '';
-      let l = s.byStory.get(k);
-      if (!l) s.byStory.set(k, (l = []));
-      l.push(m);
-    }
-    if (cur) {
-      const i = r.matches.findIndex((m) => this.matchOrder(m, cur) >= 0);
-      s.current = i;
-    } else if (s.current >= r.matches.length) s.current = -1;
-  }
-
-  /** 한 문단의 찾기 결과 장식 (지금 결과는 find-current). 결과는 시작 순이라 이분 탐색으로 문단 앞까지 건너뛴다 */
-  private findDecorations(story: string | null, para: DecorationPara): Decoration[] | null {
-    const s = this.findState;
-    if (!s) return null;
-    const ms = s.byStory.get(story ?? '');
-    if (!ms) return null;
-    const end = para.start + para.text.length; // UTF-16 길이 ≥ 코드포인트 길이: 넉넉하다
-    let lo = 0;
-    let hi = ms.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (ms[mid]!.to <= para.start) lo = mid + 1;
-      else hi = mid;
-    }
-    const cur = s.matches[s.current];
-    const out: Decoration[] = [];
-    for (let i = lo; i < ms.length && ms[i]!.from < end; i++) {
-      const m = ms[i]!;
-      out.push({ from: m.from, to: m.to, kind: m === cur ? 'find-current' : 'find' });
-    }
-    return out;
-  }
-
-  /** 문서 순서 비교 (같은 스토리 안에서만 오프셋으로, 다른 스토리면 결과 목록 순) */
-  private matchOrder(a: FindMatch, b: FindMatch): number {
-    if (a.story === b.story) return a.from - b.from;
-    const ms = this.findState!.matches;
-    return ms.indexOf(a) - ms.indexOf(b);
-  }
-
-  /** 캐럿 자리(편집 중인 스토리) 뒤 첫 결과의 번호 (없으면 다음 스토리의 첫 결과, 그것도 없으면 0, 결과가 없으면 -1) */
-  private matchAfterCaret(): number {
-    const ms = this.findState!.matches;
-    if (!ms.length) return -1;
-    const story = this.storyId;
-    const at = this.range()[0];
-    const first = ms.findIndex((m) => m.story === story);
-    if (first < 0) return 0;
-    for (let i = first; i < ms.length && ms[i]!.story === story; i++) if (ms[i]!.from >= at) return i;
-    // 같은 스토리 안에 캐럿 뒤 결과가 없다: 그 스토리의 결과 다음 것
-    let i = first;
-    while (i < ms.length && ms[i]!.story === story) i++;
-    return i < ms.length ? i : 0;
-  }
-
-  private isSelected(m: FindMatch): boolean {
-    if (this.storyId !== m.story) return false;
-    const [a, b] = this.range();
-    return a === m.from && b === m.to;
-  }
-
-  /** 결과로 간다: 그 스토리로 들어가(셀·각주·머리말) 범위를 고르고 보이게 스크롤 */
-  private goToMatch(m: FindMatch): void {
+  /** 범위로 간다: 그 스토리로 들어가(셀·각주·머리말) 범위를 고르고 보이게 스크롤 (화면 위 1/3쯤). 못 들어가면 false */
+  private revealRange(story: string | null, from: number, to: number): boolean {
     this.input.commitComposition();
-    const story = m.story;
     if (story !== this.storyId) {
       if (this.hf) this.leaveHF(true);
       if (this.note) this.leaveNote(true);
@@ -1882,22 +1667,23 @@ export class Editor {
         if (isNoteStory(story)) this.enterNote(story.slice(3), null);
         else if (isHFStory(story)) {
           const page = this.pageOfHF(story);
-          if (page === null) return;
+          if (page === null) return false;
           this.enterHF(page, story.startsWith('hdr|') ? 'header' : 'footer');
         } else {
           const [table, row, col] = story.split('|') as [string, string, string];
-          if (!this.enterCell(table, row, col)) return;
+          if (!this.enterCell(table, row, col)) return false;
         }
       }
       this.relayout();
     }
-    this.setSelection(m.from, m.to);
-    // 결과는 화면 위 1/3쯤에 (가장자리에 붙으면 찾기 막대에 가린다)
+    this.setSelection(from, to);
+    // 가장자리에 붙으면 찾기 막대에 가린다
     const r = this.layout.caretRect(this.headOffset());
     const sc = this.scroller;
     if (r.y < sc.scrollTop + sc.clientHeight / 4 || r.y + r.height > sc.scrollTop + (sc.clientHeight * 3) / 4) sc.scrollTop = Math.max(0, r.y - sc.clientHeight / 3);
     this.render();
     this.opts.onChange?.(this);
+    return true;
   }
 
   /** 머리말·꼬리말 스토리를 쓰는 첫 쪽 (없으면 null) */
@@ -2890,7 +2676,12 @@ export class Editor {
 
   /** 선택 영역이 바뀌었으면 알린다 (원격 편집으로 오프셋만 바뀐 것은 알리지 않음: 공유 위치가 따라간다) */
   private reportSelection(): void {
-    if (this.sel === this.reportedSel || !this.opts.onSelectionChange) return;
+    if (this.sel === this.reportedSel) return;
+    if (this.listeners.get('selection')?.size) {
+      this.reportedSel = this.sel;
+      this.emit('selection');
+    }
+    if (!this.opts.onSelectionChange) return;
     this.reportedSel = this.sel;
     // 셀·머리말·각주는 그 스토리의 오프셋과 스토리 (14 §7)
     const { anchor, head } = this.selection();
@@ -2952,7 +2743,7 @@ export class Editor {
         if (t) return `table\u0004${this.mirrorTableKey(t)}`;
         return `${p.attrs.style ?? ''}\u0002${body.listLabel(p)?.text ?? ''}\u0003${p.fmt ? `${p.text}\u0001${p.fmt.join(',')}` : p.text}`;
       })
-      .join('\n') + (this.spell ? `\u0005${this.spell.session.version}` : '');
+      .join('\n') + (this.spellP ? `\u0005${this.spellP.session.version}` : '');
     if (this.mirror.dataset.key === key) return;
     this.mirror.dataset.key = key;
     // 목록 문단은 같은 목록이 이어지는 동안 ul/ol 하나에 li로. 번호는 글자로 앞에 붙인다 (화면과 같은 번호를 읽게)
@@ -3020,7 +2811,7 @@ export class Editor {
     const tag = forceTag ?? ({ h1: 'h1', h2: 'h2', h3: 'h3', quote: 'blockquote' } as Record<string, string>)[info.attrs.style ?? ''] ?? 'p';
     const p = document.createElement(tag);
     // 맞춤법 오류 (15 §4.3): aria-invalid를 붙인 span (서식 없는 문단만)
-    const issues = this.spell?.session.issuesFor(info.text);
+    const issues = this.spellP?.session.issuesFor(info.text);
     if (!info.fmt && !info.objs && issues?.length) {
       const cps = Array.from(info.text);
       let k = 0;
@@ -3459,6 +3250,7 @@ export class Editor {
     this.scrollCaretIntoView();
     this.render();
     this.opts.onChange?.(this);
+    this.emit('change');
   }
 
   private moveTo(offset: number, extend: boolean, keepGoal = false): void {
@@ -3480,13 +3272,15 @@ export class Editor {
     this.opts.onChange?.(this);
   }
 
-  private undo(): void {
+  /** 실행 취소 */
+  undo(): void {
     this.input.commitComposition();
     const sel = this.history.undo(this.document);
     if (sel) this.restoreSelection(sel);
   }
 
-  private redo(): void {
+  /** 다시 실행 */
+  redo(): void {
     this.input.commitComposition();
     const sel = this.history.redo(this.document);
     if (sel) this.restoreSelection(sel);
@@ -4300,17 +4094,14 @@ export class Editor {
       e.preventDefault();
       return;
     }
-    // 찾기·바꾸기 (15 §3.1): Ctrl+F, Ctrl+H. 앱이 막대를 열지 않으면 브라우저 기본 동작
-    if (mod && !shift && !e.altKey && (e.code === 'KeyF' || e.code === 'KeyH') && this.opts.onFindRequest) {
+    // 플러그인 단축키 (15 §7): 명령이 처리하면 기본 동작을 막는다 (찾기 Ctrl+F·Ctrl+H·F3도 여기)
+    const cmd = this.keys.get(eventKey(e));
+    if (cmd) {
       this.input.commitComposition();
-      this.opts.onFindRequest(e.code === 'KeyH');
-      e.preventDefault();
-      return;
-    }
-    if (e.key === 'F3' && this.findState) {
-      this.findNext(shift ? -1 : 1);
-      e.preventDefault();
-      return;
+      if (this.run(cmd)) {
+        e.preventDefault();
+        return;
+      }
     }
     if (mod && shift && !e.altKey && e.key.toLowerCase() === 'k') {
       this.deleteParagraphs();
@@ -4566,43 +4357,18 @@ export class Editor {
     this.scheduleRender();
   }
 
-  /** 맞춤법 검사기를 바꾼다 (null이면 끈다). 결과 캐시와 무시 목록은 새로 시작한다 */
+  /** 맞춤법 검사기를 바꾼다 (null이면 끈다). 내장 맞춤법 플러그인(spell-plugin)을 새로 붙인다: 결과 캐시와 무시 목록은 새로 시작한다 */
   setSpellChecker(checker: SpellChecker | null, lang?: string): void {
-    const old = this.spell;
-    if (old) {
-      old.session.dispose();
-      if (old.timer) clearTimeout(old.timer);
-      if (old.idle !== null) (window.cancelIdleCallback ?? clearTimeout)(old.idle);
-      this.spell = null;
-    }
-    if (checker) {
-      this.spell = {
-        session: new SpellSession(checker, {
-          lang,
-          onResult: (text) => {
-            const sp = this.spell;
-            if (!sp) return;
-            if (text === null || sp.visible.has(text)) this.scheduleRender();
-            else if (sp.session.idle) this.spellIdle();
-          },
-        }),
-        shown: new Map(),
-        wanted: [],
-        visible: new Set(),
-        caret: null,
-        timer: null,
-        idle: null,
-        cursor: 0,
-        cursorVersion: -1,
-      };
-    }
+    if (this.spellP) this.unuse(this.spellP.name);
+    this.spellP = checker ? spellPlugin(checker, { lang }) : null;
+    if (this.spellP) this.use(this.spellP);
     if (this.mirror) delete this.mirror.dataset.key;
     this.scheduleRender();
   }
 
   /** 맞춤법 세션 (검사 통계, 무시 목록). 검사하지 않으면 null */
-  get spellSession(): SpellSession | null {
-    return this.spell?.session ?? null;
+  get spellSession() {
+    return this.spellP?.session ?? null;
   }
 
   /** 문단의 장식들 (소스마다 시작 순, 여럿이면 합쳐 정렬) */
@@ -4621,143 +4387,205 @@ export class Editor {
     return out ? out.sort((a, b) => a.from - b.from) : only;
   }
 
-  /**
-   * 한 문단의 맞춤법 장식 (15 §4.2). 이 문단을 검사하길 원한다고 적고(그리기가 끝나면 세션에 알린다),
-   * 결과가 아직 없으면 지난 결과를 새 글자로 옮겨 보인다. 캐럿 문단은 입력이 멈춘 뒤에 검사한다
-   */
-  private spellDecorations(story: string | null, para: DecorationPara): Decoration[] | null {
-    const sp = this.spell;
-    if (!sp || !para.text) return null;
-    const key = `${story ?? ''}|${para.id}`;
-    let wait = false;
-    if (story === this.storyId) {
-      const at = this.range()[0];
-      if (at >= para.start && at <= para.start + para.text.length) {
-        const now = performance.now();
-        if (!sp.caret || sp.caret.key !== key) sp.caret = { key, text: para.text, at: 0 };
-        else if (sp.caret.text !== para.text) sp.caret = { key, text: para.text, at: now };
-        const left = sp.caret.at + SPELL_PAUSE_MS - now;
-        if (left > 0) {
-          wait = true;
-          if (sp.timer) clearTimeout(sp.timer);
-          sp.timer = setTimeout(() => {
-            sp.timer = null;
-            this.scheduleRender();
-          }, left + 5);
-        }
-      }
-    }
-    sp.visible.add(para.text);
-    if (!wait) sp.wanted.push(para.text);
-    let issues: readonly SpellIssue[] | undefined = sp.session.issuesFor(para.text);
-    const last = sp.shown.get(key);
-    if (issues) {
-      if (!last || last.text !== para.text || last.issues !== issues) sp.shown.set(key, { text: para.text, issues });
-    } else if (last) {
-      issues = carryIssues(last.text, para.text, last.issues);
-      sp.shown.set(key, { text: para.text, issues });
-    }
-    if (sp.shown.size > 20000) sp.shown.clear();
-    if (!issues?.length) return null;
-    return issues.map((i) => ({ from: para.start + i.from, to: para.start + i.to, kind: `spell-${i.kind}`, data: i }));
-  }
-
-  /** 그리기가 끝나면: 보인 문단을 세션에 알리고, 할 일이 없으면 유휴 시간에 나머지 본문 문단을 검사한다 */
-  private flushSpell(): void {
-    const sp = this.spell;
-    if (!sp) return;
-    sp.session.want(sp.wanted);
-    sp.wanted = [];
-    this.spellIdle();
-  }
-
-  /** 할 일이 없으면 유휴 시간에 나머지 본문 문단을 검사한다 (15 §4.2) */
-  private spellIdle(): void {
-    const sp = this.spell;
-    if (!sp || !sp.session.idle || sp.idle !== null) return;
-    if (sp.cursorVersion !== this.body.version) {
-      sp.cursorVersion = this.body.version;
-      sp.cursor = 0;
-    }
-    if (sp.cursor >= this.body.paragraphs().length) return;
-    const ric = window.requestIdleCallback ?? ((f: (d: { timeRemaining(): number }) => void) => setTimeout(() => f({ timeRemaining: () => 8 }), 100));
-    sp.idle = ric((dl) => {
-      sp.idle = null;
-      if (this.spell !== sp) return;
-      const paras = this.body.paragraphs();
-      if (sp.cursorVersion !== this.body.version) {
-        sp.cursorVersion = this.body.version;
-        sp.cursor = 0;
-      }
-      const texts: string[] = [];
-      while (sp.cursor < paras.length && texts.length < 50 && dl.timeRemaining() > 1) {
-        const t = paras[sp.cursor++]!.text;
-        if (t && !sp.session.has(t)) texts.push(t);
-      }
-      sp.session.wantLater(texts);
-      // 더 넣을 것이 없으면 다음 유휴로 이어 간다 (결과가 오면 그리기가 다시 부른다)
-      if (!texts.length && sp.cursor < paras.length) this.spellIdle();
-    }) as unknown as number;
-  }
-
   /** 화면 점의 맞춤법 오류 (편집 중인 스토리에서). 없으면 null */
   spellAt(clientX: number, clientY: number): SpellMenu | null {
-    const sp = this.spell;
-    if (!sp) return null;
-    const p = this.docPoint({ clientX, clientY });
-    // 본문을 편집 중이면 표 칸 위는 아니다 (칸은 들어가서)
-    if (!this.cell && !this.hf && !this.note && this.cellAt(p.x, p.y)) return null;
-    const offset = this.layout.hitTest(p.x, Math.min(p.y, this.layout.validBottom - 1));
-    const doc = this.doc;
-    const story = this.storyId;
-    const para = doc.paragraphs()[doc.paragraphIndexAt(offset)];
-    if (!para) return null;
-    const rel = offset - para.start;
-    const issues = sp.session.issuesFor(para.text) ?? [];
-    const issue = issues.find((i) => i.from <= rel && rel <= i.to);
-    if (!issue) return null;
-    const from = para.start + issue.from;
-    const to = para.start + issue.to;
-    const text = para.text;
-    const word = Array.from(text).slice(issue.from, issue.to).join('');
-    return {
-      word,
-      kind: issue.kind,
-      message: issue.message,
-      suggestions: issue.suggestions,
-      apply: (value: string) => {
-        if (!this.canEditText || this.storyId !== story) return false;
-        const before: Selection = { ...this.sel };
-        const { ops, count } = replaceMatches(this.document, [{ story, from, to }], (t) => (t === text ? [[issue.from, issue.to]] : []), null, value);
-        if (!count) return false;
-        this.history.seal();
-        this.commitRaw(ops, before);
-        this.history.seal();
-        this.setSelection(from + Array.from(value).length);
-        this.render();
-        this.opts.onChange?.(this);
-        return true;
-      },
-      ignore: () => sp.session.ignore(word),
-      addWord: () => sp.session.addWord(word),
-    };
+    return this.spellP?.menuAt(clientX, clientY) ?? null;
   }
 
   private onContextMenu(e: MouseEvent): void {
     if (!this.opts.onContextMenu) return;
     this.input.commitComposition();
-    const spell = this.spellAt(e.clientX, e.clientY);
+    // 맞춤법 오류 위면 그 낱말을 선택해 둔다 (Word와 같다)
+    const spell = this.spellP?.menuAt(e.clientX, e.clientY, true) ?? null;
     if (spell) {
-      // 그 낱말을 선택해 둔다 (Word와 같다)
-      const p = this.docPoint(e);
-      const offset = this.layout.hitTest(p.x, Math.min(p.y, this.layout.validBottom - 1));
-      const para = this.doc.paragraphs()[this.doc.paragraphIndexAt(offset)]!;
-      const issue = this.spell!.session.issuesFor(para.text)!.find((i) => i.from <= offset - para.start && offset - para.start <= i.to)!;
-      this.setSelection(para.start + issue.from, para.start + issue.to);
       this.history.seal();
       this.render();
     }
-    if (this.opts.onContextMenu(e, spell) !== false) e.preventDefault();
+    const at = this.hitTestClient(e.clientX, e.clientY);
+    const items: MenuItem[] = [];
+    if (at)
+      for (const p of this.plugins)
+        if (p.plugin.contextMenu && p.plugin !== this.spellP) for (const it of p.plugin.contextMenu(p.ctx, at, e)) items.push({ ...it, plugin: p.plugin.name });
+    if (this.opts.onContextMenu(e, spell, items) !== false) e.preventDefault();
+  }
+
+  // ── 플러그인 (15 §7) ─────────────────────────────────
+
+  /** 플러그인을 붙인다. 같은 이름이 있으면 먼저 뗀다. 떼는 함수를 돌려준다 */
+  use(plugin: QuirePlugin): () => void {
+    this.unuse(plugin.name);
+    const ctx = this.pluginContext(plugin);
+    const entry = { plugin, ctx, dispose: [] as Array<() => void> };
+    this.plugins.push(entry);
+    for (const [name, fn] of Object.entries(plugin.commands ?? {})) {
+      const key = `${plugin.name}.${name}`;
+      this.commands.set(key, { plugin: plugin.name, fn: (...args) => fn(ctx, ...args) });
+      entry.dispose.push(() => {
+        if (this.commands.get(key)?.plugin === plugin.name) this.commands.delete(key);
+      });
+    }
+    for (const [k, cmd] of Object.entries(plugin.keymap ?? {})) {
+      const key = normalizeKey(k);
+      this.keys.set(key, cmd);
+      entry.dispose.push(() => {
+        if (this.keys.get(key) === cmd) this.keys.delete(key);
+      });
+    }
+    for (const [kind, st] of Object.entries(plugin.decorationStyles ?? {})) this.setDecorationStyle(kind, st);
+    if (plugin.decorations) entry.dispose.push(this.addDecorationSource(plugin.decorations(ctx)));
+    // 문서 데이터: 옛 판이면 옮긴다
+    if (plugin.data) {
+      const cur = this.document.ext.get(plugin.name) as { v: number; data: unknown } | undefined;
+      if (cur && cur.v < plugin.data.schemaVersion && plugin.data.migrate)
+        this.document.ext.set(plugin.name, { v: plugin.data.schemaVersion, data: plugin.data.migrate(cur.data, cur.v) });
+    }
+    const cleanup = plugin.init?.(ctx);
+    if (typeof cleanup === 'function') entry.dispose.push(cleanup);
+    this.scheduleRender();
+    return () => this.unuse(plugin.name);
+  }
+
+  /** 플러그인을 뗀다 */
+  unuse(name: string): void {
+    const i = this.plugins.findIndex((p) => p.plugin.name === name);
+    if (i < 0) return;
+    const [entry] = this.plugins.splice(i, 1);
+    for (const d of entry!.dispose.reverse()) d();
+    this.scheduleRender();
+  }
+
+  /** 붙인 플러그인 이름 */
+  pluginNames(): string[] {
+    return this.plugins.map((p) => p.plugin.name);
+  }
+
+  /** 명령 실행 ('플러그인.명령'). 처리했으면 true */
+  run(command: string, ...args: unknown[]): boolean {
+    const c = this.commands.get(command);
+    return c ? c.fn(...args) : false;
+  }
+
+  /** 명령 이름들 */
+  commandNames(): string[] {
+    return [...this.commands.keys()];
+  }
+
+  /** 플러그인이 더한 내보내기 형식 ('플러그인.형식' → 정보) */
+  exporters(): Array<{ id: string; label: string; extension: string; mime: string }> {
+    const out: Array<{ id: string; label: string; extension: string; mime: string }> = [];
+    for (const p of this.plugins) for (const [k, ex] of Object.entries(p.plugin.exporters ?? {})) out.push({ id: `${p.plugin.name}.${k}`, label: ex.label, extension: ex.extension, mime: ex.mime });
+    return out;
+  }
+
+  /** 플러그인 내보내기 실행 */
+  async exportWith(id: string): Promise<Uint8Array | string | null> {
+    for (const p of this.plugins)
+      for (const [k, ex] of Object.entries(p.plugin.exporters ?? {})) if (`${p.plugin.name}.${k}` === id) return ex.export(p.ctx);
+    return null;
+  }
+
+  private emit(event: PluginEvent): void {
+    const set = this.listeners.get(event);
+    if (set) for (const fn of [...set]) fn();
+  }
+
+  /** 화면 점의 스토리 자리 (편집 중인 스토리 안이 아니면 null) */
+  private hitTestClient(clientX: number, clientY: number): StoryPos | null {
+    const p = this.docPoint({ clientX, clientY });
+    // 본문을 편집 중이면 표 칸 위는 아니다 (칸은 들어가서)
+    if (!this.cell && !this.hf && !this.note && this.cellAt(p.x, p.y)) return null;
+    const offset = this.layout.hitTest(p.x, Math.min(p.y, this.layout.validBottom - 1));
+    return { story: this.storyId, offset };
+  }
+
+  /** 편집 중인 스토리의 캐럿 사각형 (뷰포트 좌표) */
+  private clientRectAt(offset: number): Rect {
+    const r = this.layout.caretRect(offset);
+    const sr = this.scroller.getBoundingClientRect();
+    return { x: sr.left + r.x + this.pageLeft() - this.scroller.scrollLeft, y: sr.top + r.y - this.scroller.scrollTop, width: 1, height: r.height };
+  }
+
+  /** 플러그인이 받는 좁은 면 */
+  private pluginContext(plugin: QuirePlugin): PluginContext {
+    const self = this;
+    const finish = (select?: [number, number]) => {
+      if (select) self.setSelection(select[0], select[1]);
+      self.render();
+      self.opts.onChange?.(self);
+    };
+    return {
+      name: plugin.name,
+      document: () => self.document,
+      story: () => self.storyId,
+      doc: () => self.doc,
+      selection() {
+        const { anchor, head } = self.selection();
+        return { anchor, head, from: Math.min(anchor, head), to: Math.max(anchor, head), story: self.storyId };
+      },
+      select(anchor, head = anchor) {
+        self.setSelection(anchor, head);
+        self.render();
+        self.opts.onChange?.(self);
+      },
+      reveal: (story, from, to) => self.revealRange(story, from, to),
+      canEdit: () => self.canEditText,
+      edit(fn, opts) {
+        if (!self.canEditText) return false;
+        self.input.commitComposition();
+        const before: Selection = { ...self.sel };
+        const ops = fn(self.doc);
+        if (!ops.length) return false;
+        self.history.seal();
+        self.commit(ops, before);
+        self.history.seal();
+        finish(opts?.select);
+        return true;
+      },
+      editDocument(fn, opts) {
+        if (!self.canEditText) return false;
+        self.input.commitComposition();
+        const before: Selection = { ...self.sel };
+        const ops = fn(self.document);
+        if (!ops.length) return false;
+        self.history.seal();
+        self.commitRaw(ops, before);
+        self.history.seal();
+        finish(opts?.select);
+        return true;
+      },
+      caretRect: () => self.clientRectAt(self.headOffset()),
+      rangeRects(from, to) {
+        // 줄마다: 줄이 바뀌는 곳에서 끊는다 (긴 범위는 앞 2,000자)
+        const out: Rect[] = [];
+        const end = Math.min(to, from + 2000);
+        let cur: Rect | null = null;
+        for (let o = from; o <= end; o++) {
+          const r = self.clientRectAt(o);
+          if (cur && Math.abs(r.y - cur.y) < 1 && r.x >= cur.x) cur.width = r.x - cur.x;
+          else {
+            if (cur && cur.width > 0) out.push(cur);
+            cur = { ...r, width: 0 };
+          }
+        }
+        if (cur && cur.width > 0) out.push(cur);
+        return out;
+      },
+      hitTest: (x, y) => self.hitTestClient(x, y),
+      redraw: () => self.scheduleRender(),
+      on(event, fn) {
+        let set = self.listeners.get(event);
+        if (!set) self.listeners.set(event, (set = new Set()));
+        set.add(fn);
+        return () => set!.delete(fn);
+      },
+      run: (command, ...args) => self.run(command, ...args),
+      getData<T>() {
+        return (self.document.ext.get(plugin.name) as { data: T } | undefined)?.data;
+      },
+      setData(value) {
+        self.document.ext.set(plugin.name, { v: plugin.data?.schemaVersion ?? 1, data: value });
+      },
+    };
   }
 
   // ── 마우스 ────────────────────────────────────────────

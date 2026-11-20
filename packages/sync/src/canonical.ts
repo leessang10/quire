@@ -74,6 +74,8 @@ export interface QuireDoc {
   annotations: unknown[];
   /** 댓글 스레드 (14 §3). 없으면 빈 것 */
   threads?: unknown[];
+  /** 플러그인 데이터 (15 §7): 이름 → { v, data } */
+  x?: Record<string, unknown>;
 }
 
 export const SCHEMA_VERSION = 1;
@@ -266,6 +268,8 @@ export function quireFromDocument(document: Document): QuireDoc {
   // 댓글 스레드 (14 §3): 메시지는 시각 순
   const threads = document.threads();
   if (threads.length) q.threads = threads.map((t) => structuredClone(t));
+  // 플러그인 데이터 (15 §7)
+  if (document.ext.size) q.x = Object.fromEntries([...document.ext].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, structuredClone(v)]));
   return q;
 }
 
@@ -346,6 +350,8 @@ export function documentFromQuire(q: QuireDoc, peer?: string): { document: Docum
     const thread: CommentThread = { id: t.id, anchor: typeof t.anchor === 'string' ? t.anchor : null, resolved: t.resolved === true, deleted: t.deleted === true, messages };
     for (const [k, v] of keysOfThread(thread)) document.applyRemoteComment(k, structuredClone(v));
   }
+  // 플러그인 데이터 (15 §7)
+  if (q.x && typeof q.x === 'object') for (const [k, v] of Object.entries(q.x)) document.ext.set(k, structuredClone(v));
   return { document, notes };
 }
 
