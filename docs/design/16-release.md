@@ -186,5 +186,6 @@
 - 처음에는 한 탭에서 연달아 돌려 앞 실행의 힙이 남았다(74 → 106 → 185 MB). 실행마다 새 탭을 열고 GC 뒤에 잰다.
 - `performance.memory`는 JS 객체만 세어 20 MB로 나왔다. 글꼴 조각·HarfBuzz WASM의 ArrayBuffer(약 32 MB)를 더한다.
 - CI: 매일 작업(`bench`)에서 Ubuntu 러너로 돌리되 기준선 없이 목표만 본다 (`--targets-only`, 기기가 다름). 결과 JSON을 아티팩트로 남긴다.
+- 첫 CI 실행 (GitHub ubuntu-latest, Chrome 157 헤드리스): 입력 p95 2.9 ms, 첫 화면 673 ms (첫 프레임 295 ms), 전체 조판 1,230 ms, 60 fps, 52 MB — 모두 목표 안. 쪽 수도 1,001쪽으로 같다.
 
 **한계**: 전체 조판은 Worker가 아니라 메인 스레드 유휴 조각이다 (06 §3 "Worker 사용" 조건과 다르지만 목표 안). 스크롤 fps는 화면 주사율에 묶인다. 실제 키보드·IME 지연은 6-7에서 본다.
