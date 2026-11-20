@@ -13,6 +13,8 @@ export type { ToMain, ToWorker, RemoteSel, StoryInit, StoryDelta } from './proto
 export { canonicalJson, displayText, docFromQuire, documentFromQuire, migrateQuire, quireFromDoc, quireFromDocument, quireFromText, sha256Hex, stateHash, textFromQuire, SCHEMA_VERSION } from './canonical';
 export type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from './canonical';
 export { openQuire, packQuire, assetIdOf, assetIdsOf, MIMETYPE, FORMAT_VERSION } from './quire-file';
+export { readZip, writeZip } from './zip';
+export type { ReadEntry, ZipEntry } from './zip';
 export type { OpenedQuire, Manifest, QuireAsset } from './quire-file';
 export { applyHunks, compactDoc, compactDocument, compactLoro, diffText, documentFromSnapshot, restoreInto, readEpoch, rebaseHunks, rebaseOnto, syncFormats, META } from './epoch';
 export type { Hunk, RebaseInfo } from './epoch';

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { documentFromQuire, assetIdOf, type QuireDoc, type QuireParagraph } from '@quire/sync';
 import { SUPPORT, elementsDocument, exportHtml, exportMarkdown, firstDifference, importHtml, importMarkdown, project, toDataUrl, type ImportedAsset } from './index';
 
-/** 2×1 PNG (파랑) */
+/** 2×1 PNG (검정·빨강) */
 async function png(): Promise<Uint8Array> {
   const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAEElEQVR4nGNgYGD4z8DAAAAEAwEAmEtrpQAAAABJRU5ErkJggg==';
   const bin = atob(b64);

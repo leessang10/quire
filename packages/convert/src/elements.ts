@@ -2,7 +2,7 @@
  * 주요 요소 시험 틀 (15 §6.1): 표의 요소를 모두 담은 정본 문서와, 포맷이 담는 요소만 남겨 비교하는 투영. 포맷마다
  * "내보내기 → 가져오기" 왕복 뒤 투영이 같아야 한다 (DOCX·HWPX도 같은 틀에 열만 더한다).
  */
-import { MARK_KEYS, defaultListDef, noteStoryId, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs } from '@quire/model';
+import { MARK_KEYS, OBJ, defaultListDef, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps } from '@quire/model';
 import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quire/sync';
 import { emptyQuire, tableGrid } from './common';
 
@@ -23,14 +23,42 @@ export interface FormatSupport {
   imageSize: boolean;
   /** 표: 병합·열 너비·칸 바탕·세로 맞춤 */
   tableLayout: boolean;
+  /** 구역·용지·여백·방향·다단·쪽 번호, 머리말·꼬리말 */
+  sections: boolean;
+  /** 떠 있는 이미지·어울림 */
+  floats: boolean;
+  /** 댓글 (스레드·답글·해결) */
+  comments: boolean;
+  /** 제안 (삽입·삭제) */
+  suggestions: boolean;
+  /** 길이의 단위 (1/1000pt): DOCX는 twip(1/20pt)이라 50 */
+  unit?: number;
 }
 
 const HEADINGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
 
-export const SUPPORT: Record<'markdown' | 'html', FormatSupport> = {
-  markdown: { marks: ['bold', 'italic', 'strike', 'link'], styles: [...HEADINGS, 'quote', 'code'], paraLayout: false, emptyParas: false, edgeSpaces: false, imageSize: false, tableLayout: false },
-  html: { marks: MARK_KEYS, styles: [...HEADINGS, 'quote', 'code'], paraLayout: true, emptyParas: true, edgeSpaces: true, imageSize: true, tableLayout: true },
+const NONE = { sections: false, floats: false, comments: false, suggestions: false };
+
+export const SUPPORT: Record<'markdown' | 'html' | 'docx', FormatSupport> = {
+  markdown: { marks: ['bold', 'italic', 'strike', 'link'], styles: [...HEADINGS, 'quote', 'code'], paraLayout: false, emptyParas: false, edgeSpaces: false, imageSize: false, tableLayout: false, ...NONE },
+  html: { marks: MARK_KEYS, styles: [...HEADINGS, 'quote', 'code'], paraLayout: true, emptyParas: true, edgeSpaces: true, imageSize: true, tableLayout: true, ...NONE },
+  docx: { marks: MARK_KEYS, styles: [...HEADINGS, 'quote', 'code'], paraLayout: true, emptyParas: true, edgeSpaces: true, imageSize: true, tableLayout: true, sections: true, floats: true, comments: true, suggestions: true, unit: 50 },
 };
+
+/** 스토리의 화면 글 (문단마다 ¶, 개체·표는 OBJ): 주석 오프셋의 기준 */
+export function storyText(q: QuireDoc, name: string): string[] {
+  const list = Array.isArray(q.stories[name]) ? (q.stories[name] as Array<QuireParagraph | QuireTable>) : [];
+  const out: string[] = [];
+  for (const b of list) {
+    if ('table' in b) out.push(OBJ, '\n');
+    else {
+      for (const r of b.c ?? []) if (r.img) out.push(OBJ);
+      else out.push(...Array.from(r.t ?? ''));
+      out.push('\n');
+    }
+  }
+  return out;
+}
 
 /** 요소 표의 모든 요소를 담은 문서. image는 자산 ID (시험이 바이트를 준다) */
 export function elementsDocument(image: { asset: string; w: number; h: number }): QuireDoc {
@@ -71,7 +99,7 @@ export function elementsDocument(image: { asset: string; w: number; h: number })
     p([t('글머리 하나')], { list: { id: 'L1', level: 0 } }),
     p([t('글머리 둘 (수준 2)')], { list: { id: 'L1', level: 1 } }),
     p([t('글머리 셋')], { list: { id: 'L1', level: 0 } }),
-    p([t('사이 문단')]),
+    p([t('사이 문단')], { section: 's1' }),
     p([t('번호 하나')], { list: { id: 'L2', level: 0 } }),
     p([t('번호 둘')], { list: { id: 'L2', level: 0 } }),
     p([t('번호 아래 (가.)')], { list: { id: 'L2', level: 1 } }),
@@ -91,6 +119,11 @@ export function elementsDocument(image: { asset: string; w: number; h: number })
       },
     },
     p([t('표 뒤 문단')]),
+    p([
+      t('떠 있는 그림'),
+      { img: { id: 'img2', kind: 'image', asset: image.asset, w: image.w, h: image.h, alt: '떠 있는 상자', float: { relX: 'column', relY: 'paragraph', x: 'right', y: 6000, wrap: 'square', side: 'both', gap: 9000 } } },
+      t('이 오른쪽에 있고 글이 어울립니다.'),
+    ]),
   ];
   const q = emptyQuire(body);
   const stories = q.stories as Record<string, unknown>;
@@ -105,6 +138,41 @@ export function elementsDocument(image: { asset: string; w: number; h: number })
   stories[noteStoryId('n1')] = [p([t('각주 내용 '), t('굵게', { bold: true }), t('.')])];
   q.settings.lists = { L1: bullet, L2: number };
   q.styles = {};
+  // 구역 둘: 첫 구역은 머리말·꼬리말(쪽 번호 필드), 둘째는 가로·두 단·로마 숫자 쪽 번호
+  stories['hdr|s1|default'] = [p([t('머리말 글')])];
+  stories['ftr|s1|default'] = [p([t('쪽 '), { img: { kind: 'field', field: 'page' } }, t(' / '), { img: { kind: 'field', field: 'pages' } }], { align: 'center' })];
+  stories['ftr|last|default'] = [p([t('둘째 구역 '), { img: { kind: 'field', field: 'page' } }])];
+  q.sections = [
+    { id: 's1', page: { width: 595276, height: 841890, margin: [72000, 72000, 72000, 72000] }, start: 'nextPage', header: { default: 'hdr|s1|default' }, footer: { default: 'ftr|s1|default' } },
+    {
+      id: 'last',
+      page: { width: 841890, height: 595276, margin: [54000, 60000, 54000, 60000] },
+      start: 'nextPage',
+      columns: { count: 2, gap: 24000, separator: true },
+      pageNumber: { start: 5, format: 'roman' },
+      footer: { default: 'ftr|last|default' },
+    },
+  ];
+  // 댓글 둘 (답글, 해결)과 제안 둘 (삽입, 삭제): 오프셋은 본문 글에서 찾는다
+  const text = storyText(q, 'body').join('');
+  const range = (needle: string) => {
+    const u = text.indexOf(needle);
+    const from = Array.from(text.slice(0, u)).length;
+    return { start: { story: 'body', offset: from }, end: { story: 'body', offset: from + Array.from(needle).length } };
+  };
+  const alice = { id: 'u1', name: '김하나', color: '#1a73e8' };
+  const bob = { id: 'u2', name: 'Bob', color: '#d93025' };
+  const T = 1767225600000;
+  q.annotations = [
+    { id: 'a1', type: 'comment', data: { thread: 'th1' }, ...range('굵은 기울임') },
+    { id: 'a2', type: 'comment', data: { thread: 'th2' }, ...range('취소선') },
+    { id: 'a3', type: 'suggestion', data: { kind: 'insert', author: alice, time: T + 60000 }, ...range('인용한') },
+    { id: 'a4', type: 'suggestion', data: { kind: 'delete', author: bob, time: T + 120000 }, ...range('사이 ') },
+  ];
+  q.threads = [
+    { id: 'th1', anchor: 'a1', resolved: false, deleted: false, messages: [{ id: 'm1', author: alice, time: T, text: '여기를 고칠까요?\n두 줄 댓글' }, { id: 'm2', author: bob, time: T + 1000, text: 'Yes' }] },
+    { id: 'th2', anchor: 'a2', resolved: true, deleted: false, messages: [{ id: 'm3', author: bob, time: T + 2000, text: '해결한 댓글' }] },
+  ] satisfies CommentThread[];
   return q;
 }
 
@@ -112,8 +180,15 @@ export function elementsDocument(image: { asset: string; w: number; h: number })
 
 type Block = Record<string, unknown>;
 
+/** 시각은 분 단위로 (Word는 댓글 시각을 분까지만 저장한다) */
+const minute = (t: unknown) => (typeof t === 'number' ? Math.floor(t / 60000) * 60000 : null);
+
 /** 포맷이 담는 요소만 남긴 정본 (비교용). 이름(목록 ID, 표 스토리 이름, 각주 ID)에 무관하다 */
 export function project(q: QuireDoc, s: FormatSupport): Block[] {
+  const unit = s.unit ?? 1;
+  /** 길이를 포맷의 단위로 */
+  const L = (v: number) => Math.round(v / unit) * unit;
+  const lengths = (o: Record<string, number | undefined>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v === 'number' ? L(v) : v]));
   const lists = (q.settings.lists ?? {}) as Record<string, ListDef>;
   const story = (name: string) => (Array.isArray(q.stories[name]) ? (q.stories[name] as Array<QuireParagraph | QuireTable>) : []);
   const marksOf = (m: MarkSet | undefined): Record<string, unknown> => {
@@ -127,7 +202,12 @@ export function project(q: QuireDoc, s: FormatSupport): Block[] {
       if (r.img) {
         const o = r.img as ObjAttrs;
         if (o.kind === 'note' && o.id) out.push({ note: blocks(story(noteStoryId(o.id))) });
-        else if (o.kind === 'image') out.push({ img: { asset: o.asset, alt: o.alt ?? '', ...(s.imageSize ? { w: Math.round((o.w ?? 0) / 750), h: Math.round((o.h ?? 0) / 750) } : {}) } });
+        else if (o.kind === 'field') out.push({ field: o.field });
+        else if (o.kind === 'image') {
+          const f = o.float;
+          const float = s.floats && f ? { float: { relX: f.relX, relY: f.relY, x: f.x, y: f.y, wrap: f.wrap, side: f.wrap === 'square' ? (f.side ?? 'both') : null, gap: f.gap ?? 9000, behind: !!f.behind } } : {};
+          out.push({ img: { asset: o.asset, alt: o.alt ?? '', ...(s.imageSize ? { w: Math.round((o.w ?? 0) / 750), h: Math.round((o.h ?? 0) / 750) } : {}), ...float } });
+        }
         continue;
       }
       const m = marksOf(r.m);
@@ -166,7 +246,7 @@ export function project(q: QuireDoc, s: FormatSupport): Block[] {
           s.tableLayout
             ? {
                 table: t.rows.map((r) => r.cells.map((c) => ({ text: text(c.story), span: c.span ?? [1, 1], fill: c.fill ?? null, valign: c.valign ?? 'top' }))),
-                cols: t.cols.map((w) => Math.round(w / 10)),
+                cols: t.cols.map(L),
               }
             : { table: tableGrid(t).map((r) => r.map(text)) },
         );
@@ -179,17 +259,58 @@ export function project(q: QuireDoc, s: FormatSupport): Block[] {
       const style = a.style && s.styles.includes(a.style) ? a.style : null;
       if (style) blk.style = style;
       if (a.list) blk.list = { kind: lists[a.list.id]?.kind ?? 'bullet', level: a.list.level };
+      if (s.sections && a.section) blk.sectionEnd = true;
       if (s.paraLayout) {
         if (a.align && a.align !== 'left') blk.align = a.align;
-        if (a.indent) blk.indent = a.indent;
-        if (a.space) blk.space = a.space;
-        if (a.line) blk.line = a.line;
+        if (a.indent) blk.indent = lengths(a.indent);
+        if (a.space) blk.space = lengths(a.space);
+        if (a.line) blk.line = a.line.rule === 'multiple' ? a.line : { rule: a.line.rule, value: L(a.line.value) };
       }
       out.push(blk);
     }
     return out;
   };
-  return blocks(q.stories.body);
+  const out = blocks(q.stories.body);
+  if (s.sections) {
+    const list = (Array.isArray(q.sections) ? q.sections : []) as Array<Record<string, unknown>>;
+    out.push({
+      sections: list.map((e) => {
+        const f = fullSection(e as Partial<SectionProps>);
+        const hf: Record<string, unknown> = {};
+        for (const part of ['header', 'footer'] as const) for (const kind of ['default', 'first', 'even'] as const) if (f[part]?.[kind]) hf[`${part}.${kind}`] = blocks(story(f[part]![kind]!));
+        return {
+          page: { width: L(f.page.width), height: L(f.page.height), margin: f.page.margin.map(L) },
+          start: f.start,
+          columns: f.columns && f.columns.count > 1 ? { count: f.columns.count, gap: L(f.columns.gap), separator: !!f.columns.separator } : null,
+          titlePage: !!f.titlePage,
+          pageNumber: f.pageNumber ?? null,
+          hf,
+        };
+      }),
+    });
+  }
+  const anns = ((q.annotations ?? []) as Array<{ type?: string; data?: Record<string, unknown>; start?: { story?: string; offset?: number }; end?: { offset?: number } }>)
+    .filter((a) => a.start && typeof a.start.offset === 'number' && typeof a.end?.offset === 'number')
+    .sort((a, b) => a.start!.offset! - b.start!.offset! || String(a.type).localeCompare(String(b.type)));
+  const rangeText = (a: (typeof anns)[0]) => storyText(q, a.start!.story ?? 'body').slice(a.start!.offset!, a.end!.offset!).join('');
+  if (s.comments) {
+    const threads = new Map(((q.threads ?? []) as CommentThread[]).map((t) => [t.id, t]));
+    out.push({
+      comments: anns
+        .filter((a) => a.type === 'comment')
+        .map((a) => {
+          const t = threads.get(String(a.data?.thread));
+          return { story: a.start!.story === 'body' || !a.start!.story ? 'body' : 'other', text: rangeText(a), resolved: !!t?.resolved, messages: (t?.messages ?? []).filter((m) => !m.deleted).map((m) => ({ author: m.author?.name, text: m.text, time: minute(m.time) })) };
+        }),
+    });
+  }
+  if (s.suggestions)
+    out.push({
+      suggestions: anns
+        .filter((a) => a.type === 'suggestion')
+        .map((a) => ({ kind: a.data?.kind, author: (a.data?.author as { name?: string } | undefined)?.name, time: minute(a.data?.time), text: rangeText(a) })),
+    });
+  return out;
 }
 
 /** 두 투영의 첫 차이 (같으면 null) */
