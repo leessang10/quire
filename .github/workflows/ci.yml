@@ -42,3 +42,27 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx vitest run --config vitest.slow.config.ts
+
+  bench:
+    name: 성능 벤치마크 (목표만)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/build-fonts.mjs
+      # 러너는 기준선(개발 기기)과 기기가 달라 06 §3 목표만 본다. 결과는 기록으로 남긴다
+      - run: node scripts/bench.mjs --targets-only --out bench-result.json
+        env:
+          QUIRE_BENCH_BROWSER: /usr/bin/google-chrome
+          QUIRE_BENCH_MACHINE: GitHub ubuntu-latest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-result
+          path: bench-result.json

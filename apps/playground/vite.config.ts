@@ -16,6 +16,7 @@ export default defineConfig({
         live: resolve(__dirname, 'live.html'),
         checklist: resolve(__dirname, 'checklist.html'),
         shaping: resolve(__dirname, 'shaping.html'),
+        bench: resolve(__dirname, 'bench.html'),
       },
     },
   },

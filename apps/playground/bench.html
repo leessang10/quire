@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quire 성능 벤치마크</title>
+    <style>
+      html, body { margin: 0; height: 100%; font: 13px/1.5 system-ui, 'Malgun Gothic', sans-serif; }
+      body { display: grid; grid-template-rows: auto 1fr; }
+      header { display: flex; gap: 12px; align-items: center; padding: 6px 12px; border-bottom: 1px solid #ccc; }
+      #status { color: #555; }
+      #result { margin: 0; max-height: 40vh; overflow: auto; font: 12px ui-monospace, Consolas, monospace; }
+      main { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
+      #editor { position: relative; min-height: 0; background: #e9ecef; }
+      aside { padding: 8px 12px; border-left: 1px solid #ccc; overflow: auto; }
+      table { border-collapse: collapse; width: 100%; }
+      td, th { padding: 2px 6px; border-bottom: 1px solid #eee; text-align: left; }
+      td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      .fail { color: #c00; font-weight: 600; }
+      .ok { color: #070; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Quire 성능 벤치마크 (16 §4)</strong>
+      <span id="status">준비 중</span>
+      <a href="/">편집기로</a>
+    </header>
+    <main>
+      <div id="editor"></div>
+      <aside>
+        <table id="table"></table>
+        <pre id="result"></pre>
+      </aside>
+    </main>
+    <script type="module" src="/src/bench.ts"></script>
+  </body>
+</html>
