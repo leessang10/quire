@@ -1,6 +1,6 @@
 # 16. 출시 준비와 안정화 (6단계)
 
-- 상태: 진행 중 (6-6, 6-1, 6-2 끝남)
+- 상태: 진행 중 (6-6, 6-1, 6-2, 6-3 끝남)
 - 관련: [06. 로드맵](06-roadmap.md) §3 성능 목표·§4 위험, [08. 앱 통합](08-integration.md), 10–15 각 결과 절의 "한계·남은 것"
 
 ## 1. 목표
@@ -69,7 +69,9 @@
 ## 5. 6-3 레이아웃 골든 시험
 
 - 기준 문서 세트(12 §13, `fixtures/docs`)를 저장소 글꼴로 셰이핑·조판한 쪽 나눔과 줄 나눔의 지문.
-- Node 시험이 지문을 기준값과 비교한다. 브라우저(플레이그라운드)에서 같은 지문을 내어 같은지 본다. Firefox는 이 기기에 있으면 확인한다.
+- Node 시험(`reference.test.ts`)이 지문을 기대값과 비교한다. 같은 지문을 브라우저에서 두 경로로 내어 같은지 본다:
+  실제 편집기(조각 글꼴, 백그라운드 조판)와 통째 글꼴로 Node와 똑같이 조판한 것. 지문 계산은 `@quire/editor` `reference.ts` 하나를 함께 쓴다.
+- `apps/playground/golden.html` + `scripts/golden.mjs` (6-2의 헤드리스 도우미 `scripts/headless.mjs`). Firefox는 이 기기에 없다.
 
 ## 6. 6-4 보안·견고성
 
@@ -154,7 +156,7 @@
 
 **한계**
 
-- Ubuntu 러너에는 Windows 글꼴(맑은 고딕·Calibri)이 없어서 셰이핑 시험 둘(`packages/shaping/src/shaper.test.ts`, `spikes/shaping/src/shaping.test.ts`)은 CI에서 건너뛴다. 저장소 글꼴(Noto Sans KR·Pretendard)로 돌리는 시험은 그대로 돈다. 글꼴을 저장소 글꼴로 옮기는 일은 6-3(레이아웃 골든)에서 한다.
+- Ubuntu 러너에는 Windows 글꼴(맑은 고딕·Calibri)이 없어서 셰이핑 시험 둘(`packages/shaping/src/shaper.test.ts`, `spikes/shaping/src/shaping.test.ts`)은 CI에서 건너뛴다. 저장소 글꼴(Noto Sans KR·Pretendard)로 돌리는 시험은 그대로 돈다. 이 둘은 옮기지 않기로 했다 (6-3): 맑은 고딕의 옛 kern 표(GPOS 없음), Calibri 합자, 옛한글 조합처럼 그 글꼴의 성질을 보는 시험이라 저장소 글꼴로 바꾸면 그 경로를 덜 본다. 저장소 글꼴 경로는 기준 문서 시험과 골든 비교가 CI에서 본다.
 - Word·한글로 다시 저장한 파일을 쓰는 시험(`QUIRE_WORD_RESAVED`·`QUIRE_HWP_RESAVED`)은 환경 변수가 없으면 건너뛴다. 그 파일은 이 기기에서만 만든다.
 - 브라우저 시험(6-2 벤치마크 등)은 CI에서 돌리지 않는다.
 - 첫 CI 실행 시간은 이 PR에서 확인한다.
@@ -189,3 +191,21 @@
 - 첫 CI 실행 (GitHub ubuntu-latest, Chrome 157 헤드리스): 입력 p95 2.9 ms, 첫 화면 673 ms (첫 프레임 295 ms), 전체 조판 1,230 ms, 60 fps, 52 MB — 모두 목표 안. 쪽 수도 1,001쪽으로 같다.
 
 **한계**: 전체 조판은 Worker가 아니라 메인 스레드 유휴 조각이다 (06 §3 "Worker 사용" 조건과 다르지만 목표 안). 스크롤 fps는 화면 주사율에 묶인다. 실제 키보드·IME 지연은 6-7에서 본다.
+
+### 10.4 6-3 레이아웃 골든
+
+**구성**
+
+- `@quire/editor` `reference.ts`: `composeReference`(편집기와 같은 설정으로 처음부터 조판)와 `summarizeLayout`(쪽 수·용지·쪽마다 첫 줄·줄 위치 FNV-1a 지문·머리말·각주·표 행 조각). Node 시험의 코드를 옮겼다.
+- `Editor.layoutSummary()`: 실제 편집기 레이아웃의 같은 지문 (백그라운드 조판이 끝나기 전이면 null).
+- `golden.html`: 문서마다 편집기를 열고(조각 글꼴, 늦게 받는 조각이 다시 조판할 때까지 지문이 세 번 연속 같을 때까지 기다림) 지문을 내고, 통째 글꼴로도 조판해 둘 다 `*.expected.json`과 비교한다.
+- `scripts/golden.mjs` (`npm run golden`): 찾은 브라우저마다 헤드리스로 돌린다. 하나라도 다르면 종료 코드 1.
+- CI 빠른 작업에 넣었다 (글꼴 조각 빌드 1초 미만 + 골든 수 초). Ubuntu Chrome에서 같으면 운영체제가 달라도 쪽 나눔이 같다.
+
+**결과**: 기준 문서 6개(forms 3쪽, manual 8쪽, newsletter 2쪽, paper 4쪽, report 2쪽, schedule 9쪽)가 Chrome 157·Edge(헤드리스, Windows)에서 편집기 경로·통째 글꼴 경로 모두 Node 기대값과 같다.
+
+**찾아 고친 버그**: 머리말·꼬리말이 있는 문서를 처음부터 편집기에 주면(`new Editor({ document })`, SDK `createEditor({ doc })`) 생성 중 예외가 났다. `resetLayouts()`가 쪽 조판기를 먼저 만들었는데, 조판기는 만들 때 첫 프레임(구역의 머리말 높이)을 재고, 서식기에 측정기를 넣는 `fmt.reset`은 그다음 줄이었다. 순서를 바꿨다. 플레이그라운드는 열린 편집기에 `setDocument`로 넣어서 이 경로를 타지 않았다.
+
+**도우미 고친 것**: Edge는 stderr에 DevTools 주소를 찍지 않아 프로필의 `DevToolsActivePort` 파일로 포트를 읽는다. 브라우저가 끝나기를 기다린 뒤 임시 프로필을 지운다.
+
+**한계**: Firefox·Safari(다른 JS 엔진·다른 캔버스)는 이 기기에 없어 보지 못했다. 골든은 지문(줄 위치)까지이고 픽셀 비교는 하지 않는다.

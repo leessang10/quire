@@ -59,6 +59,7 @@ import {
 import { EditContextInput, editContextSupported } from './edit-context';
 import { MemoryAssets, type AssetStore } from './assets';
 import { Formatter, NOTE_INDENT, defaultPageSetup, hasKeys, type TableView } from './formatter';
+import { summarizeLayout, type LayoutSummary } from './reference';
 import { dateText, layoutHF, pageHF, type PageHF } from './headers';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
@@ -751,6 +752,15 @@ export class Editor {
     this.input.focus();
   }
 
+  /**
+   * 본문 레이아웃의 지문 (기준 문서 골든 비교, 16 §5): 쪽 수·쪽마다 첫 줄·줄 위치 해시. Node 시험과 같은 함수.
+   * 백그라운드 쪽 조립이 끝나기 전이면 null
+   */
+  layoutSummary(today?: string): LayoutSummary | null {
+    if (!this.bodyLayout.complete) return null;
+    return summarizeLayout(this.document, this.bodyLayout, this.fmt, today);
+  }
+
   /** 쓰고 있는 입력 층 */
   get inputKind(): InputBackend['kind'] {
     return this.input.kind;
@@ -760,8 +770,9 @@ export class Editor {
   private resetLayouts(): void {
     this.cache.clear();
     this.cellCache.clear();
-    this.bodyLayout = new PagedLayout(this.setup, this.measurer, this.cache, this.fmt.formatOf, new SectionFrames(this.setup, this.fmt.sections));
+    // 서식기를 먼저: 쪽 조판기는 만들 때 첫 프레임(구역의 머리말·꼬리말 높이)을 재므로 서식기에 측정기가 있어야 한다
     this.fmt.reset(this.measurer, this.cellCache);
+    this.bodyLayout = new PagedLayout(this.setup, this.measurer, this.cache, this.fmt.formatOf, new SectionFrames(this.setup, this.fmt.sections));
     this.layout = this.bodyLayout;
   }
 

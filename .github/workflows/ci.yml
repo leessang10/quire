@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   fast:
-    name: 타입 검사·빠른 시험
+    name: 타입 검사·빠른 시험·골든
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -28,6 +28,11 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npx vitest run --config vitest.fast.config.ts
+      # 레이아웃 골든 (16 §5): 기준 문서를 브라우저(조각 글꼴 편집기·통째 글꼴)에서 조판해 Node 기대값과 같은지
+      - run: node scripts/build-fonts.mjs
+      - run: node scripts/golden.mjs
+        env:
+          QUIRE_BENCH_BROWSER: /usr/bin/google-chrome
 
   slow:
     name: 느린 시험

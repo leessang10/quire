@@ -12,11 +12,10 @@
  *
  * 브라우저: QUIRE_BENCH_BROWSER, 없으면 흔한 설치 경로 (Chrome → Edge → chromium)
  */
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { connectPage, evaluate, findBrowser, startBrowser, startVite, stopBrowser } from './headless.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BASELINE = join(root, 'bench', 'baseline.json');
@@ -63,110 +62,6 @@ function median(xs) {
   if (!s.length) return null;
   const m = s.length >> 1;
   return s.length % 2 ? s[m] : Math.round(((s[m - 1] + s[m]) / 2) * 100) / 100;
-}
-
-function findBrowser() {
-  const env = process.env.QUIRE_BENCH_BROWSER;
-  if (env) return env;
-  const list = [
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-  ];
-  const hit = list.find((p) => existsSync(p));
-  if (!hit) throw new Error('Chrome·Edge를 찾지 못했습니다. QUIRE_BENCH_BROWSER로 경로를 주세요');
-  return hit;
-}
-
-/** 줄 단위로 출력을 보다가 pattern이 나오면 그 일치를 돌려준다 */
-function waitFor(stream, pattern, ms, what) {
-  return new Promise((res, rej) => {
-    let buf = '';
-    const timer = setTimeout(() => rej(new Error(`${what}: ${ms}ms 안에 시작하지 않음\n${buf}`)), ms);
-    stream.on('data', (d) => {
-      buf += d.toString();
-      const m = buf.match(pattern);
-      if (m) {
-        clearTimeout(timer);
-        res(m);
-      }
-    });
-  });
-}
-
-async function startVite(port) {
-  const p = spawn(process.execPath, [join(root, 'node_modules/vite/bin/vite.js'), 'apps/playground', '--port', String(port), '--strictPort'], {
-    cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  // 색 코드가 섞여도 되게 주소만 찾는다
-  await waitFor(p.stdout, new RegExp(`localhost:\\x1b?\\[?[0-9;]*m?${port}`), 30000, 'vite');
-  return p;
-}
-
-async function startBrowser(exe) {
-  const profile = mkdtempSync(join(tmpdir(), 'quire-bench-'));
-  const p = spawn(
-    exe,
-    [
-      '--headless=new',
-      '--remote-debugging-port=0',
-      `--user-data-dir=${profile}`,
-      '--window-size=1400,1000',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--enable-precise-memory-info',
-      '--disable-background-timer-throttling',
-      '--disable-renderer-backgrounding',
-      '--disable-backgrounding-occluded-windows',
-      'about:blank',
-    ],
-    { stdio: ['ignore', 'ignore', 'pipe'] },
-  );
-  const [, port] = await waitFor(p.stderr, /DevTools listening on ws:\/\/[^:]+:(\d+)\//, 30000, 'browser');
-  return { p, port: Number(port), profile };
-}
-
-/** 새 탭을 열고 붙는 작은 CDP 클라이언트 (실행마다 새 탭: 앞 실행의 힙이 남지 않게) */
-async function connectPage(port) {
-  const page = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
-  const ws = new WebSocket(page.webSocketDebuggerUrl);
-  await new Promise((r, j) => {
-    ws.onopen = r;
-    ws.onerror = j;
-  });
-  let id = 0;
-  const pending = new Map();
-  ws.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    if (m.id && pending.has(m.id)) {
-      const { res, rej } = pending.get(m.id);
-      pending.delete(m.id);
-      if (m.error) rej(new Error(m.error.message));
-      else res(m.result);
-    }
-  };
-  const send = (method, params = {}) =>
-    new Promise((res, rej) => {
-      const n = ++id;
-      pending.set(n, { res, rej });
-      ws.send(JSON.stringify({ id: n, method, params }));
-    });
-  const close = async () => {
-    ws.close();
-    await fetch(`http://127.0.0.1:${port}/json/close/${page.id}`).catch(() => {});
-  };
-  return { send, close };
-}
-
-async function evaluate(page, expression) {
-  const r = await page.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-  if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
-  return r.result.value;
 }
 
 async function runOnce(page, url) {
@@ -235,9 +130,8 @@ async function main() {
       all.push(r);
     }
   } finally {
-    browser.p.kill();
+    await stopBrowser(browser);
     vite.kill();
-    setTimeout(() => rmSync(browser.profile, { recursive: true, force: true, maxRetries: 5 }), 500);
   }
   const first = all[0];
   const result = {
