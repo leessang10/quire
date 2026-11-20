@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p spikes/crdt/tsconfig.json && tsc -p spikes/shaping/tsconfig.json",
     "bench": "vitest run --config vitest.bench.config.ts",
     "bench:browser": "node scripts/bench.mjs",
-    "fonts": "node scripts/build-fonts.mjs"
+    "fonts": "node scripts/build-fonts.mjs",
+    "golden": "node scripts/golden.mjs"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

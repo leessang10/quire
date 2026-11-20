@@ -13,6 +13,7 @@ export type { HtmlReadOptions } from './clipboard';
 export type { Fragment } from './clipboard';
 export { Formatter, defaultPageSetup } from './formatter';
 export { dateText, hfText, layoutHF, pageHF, pageNumberOf } from './headers';
+export { composeReference, summarizeLayout, type LayoutSummary } from './reference';
 export type { PageHF } from './headers';
 export { CanvasTarget, RecordingTarget } from './paint';
 export type { FontRef, ImageSource, PaintCommand, PaintTarget, TextRun } from './paint';
