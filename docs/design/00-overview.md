@@ -1,6 +1,6 @@
 # 00. 개요
 
-- 상태: 초안
+- 상태: 설계 (1–6단계에서 구현함. 구현하며 바뀐 점과 결과는 09–16의 결과 절에 있다)
 - 작성일: 2026-11-16
 
 ## 1. 목표
@@ -76,18 +76,23 @@ Word·한글(HWP) 수준의 조판 품질과 Google Docs 수준의 실시간 협
 
 모노레포, TypeScript. 레이아웃 핫스팟은 이후 Rust→WASM 이식 후보.
 
+처음 계획과 실제 패키지가 달라졌다 (6단계 문서 정리): `text`는 `shaping`이 되었고, `view`·`commands`는 `editor` 안에 들었고, `server`는 따로 두지 않았다 (Node에서 `convert`·`pdf`를 쓴다, 08 §2).
+
 | 패키지 | 역할 | DOM 의존 |
 |---|---|---|
-| `@quire/model` | 문서 모델, 위치, 범위, 연산, 스키마 | 없음 |
-| `@quire/sync` | CRDT 어댑터, 실행 취소, 변경 추적, 버전 | 없음 |
-| `@quire/text` | 글꼴 로드, HarfBuzz 셰이핑, 줄바꿈 규칙 | 없음 (WASM) |
-| `@quire/layout` | 문단 레이아웃, 쪽 조립, 레이아웃 트리 | 없음 |
-| `@quire/view` | 캔버스 렌더러, 입력 층, 선택, 접근성 미러 | 있음 |
-| `@quire/commands` | 편집 명령, 키맵 | 없음 |
-| `@quire/editor` | 위를 묶은 공개 API (프레임워크 무관) | 있음 |
-| `@quire/react` | React 컴포넌트와 훅 (08) | 있음 |
-| `@quire/server` | PDF·썸네일·검증 등 서버 실행 (08) | 없음 |
-| `apps/playground` | 개발·검증용 앱 | 있음 |
+| `@quire/model` | 문서 모델, 위치, 범위, 연산, 스키마, 링크 정제 | 없음 |
+| `@quire/shaping` | 글꼴 로드(조각), HarfBuzz 셰이핑 | 없음 (WASM) |
+| `@quire/layout` | 문단 레이아웃, 쪽 조립, 표·다단·각주 | 없음 |
+| `@quire/sync` | CRDT(Loro) 어댑터, 정본 JSON, `.quire`, Worker·중계, 주석·버전 | 없음 |
+| `@quire/editor` | 캔버스 렌더러, 입력 층, 선택, 접근성 미러, 명령·키맵, 플러그인 | 있음 |
+| `@quire/sdk` | 프레임워크 무관 `createEditor` (08 §3) | 있음 |
+| `@quire/react` | React 컴포넌트와 훅 (08 §4) | 있음 |
+| `@quire/convert` | HTML·Markdown·DOCX·HWPX 가져오기·내보내기 | 없음 |
+| `@quire/pdf` | PDF 내보내기 (브라우저·Node) | 없음 (`pdfFromQuire`) |
+| `@quire/fonts` | 엔진 글꼴 조각 자산 (빌드 때 만듦) | - |
+| `apps/playground` | 개발·검증용 앱 (벤치마크·골든·체크리스트 페이지) | 있음 |
+| `apps/sync-server` | 동기화·저장·권한 서버 | 없음 |
+| `examples/` | 저장소 밖 앱처럼 쓰는 예제 6개 | - |
 
 ## 6. 열린 질문
 

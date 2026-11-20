@@ -33,7 +33,13 @@ node scripts/build-packages.mjs  # @quire/* 패키지 빌드 (.build/packs) → 
 | [05. 협업과 이력](docs/design/05-collaboration-and-history.md) | CRDT, 사용자별 실행 취소, 변경 추적, 버전 |
 | [06. 로드맵](docs/design/06-roadmap.md) | 단계별 범위, 0단계 검증 기준, 성능 목표, 위험 |
 | [07. 파일 포맷](docs/design/07-file-format.md) | 저장 층, `.quire` 컨테이너, `document.json`, 마이그레이션 |
-| [08. 앱 통합](docs/design/08-integration.md) | 공개 API, React 래퍼, Next.js, 서버 실행 |
-| [10–15](docs/design/) | 서식, 블록, 고급 조판, 협업과 이력, 생태계 (2–5단계 설계와 결과) |
-| [16. 출시 준비](docs/design/16-release.md) | 6단계: CI, 성능, 골든, 보안, 패키지 |
+| [08. 앱 통합](docs/design/08-integration.md) | `createEditor`, React 래퍼, Next.js·Vue·SvelteKit, 서버(Node) 실행 |
+| [09. CRDT 통합](docs/design/09-crdt-integration.md) | Loro 위의 문서, Worker·중계 서버, 저장, 새 판 |
+| [10. 서식](docs/design/10-formatting.md) | 2단계: 글자·문단 서식, 스타일, 목록 |
+| [11. 블록](docs/design/11-blocks.md) | 2단계: 이미지, 어울림, 여러 스토리, 표, 다중 커서 |
+| [12. 고급 조판](docs/design/12-advanced-typesetting.md) | 3단계: 구역, 쪽 나눔 제어, 머리말·꼬리말, 각주, 다단, 표 쪽 분할, 한글 조판 |
+| [14. 협업과 이력](docs/design/14-collaboration-history.md) | 4단계: 주석, 댓글, 변경 추적, 버전, 권한 |
+| [15. 생태계](docs/design/15-ecosystem.md) | 5단계: 찾기, 맞춤법, PDF, HTML·Markdown·DOCX·HWPX, 플러그인·SDK |
+| [16. 출시 준비](docs/design/16-release.md) | 6단계: CI, 성능 벤치마크, 레이아웃 골든, 보안, 남은 일 분류, 패키지·예제 앱 |
+| [예제 앱](examples/README.md) | 바닐라, React+Tailwind, Next.js, Vue, SvelteKit, Node 변환기 |
 | [ADR](docs/adr/) | 아키텍처 결정 기록 |
