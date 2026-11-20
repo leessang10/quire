@@ -1,6 +1,6 @@
 # 16. 출시 준비와 안정화 (6단계)
 
-- 상태: 진행 중 (6-6 끝남)
+- 상태: 진행 중 (6-6, 6-1 끝남)
 - 관련: [06. 로드맵](06-roadmap.md) §3 성능 목표·§4 위험, [08. 앱 통합](08-integration.md), 10–15 각 결과 절의 "한계·남은 것"
 
 ## 1. 목표
@@ -40,6 +40,24 @@
 - 워크플로: Node 22, `npm ci`, `npm run typecheck`, `vitest run`(빠른 묶음 설정). 캐시는 npm 캐시만.
 - `spikes/crdt/results`는 시험이 쓰는 파일이라 CI에서 바뀌어도 무시한다.
 
+### 3.1 시험 시간 (2026-11-20, 이 기기, 전체 실행)
+
+전체: 파일 67개, 시험 968개(통과 966, 건너뜀 2), 실패 0. 파일별 시간 합 약 81분 중 한 파일이 76분.
+
+| 파일 | 시간 | 묶음 |
+|---|---|---|
+| `spikes/crdt/src/random.test.ts` | 4,556초 | 느린 |
+| `spikes/crdt/src/cleanup.test.ts` | 66초 | 느린 |
+| `packages/sync/src/format-sync.test.ts` | 40초 | 빠른 |
+| `packages/sync/src/sync.test.ts` | 35초 | 빠른 |
+| `packages/sync/src/stories.test.ts` | 31초 | 빠른 |
+| `packages/sync/src/tables.test.ts` | 23초 | 빠른 |
+| `packages/model/src/doc.random.test.ts`, `segments.test.ts`, `spikes/crdt/src/blocks.test.ts` | 각 약 19초 | 빠른 |
+| 나머지 58개 | 합 약 50초 | 빠른 |
+
+- 기준: 파일 하나가 60초를 넘으면 느린 묶음 (`vitest.slow.ts`의 `SLOW_TESTS`).
+- 빠른 묶음: 이 기기에서 병렬로 27초 (파일 65개, 시험 955개). 목표(10분)에 넉넉하다.
+
 ## 4. 6-2 성능 벤치마크
 
 - 06 §3의 다섯 지표: 입력 지연 p95, 첫 화면, 전체 조판, 스크롤 fps, 메모리.
@@ -76,7 +94,20 @@
 
 ## 10. 결과
 
-### 10.1 6-6 패키지와 예제 앱
+### 10.1 6-1 CI
+
+- `.github/workflows/ci.yml`: 푸시(main)·PR마다 `fast` 작업(`npm ci` → `npm run typecheck` → `vitest.fast.config.ts`). 매일 03:00(KST)과 손으로 돌릴 때 `slow` 작업(`vitest.slow.config.ts`, 제한 180분).
+- `vitest.slow.ts`: 느린 파일 목록. 빠른 설정은 이 목록을 빼고, 느린 설정은 이 목록만 돈다. 기본 `vitest run`(전체)은 그대로다.
+- 시간 표는 §3.1.
+
+**한계**
+
+- Ubuntu 러너에는 Windows 글꼴(맑은 고딕·Calibri)이 없어서 셰이핑 시험 둘(`packages/shaping/src/shaper.test.ts`, `spikes/shaping/src/shaping.test.ts`)은 CI에서 건너뛴다. 저장소 글꼴(Noto Sans KR·Pretendard)로 돌리는 시험은 그대로 돈다. 글꼴을 저장소 글꼴로 옮기는 일은 6-3(레이아웃 골든)에서 한다.
+- Word·한글로 다시 저장한 파일을 쓰는 시험(`QUIRE_WORD_RESAVED`·`QUIRE_HWP_RESAVED`)은 환경 변수가 없으면 건너뛴다. 그 파일은 이 기기에서만 만든다.
+- 브라우저 시험(6-2 벤치마크 등)은 CI에서 돌리지 않는다.
+- 첫 CI 실행 시간은 이 PR에서 확인한다.
+
+### 10.2 6-6 패키지와 예제 앱
 
 **빌드** (`scripts/build-packages.mjs`, 결과는 `.build/`, 저장소에는 넣지 않음)
 
