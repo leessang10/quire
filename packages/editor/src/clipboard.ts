@@ -53,7 +53,7 @@ export interface ClipTable {
   table: {
     /** 열 너비 (1/1000pt) */
     cols: number[];
-    rows: Array<{ cells: Array<{ story: string; span?: [number, number]; fill?: string }>; h?: number }>;
+    rows: Array<{ cells: Array<{ story: string; span?: [number, number]; fill?: string; valign?: 'top' | 'middle' | 'bottom' }>; h?: number }>;
   };
 }
 
@@ -395,15 +395,16 @@ function cssColor(v: string | undefined): string | undefined {
 }
 
 /** CSS 길이 → 1/1000pt */
-function cssPt(v: string | undefined): number | undefined {
-  const m = /^([\d.]+)\s*(pt|px)$/.exec((v ?? '').trim().toLowerCase());
+function cssPt(v: string | undefined, signed = false): number | undefined {
+  const m = /^(-?[\d.]+)\s*(pt|px)$/.exec((v ?? '').trim().toLowerCase());
   if (!m) return undefined;
   const n = Number(m[1]);
+  if (n < 0 && !signed) return undefined;
   return Math.round((m[2] === 'px' ? n * 0.75 : n) * 1000);
 }
 
 /** 요소가 더하거나 지우는 글자 서식 */
-function marksOf(n: HNode, base: MarkSet): MarkSet {
+function marksOf(n: HNode, base: MarkSet, fonts = false): MarkSet {
   const m: Record<string, unknown> = { ...base };
   const t = n.tag;
   if (t === 'b' || t === 'strong') m.bold = true;
@@ -436,18 +437,63 @@ function marksOf(n: HNode, base: MarkSet): MarkSet {
   if (bg && bg !== '#ffffff') m.highlight = bg;
   const size = cssPt(st['font-size']);
   if (size) m.size = size;
+  if (fonts) {
+    const fam = (st['font-family'] ?? (t === 'font' ? n.attrs.face : undefined))?.split(',')[0]?.trim().replace(/^['"]|['"]$/g, '');
+    if (fam && !/^(serif|sans-serif|monospace|inherit|initial)$/i.test(fam)) m.font = fam;
+  }
   for (const k of Object.keys(m)) if (m[k] === undefined) delete m[k];
   return m as MarkSet;
 }
 
+/** HTML 읽기 선택 (문서 단위 가져오기, 15 §6.2) */
+export interface HtmlReadOptions {
+  /**
+   * 문서 단위: 제목 1–6을 그대로(붙여넣기는 1–3으로 줄인다), <pre>는 코드 스타일 문단, 문단 간격과 정확한 줄 간격, 글꼴 이름도 가져온다
+   */
+  document?: boolean;
+  /** 담을 수 없어 버린 요소 (가져오기 보고) */
+  drop?: (what: string) => void;
+}
+
+/** 버리면 보고하는 요소 */
+const DROPPED: Record<string, string> = {
+  hr: '가로줄', iframe: '내장 문서', video: '동영상', audio: '소리', svg: 'SVG 그림', canvas: '캔버스', object: '내장 개체', embed: '내장 개체',
+  form: '입력 양식', input: '입력 양식', select: '입력 양식', button: '입력 양식', textarea: '입력 양식', math: '수식',
+};
+
+/** 각주 칸: GFM(section.footnotes의 li#id), Word(div#ftnN, 참조 href="#_ftnN") */
+function footnoteTargets(root: HNode): Map<string, HNode> {
+  const out = new Map<string, HNode>();
+  const visit = (n: HNode, inNotes: boolean) => {
+    const notes = inNotes || isFootnoteBox(n);
+    if (notes && n.tag === 'li' && n.attrs.id) out.set(n.attrs.id, n);
+    if (n.tag === 'div' && /^ftn\d+$/.test(n.attrs.id ?? '')) out.set(`_${n.attrs.id}`, n);
+    for (const c of n.children) if (typeof c !== 'string') visit(c, notes);
+  };
+  visit(root, false);
+  return out;
+}
+
+/** 각주 칸을 담은 요소 (본문에서 건너뛴다) */
+function isFootnoteBox(n: HNode): boolean {
+  const cls = ` ${n.attrs.class ?? ''} `;
+  return cls.includes(' footnotes ') || 'data-footnotes' in n.attrs || (n.tag === 'div' && /^ftn\d+$/.test(n.attrs.id ?? ''));
+}
+
 /** HTML → 조각 */
-export function htmlToFragment(html: string): Fragment {
+export function htmlToFragment(html: string, opts: HtmlReadOptions = {}): Fragment {
   const frag: Fragment = { quire: 1, blocks: [], closed: false, stories: {}, lists: {} };
   let listSeq = 0;
   let tableSeq = 0;
+  let noteSeq = 0;
+  const drop = (what: string) => opts.drop?.(what);
+  const root = parseHtml(html);
+  const noteBoxes = footnoteTargets(root);
+  /** 각주 칸 → 각주 ID (참조를 처음 만날 때 정한다) */
+  const noteIds = new Map<HNode, string>();
 
   /** 블록들을 모으는 틀 (본문 또는 셀) */
-  const collector = (out: ClipBlock[]) => {
+  const collector = (out: ClipBlock[], inNote = false) => {
     let cur: ClipPara | null = null;
     /** cur가 목록 항목(li)이 연 문단이다: 비어 있는 채로 속에 블록(<p>)이 오면 버린다 (Google Docs는 <li><p>…</p></li>) */
     let soft = false;
@@ -456,10 +502,11 @@ export function htmlToFragment(html: string): Fragment {
     let listId: Record<string, string> = {};
     const flush = () => {
       if (!cur) return;
-      // 앞뒤 공백 정리
+      // 앞뒤 공백 정리 (문서 단위의 코드 문단은 그대로)
+      const keep = opts.document && cur.p.style === 'code';
       const first = cur.c.find((r) => r.t !== undefined);
-      if (first) first.t = first.t!.replace(/^[  ]+/, '');
-      for (let k = cur.c.length - 1; k >= 0; k--) {
+      if (first && !keep) first.t = first.t!.replace(/^[  ]+/, '');
+      for (let k = cur.c.length - 1; k >= 0 && !keep; k--) {
         const r = cur.c[k]!;
         if (r.t === undefined) break;
         r.t = r.t.replace(/[ ]+$/, '');
@@ -475,14 +522,16 @@ export function htmlToFragment(html: string): Fragment {
       cur = { p, c: [], start: true, end: true };
       soft = isSoft;
     };
-    const text = (s: string, m: MarkSet) => {
+    const text = (s: string, m: MarkSet, keep = false) => {
       if (!s) return;
+      // 블록 사이 공백(줄바꿈)은 문단을 열지 않는다
+      if (!cur && !keep && !s.trim()) return;
       if (!cur) start({});
       const c = cur!;
       const lastRun = c.c[c.c.length - 1];
       // 앞 글자가 공백이면 이어진 공백을 줄인다
       const prevSpace = !lastRun ? true : lastRun.t !== undefined && /[ ]$/.test(lastRun.t);
-      if (prevSpace) s = s.replace(/^ +/, '');
+      if (prevSpace && !keep) s = s.replace(/^ +/, '');
       if (!s) return;
       if (lastRun && lastRun.t !== undefined && JSON.stringify(lastRun.m ?? {}) === JSON.stringify(m)) lastRun.t += s;
       else c.c.push({ t: s, ...(hasKeys(m) ? { m } : {}) });
@@ -494,6 +543,25 @@ export function htmlToFragment(html: string): Fragment {
       const st = styleOf(n);
       const al = (st['text-align'] ?? n.attrs.align ?? '').toLowerCase();
       if (al === 'center' || al === 'right' || al === 'justify') p.align = al;
+      if (!opts.document) return p;
+      // 우리 내보내기의 기타 스타일 (data-style)
+      const ds = n.attrs['data-style'];
+      if (ds && /^[\w-]+$/.test(ds) && !p.style) p.style = ds;
+      // 들여쓰기·간격·줄 간격 (pt·px만: Word·Google Docs·우리 내보내기)
+      const left = cssPt(st['margin-left']);
+      const right = cssPt(st['margin-right']);
+      const first = cssPt(st['text-indent'], true);
+      if (left || right || first) p.indent = { ...(left ? { left } : {}), ...(right ? { right } : {}), ...(first ? { first } : {}) };
+      const before = cssPt(st['margin-top']);
+      const after = cssPt(st['margin-bottom']);
+      if (before || after) p.space = { ...(before ? { before } : {}), ...(after ? { after } : {}) };
+      const lh = (st['line-height'] ?? '').trim();
+      if (/^[\d.]+$/.test(lh) && Number(lh) > 0 && Number(lh) !== 1) p.line = { rule: 'multiple', value: Number(lh) };
+      else if (/^[\d.]+%$/.test(lh) && Number(lh.slice(0, -1)) > 0 && Number(lh.slice(0, -1)) !== 100) p.line = { rule: 'multiple', value: Number(lh.slice(0, -1)) / 100 };
+      else {
+        const v = cssPt(lh);
+        if (v) p.line = { rule: 'exact', value: v };
+      }
       return p;
     };
 
@@ -503,7 +571,7 @@ export function htmlToFragment(html: string): Fragment {
           const lines = n.split(/\r?\n/);
           lines.forEach((line, k) => {
             if (k > 0) start(base);
-            text(line.replace(/\t/g, '    '), m);
+            text(line.replace(/\t/g, '    '), m, !!opts.document);
           });
         } else text(n.replace(/[ \t\r\n\f]+/g, ' '), m);
         return;
@@ -513,6 +581,33 @@ export function htmlToFragment(html: string): Fragment {
       const st = styleOf(n);
       if (/mso-list\s*:\s*ignore/i.test(n.attrs.style ?? '')) return; // Word의 가짜 번호
       if (st.display === 'none') return;
+      if (DROPPED[t]) {
+        drop(DROPPED[t]);
+        return;
+      }
+      if (isFootnoteBox(n)) return; // 각주 내용은 참조에서 읽는다
+      if (t === 'a' && n.attrs.href?.startsWith('#')) {
+        const box = noteBoxes.get(n.attrs.href.slice(1));
+        if (box && !inNote) {
+          // 각주 참조 (12 §6.1)
+          let id = noteIds.get(box);
+          if (!id) {
+            id = `n${++noteSeq}`;
+            noteIds.set(box, id);
+            const blocks: ClipBlock[] = [];
+            const col = collector(blocks, true);
+            for (const c of box.children) col.walk(c, {}, false, {});
+            col.flush();
+            const paras = blocks.filter((b): b is ClipPara => !isTable(b));
+            frag.stories[`note|${id}`] = paras.length ? paras : [{ p: {}, c: [], start: true }];
+          }
+          if (!cur) start(base);
+          cur!.c.push({ img: { id, kind: 'note' } });
+          soft = false;
+          return;
+        }
+        if (inNote) return; // 각주 안의 되돌아가기 고리 (↩, [1])
+      }
       if (t === 'br') {
         start(base);
         return;
@@ -526,7 +621,10 @@ export function htmlToFragment(html: string): Fragment {
         if (w) img.w = Math.round(w * 750);
         if (h) img.h = Math.round(h * 750);
         if (src.startsWith('data:image/')) cur!.c.push({ img, src });
-        else if (n.attrs.alt) text(n.attrs.alt, m);
+        else {
+          drop('이미지 (외부 주소)');
+          if (n.attrs.alt) text(n.attrs.alt, m);
+        }
         return;
       }
       if (t === 'table') {
@@ -548,15 +646,16 @@ export function htmlToFragment(html: string): Fragment {
         const id = (listId[kind] ??= `h${++listSeq}`);
         frag.lists[id] ??= defaultListDef(id, kind);
         start(blockAttrs(n, { ...base, list: { id, level: Math.max(0, lists.length - 1) } }), true);
-        for (const c of n.children) walk(c, marksOf(n, m), pre, cur ? (cur as ClipPara).p : base);
+        for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre, cur ? (cur as ClipPara).p : base);
         flush();
         return;
       }
       const heading = /^h([1-6])$/.exec(t);
       if (heading || t === 'p' || t === 'div' || t === 'blockquote' || t === 'pre' || t === 'section' || t === 'article' || t === 'header' || t === 'footer' || t === 'dd' || t === 'dt') {
         let p: ParaAttrs = { ...base };
-        if (heading) p.style = `h${Math.min(3, Number(heading[1]))}`;
+        if (heading) p.style = `h${opts.document ? Number(heading[1]) : Math.min(3, Number(heading[1]))}`;
         if (t === 'blockquote') p.style = 'quote';
+        if (t === 'pre' && opts.document) p.style = 'code';
         // Word 목록 문단: style="mso-list:l0 level1 lfo1"
         const ml = /mso-list\s*:\s*l(\d+)\s+level(\d+)/i.exec(n.attrs.style ?? '');
         if (ml) {
@@ -570,22 +669,22 @@ export function htmlToFragment(html: string): Fragment {
         if (t === 'div' && n.children.some((c) => typeof c !== 'string' && isBlockTag(c.tag))) {
           // 블록을 감싼 div: 문단을 만들지 않고 속을 본다
           flush();
-          for (const c of n.children) walk(c, marksOf(n, m), pre, base);
+          for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre, base);
           flush();
           return;
         }
         if (t === 'blockquote' && n.children.some((c) => typeof c !== 'string' && isBlockTag(c.tag))) {
           flush();
-          for (const c of n.children) walk(c, marksOf(n, m), pre, p);
+          for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre, p);
           flush();
           return;
         }
         start(p);
-        for (const c of n.children) walk(c, marksOf(n, m), pre || t === 'pre', p);
+        for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre || t === 'pre', p);
         flush();
         return;
       }
-      for (const c of n.children) walk(c, marksOf(n, m), pre, base);
+      for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre, base);
     };
 
     return { walk, flush };
@@ -626,17 +725,40 @@ export function htmlToFragment(html: string): Fragment {
         if (h > 1 || w > 1) cell.span = [h, w];
         const fill = cssColor(styleOf(td)['background-color'] ?? td.attrs.bgcolor);
         if (fill && fill !== '#ffffff') cell.fill = fill;
+        if (opts.document) {
+          const va = (styleOf(td)['vertical-align'] ?? td.attrs.valign ?? '').toLowerCase();
+          if (va === 'middle' || va === 'bottom') cell.valign = va;
+        }
         r.cells.push(cell);
         x += w;
         ncols = Math.max(ncols, x);
       }
+      if (opts.document) {
+        const rh = cssPt(styleOf(tr)['height']);
+        if (rh) r.h = rh;
+      }
       out.push(r);
     });
     ncols = Math.max(1, ncols);
-    return { table: { cols: Array.from({ length: ncols }, () => Math.floor(BODY_WIDTH / ncols)), rows: out } };
+    let cols = Array.from({ length: ncols }, () => Math.floor(BODY_WIDTH / ncols));
+    if (opts.document) {
+      // 열 너비: <col style="width:…pt"> 또는 width="…"(px)
+      const widths: number[] = [];
+      const visit = (x: HNode) => {
+        for (const c of x.children) {
+          if (typeof c === 'string') continue;
+          if (c.tag === 'col') {
+            const w = cssPt(styleOf(c)['width']) ?? (Number(c.attrs.width) ? Math.round(Number(c.attrs.width) * 750) : undefined);
+            for (let k = 0; k < Math.max(1, Number(c.attrs.span) || 1); k++) widths.push(w ?? 0);
+          } else if (c.tag === 'colgroup') visit(c);
+        }
+      };
+      visit(n);
+      if (widths.length === ncols && widths.every((w) => w > 0)) cols = widths;
+    }
+    return { table: { cols, rows: out } };
   }
 
-  const root = parseHtml(html);
   // Word·Google Docs가 넣는 조각 표시 사이만 (<!--StartFragment-->는 주석이라 이미 빠짐)
   const col = collector(frag.blocks);
   col.walk(root, {}, false, {});

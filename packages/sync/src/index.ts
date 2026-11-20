@@ -11,7 +11,7 @@ export { serveSyncWorker, startSyncWorker, WorkerClient } from './host';
 export type { WorkerConfig } from './host';
 export type { ToMain, ToWorker, RemoteSel, StoryInit, StoryDelta } from './protocol';
 export { canonicalJson, displayText, docFromQuire, documentFromQuire, migrateQuire, quireFromDoc, quireFromDocument, quireFromText, sha256Hex, stateHash, textFromQuire, SCHEMA_VERSION } from './canonical';
-export type { QuireDoc, QuireParagraph, QuireRun } from './canonical';
+export type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from './canonical';
 export { openQuire, packQuire, assetIdOf, assetIdsOf, MIMETYPE, FORMAT_VERSION } from './quire-file';
 export type { OpenedQuire, Manifest, QuireAsset } from './quire-file';
 export { applyHunks, compactDoc, compactDocument, compactLoro, diffText, documentFromSnapshot, restoreInto, readEpoch, rebaseHunks, rebaseOnto, syncFormats, META } from './epoch';

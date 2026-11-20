@@ -12,6 +12,7 @@
     "@quire/sync": "*",
     "@quire/model": "*",
     "@quire/pdf": "*",
-    "harfbuzzjs": "1.6.4"
+    "harfbuzzjs": "1.6.4",
+    "@quire/convert": "*"
   }
 }
