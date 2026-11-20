@@ -2,6 +2,7 @@ import { Editor, type InputLogEntry } from '@quire/editor';
 import { CommentsPane } from './comments-pane';
 import { FindBar } from './find-bar';
 import { openPdf } from './pdf-export';
+import { lastConvert, openFile, saveAs } from './convert-io';
 import { DemoChecker, SpellContextMenu } from './spell-demo';
 import { documentFromQuire, quireFromDocument } from '@quire/sync';
 import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
@@ -299,6 +300,7 @@ function showStats() {
       ['입력 층', editor.inputKind === 'editcontext' ? 'A. EditContext' : 'B. 숨긴 textarea'],
       ['선택', sel.anchor === sel.head ? `${sel.head}` : `${sel.anchor} → ${sel.head}`],
       ['실행 취소', editor.history.canUndo ? '가능' : '-'],
+      ['가져오기·내보내기', lastConvert || '-'],
       ['맞춤법 검사', editor.spellSession ? `${editor.spellSession.stats.checked.toLocaleString()} 문단 (그만둠 ${editor.spellSession.stats.aborted})` : '꺼짐'],
     ];
     statsEl.replaceChildren(
@@ -504,6 +506,21 @@ viewSel.addEventListener('change', () => {
   editor.setViewMode(viewSel.value as 'suggestions' | 'final' | 'original');
   viewSel.title = `${Math.round(performance.now() - t)} ms`;
   suggestBtn.toggleAttribute('disabled', editor.viewMode !== 'suggestions');
+});
+
+// HTML·Markdown 가져오기·내보내기 (5-5)
+document.getElementById('export-html')!.addEventListener('click', () => void saveAs(editor, 'html').then(showStats));
+document.getElementById('export-md')!.addEventListener('click', () => void saveAs(editor, 'md').then(showStats));
+const importFile = document.getElementById('import-file') as HTMLInputElement;
+document.getElementById('import-doc')!.addEventListener('click', () => importFile.click());
+importFile.addEventListener('change', () => {
+  const f = importFile.files?.[0];
+  importFile.value = '';
+  if (f)
+    void openFile(editor, f).then(() => {
+      editor.focus();
+      showStats();
+    });
 });
 
 // PDF 내보내기·인쇄 (5-4): 버튼, Ctrl+P (브라우저 인쇄 대신 쪽 그대로의 PDF)

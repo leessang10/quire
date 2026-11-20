@@ -1118,6 +1118,11 @@ export class Editor {
     };
   }
 
+  /** 자산을 넣는다 (가져온 문서의 이미지, 15 §6). 자산 ID를 돌려준다 */
+  putAsset(blob: Blob): Promise<string> {
+    return this.assets.put(blob);
+  }
+
   /** 쪽 그리기기가 읽는 것들 (게터: 글꼴을 불러오면 셰이핑 글꼴이 바뀐다) */
   private painterEnv(): PainterEnv {
     const self = this;
