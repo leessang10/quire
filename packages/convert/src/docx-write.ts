@@ -5,7 +5,7 @@
  */
 import { DEFAULT_STYLES, LAST_SECTION, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps, type Style } from '@quire/model';
 import { writeZip, type QuireDoc, type QuireParagraph, type QuireTable } from '@quire/sync';
-import { EXTRA_STYLES, mimeOf, tableGrid, type AssetReader } from './common';
+import { EXTRA_STYLES, mimeOf, tableGrid, withSafeLinks, type AssetReader } from './common';
 import { XML_HEAD, escXml, x } from './xml';
 
 const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14 w15"';
@@ -120,6 +120,8 @@ export interface DocxExportOptions {
 
 /** 정본 → DOCX 바이트 */
 export async function exportDocx(q: QuireDoc, opts: DocxExportOptions = {}): Promise<Uint8Array> {
+  // 위험한 링크(javascript: 등)는 내보내지 않는다 (16 §6)
+  q = withSafeLinks(q);
   const lists = (q.settings.lists ?? {}) as Record<string, ListDef>;
   const story = (name: string) => (Array.isArray(q.stories[name]) ? (q.stories[name] as Array<QuireParagraph | QuireTable>) : []);
   const files: Array<{ name: string; data: Uint8Array; deflate?: boolean }> = [];

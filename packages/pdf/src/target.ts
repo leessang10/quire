@@ -4,6 +4,7 @@
  * 글리프 → CID는 글꼴을 부분화한 뒤에 정해지므로, 글자 부분은 구조로 두었다가 serialize에서 쓴다.
  */
 import type { FontRef, PaintTarget, TextRun } from '@quire/editor';
+import { safeLink } from '@quire/model';
 import { shapeText, type PdfFace, type PdfFonts } from './fonts';
 import { num } from './writer';
 
@@ -216,7 +217,10 @@ export class PdfPage implements PaintTarget {
   }
 
   link(x: number, y: number, w: number, h: number, href: string): void {
-    this.links.push({ rect: [x * PT, this.y(y + h), (x + w) * PT, this.y(y)], href });
+    // 위험한 스킴(javascript: 등)은 링크 주석을 만들지 않는다 (16 §6)
+    const safe = safeLink(href);
+    if (safe === null) return;
+    this.links.push({ rect: [x * PT, this.y(y + h), (x + w) * PT, this.y(y)], href: safe });
   }
 
   /** 내용 스트림 (글꼴을 쓴 뒤: 글리프 → CID) */

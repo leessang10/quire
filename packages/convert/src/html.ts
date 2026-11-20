@@ -5,7 +5,7 @@
 import { htmlToFragment, type Fragment } from '@quire/editor';
 import { defaultListDef, isNoteStory, noteStoryId, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs } from '@quire/model';
 import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quire/sync';
-import { Report, addAsset, addUsedStyles, emptyQuire, fromDataUrl, toDataUrl, type AssetReader, type ImportResult, type ImportedAsset } from './common';
+import { Report, finishImport, addAsset, addUsedStyles, emptyQuire, fromDataUrl, toDataUrl, withSafeLinks, type AssetReader, type ImportResult, type ImportedAsset } from './common';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 /** 1/1000pt → CSS pt (소수 셋째 자리) */
@@ -88,6 +88,8 @@ function listStyle(def: ListDef | undefined, level: number): string {
 
 /** 정본 → HTML 문서 */
 export async function exportHtml(q: QuireDoc, opts: HtmlExportOptions = {}): Promise<string> {
+  // 위험한 링크(javascript: 등)는 내보내지 않는다 (16 §6)
+  q = withSafeLinks(q);
   const lists = (q.settings.lists ?? {}) as Record<string, ListDef>;
   const order: string[] = [];
   const notes: Notes = {
@@ -266,6 +268,7 @@ export async function fragmentToQuire(frag: Fragment, report: Report): Promise<I
   // 쓰이지 않는 각주 스토리는 정본에 두지 않는다
   for (const k of Object.keys(stories)) if (isNoteStory(k) && !Array.isArray(stories[k])) delete stories[k];
   addUsedStyles(q);
+  finishImport(q, report);
   return { doc: q, assets, report };
 }
 

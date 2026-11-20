@@ -19,6 +19,7 @@ import {
   noteStoryId,
   defaultListDef,
   normalizeTable,
+  safeLink,
   type Doc,
   type ListDef,
   type MarkKey,
@@ -235,7 +236,9 @@ function runHtml(r: ClipRun): string {
   if (m.underline) h = `<u>${h}</u>`;
   if (m.italic) h = `<i>${h}</i>`;
   if (m.bold) h = `<b>${h}</b>`;
-  if (m.link) h = `<a href="${esc(m.link)}">${h}</a>`;
+  // 위험한 링크(javascript: 등)는 클립보드 HTML에 쓰지 않는다 (16 §6)
+  const href = m.link ? safeLink(m.link) : null;
+  if (href) h = `<a href="${esc(href)}">${h}</a>`;
   return h;
 }
 
@@ -312,6 +315,12 @@ function decode(s: string): string {
 }
 
 /** 너그러운 HTML 파서: 태그·속성·글자·주석. 닫는 태그가 없거나 어긋나도 트리를 만든다 */
+/** HTML colspan 상한 (HTML 표준) */
+const MAX_COLSPAN = 1000;
+
+/** HTML 요소 중첩 상한 */
+const MAX_HTML_DEPTH = 256;
+
 export function parseHtml(html: string): HNode {
   const root: HNode = { tag: '#root', attrs: {}, children: [] };
   const stack: HNode[] = [root];
@@ -360,7 +369,8 @@ export function parseHtml(html: string): HNode {
       }
     }
     top().children.push(node);
-    if (!VOID.has(tag) && !m[4]) stack.push(node);
+    // 너무 깊은 중첩은 더 들어가지 않고 그 자리에 붙인다: 트리를 도는 재귀가 스택을 넘기지 않게 (16 §6)
+    if (!VOID.has(tag) && !m[4] && stack.length < MAX_HTML_DEPTH) stack.push(node);
   }
   if (last < html.length) top().children.push(decode(html.slice(last)));
   return root;
@@ -404,7 +414,7 @@ function cssPt(v: string | undefined, signed = false): number | undefined {
 }
 
 /** 요소가 더하거나 지우는 글자 서식 */
-function marksOf(n: HNode, base: MarkSet, fonts = false): MarkSet {
+function marksOf(n: HNode, base: MarkSet, fonts = false, drop?: (what: string) => void): MarkSet {
   const m: Record<string, unknown> = { ...base };
   const t = n.tag;
   if (t === 'b' || t === 'strong') m.bold = true;
@@ -412,7 +422,12 @@ function marksOf(n: HNode, base: MarkSet, fonts = false): MarkSet {
   if (t === 'u' || t === 'ins') m.underline = true;
   if (t === 's' || t === 'strike' || t === 'del') m.strike = true;
   if (t === 'sup' || t === 'sub') m.script = t;
-  if (t === 'a' && n.attrs.href && !n.attrs.href.startsWith('#')) m.link = n.attrs.href;
+  if (t === 'a' && n.attrs.href && !n.attrs.href.startsWith('#')) {
+    // 위험한 링크는 글만 붙인다 (16 §6)
+    const href = safeLink(n.attrs.href);
+    if (href) m.link = href;
+    else drop?.('위험한 링크');
+  }
   if (t === 'font' && n.attrs.color) m.color = cssColor(n.attrs.color);
   const st = styleOf(n);
   const fw = st['font-weight'];
@@ -646,7 +661,7 @@ export function htmlToFragment(html: string, opts: HtmlReadOptions = {}): Fragme
         const id = (listId[kind] ??= `h${++listSeq}`);
         frag.lists[id] ??= defaultListDef(id, kind);
         start(blockAttrs(n, { ...base, list: { id, level: Math.max(0, lists.length - 1) } }), true);
-        for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre, cur ? (cur as ClipPara).p : base);
+        for (const c of n.children) walk(c, marksOf(n, m, opts.document, opts.drop), pre, cur ? (cur as ClipPara).p : base);
         flush();
         return;
       }
@@ -669,22 +684,22 @@ export function htmlToFragment(html: string, opts: HtmlReadOptions = {}): Fragme
         if (t === 'div' && n.children.some((c) => typeof c !== 'string' && isBlockTag(c.tag))) {
           // 블록을 감싼 div: 문단을 만들지 않고 속을 본다
           flush();
-          for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre, base);
+          for (const c of n.children) walk(c, marksOf(n, m, opts.document, opts.drop), pre, base);
           flush();
           return;
         }
         if (t === 'blockquote' && n.children.some((c) => typeof c !== 'string' && isBlockTag(c.tag))) {
           flush();
-          for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre, p);
+          for (const c of n.children) walk(c, marksOf(n, m, opts.document, opts.drop), pre, p);
           flush();
           return;
         }
         start(p);
-        for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre || t === 'pre', p);
+        for (const c of n.children) walk(c, marksOf(n, m, opts.document, opts.drop), pre || t === 'pre', p);
         flush();
         return;
       }
-      for (const c of n.children) walk(c, marksOf(n, m, opts.document), pre, base);
+      for (const c of n.children) walk(c, marksOf(n, m, opts.document, opts.drop), pre, base);
     };
 
     return { walk, flush };
@@ -711,8 +726,9 @@ export function htmlToFragment(html: string, opts: HtmlReadOptions = {}): Fragme
       for (const td of tr.children) {
         if (typeof td === 'string' || (td.tag !== 'td' && td.tag !== 'th')) continue;
         while (taken.has(`${y},${x}`)) x++;
-        const h = Math.max(1, Number(td.attrs.rowspan) || 1);
-        const w = Math.max(1, Number(td.attrs.colspan) || 1);
+        // 칸 합치기는 HTML 상한(colspan 1000)과 남은 행 수로 묶는다: 망가진 값이 칸을 수억 개 만들지 않게 (16 §6)
+        const h = Math.min(rows.length - y, Math.max(1, Math.floor(Number(td.attrs.rowspan)) || 1));
+        const w = Math.min(MAX_COLSPAN, Math.max(1, Math.floor(Number(td.attrs.colspan)) || 1));
         for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) taken.add(`${yy},${xx}`);
         const name = `h${tk}.${y}.${x}`;
         const blocks: ClipBlock[] = [];

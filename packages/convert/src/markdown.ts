@@ -5,7 +5,7 @@
  */
 import { defaultListDef, noteStoryId, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs } from '@quire/model';
 import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quire/sync';
-import { BODY_WIDTH, Report, addAsset, addUsedStyles, emptyQuire, fromDataUrl, tableGrid, type ImportResult, type ImportedAsset } from './common';
+import { BODY_WIDTH, Report, finishImport, addAsset, addUsedStyles, emptyQuire, fromDataUrl, tableGrid, type ImportResult, type ImportedAsset, withSafeLinks } from './common';
 
 const isTable = (b: QuireParagraph | QuireTable): b is QuireTable => 'table' in b;
 
@@ -89,6 +89,8 @@ const HEADING = /^h([1-6])$/;
 
 /** 정본 → Markdown */
 export function exportMarkdown(q: QuireDoc, opts: MarkdownExportOptions = {}): string {
+  // 위험한 링크(javascript: 등)는 내보내지 않는다 (16 §6)
+  q = withSafeLinks(q);
   const assetPath = opts.assetPath ?? ((id: string) => `assets/${id}`);
   const lists = (q.settings.lists ?? {}) as Record<string, ListDef>;
   const order: string[] = [];
@@ -189,7 +191,12 @@ interface InlineCtx {
   /** 각주 표지 → 각주 ID */
   noteId(label: string): string | null;
   image(alt: string, src: string, m: MarkSet): QuireRun | null;
+  /** 인라인 중첩 깊이 (강조·링크 안). 상한을 넘으면 글로만 읽는다 (16 §6) */
+  depth?: number;
 }
+
+/** 인라인 중첩 상한: `[[[[…]]]]`, `*a *b *c …` 같은 입력이 스택을 넘기지 않게 */
+const MAX_INLINE_DEPTH = 32;
 
 const PUNCT = /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/;
 
@@ -272,6 +279,20 @@ function readDest(s: string, at: number): { url: string; end: number } | null {
 }
 
 function parseInline(s: string, m: MarkSet, ctx: InlineCtx, out: QuireRun[] = []): QuireRun[] {
+  const depth = ctx.depth ?? 0;
+  if (depth >= MAX_INLINE_DEPTH) {
+    if (s) out.push({ t: s, ...(Object.keys(m).length ? { m: { ...m } } : {}) });
+    return out;
+  }
+  ctx.depth = depth + 1;
+  try {
+    return parseInlineAt(s, m, ctx, out);
+  } finally {
+    ctx.depth = depth;
+  }
+}
+
+function parseInlineAt(s: string, m: MarkSet, ctx: InlineCtx, out: QuireRun[]): QuireRun[] {
   let buf = '';
   const flush = () => {
     if (!buf) return;
@@ -691,5 +712,6 @@ export async function importMarkdown(md: string, opts: MarkdownImportOptions = {
   for (const v of Object.values(q.stories))
     if (Array.isArray(v)) for (const b of v as QuireParagraph[]) if (b.c) b.c = b.c.filter((r) => r.img || r.t);
   addUsedStyles(q);
+  finishImport(q, report);
   return { doc: q, assets, report };
 }

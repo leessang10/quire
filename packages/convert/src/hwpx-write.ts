@@ -11,7 +11,7 @@
  */
 import { DEFAULT_STYLES, LAST_SECTION, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps, type Style } from '@quire/model';
 import { writeZip, type QuireDoc, type QuireParagraph, type QuireTable } from '@quire/sync';
-import { EXTRA_STYLES, mimeOf, tableGrid, type AssetReader } from './common';
+import { EXTRA_STYLES, mimeOf, tableGrid, withSafeLinks, type AssetReader } from './common';
 import { XML_HEAD, escXml, x } from './xml';
 
 export const hu = (v: number) => Math.round(v / 10);
@@ -90,6 +90,8 @@ export interface HwpxExportOptions {
 
 /** 정본 → HWPX 바이트 */
 export async function exportHwpx(q: QuireDoc, opts: HwpxExportOptions = {}): Promise<Uint8Array> {
+  // 위험한 링크(javascript: 등)는 내보내지 않는다 (16 §6)
+  q = withSafeLinks(q);
   const lists = (q.settings.lists ?? {}) as Record<string, ListDef>;
   const story = (name: string) => (Array.isArray(q.stories[name]) ? (q.stories[name] as Array<QuireParagraph | QuireTable>) : []);
   const enc = new TextEncoder();

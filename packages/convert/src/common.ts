@@ -2,7 +2,7 @@
  * 변환 공통 (15 §6.2): 모든 변환은 정본 JSON(QuireDoc)을 거친다. 가져오기 결과, 버린 요소 보고, 자산(이미지 바이트),
  * 포맷이 쓰는 덧붙인 스타일(제목 4–6, 코드), 이미지 크기 읽기.
  */
-import { DEFAULT_STYLES, type Style } from '@quire/model';
+import { DEFAULT_STYLES, safeLink, type Style } from '@quire/model';
 import { assetIdOf, quireFromText, type QuireDoc, type QuireParagraph, type QuireTable } from '@quire/sync';
 
 /** 가져오며 버린 것: 무엇 → 개수 (15 §6.1 "가져올 때 모르는 요소는 버리고 버린 요소 수를 알린다") */
@@ -30,6 +30,48 @@ export class Report implements ImportReport {
   drop = (what: string): void => {
     this.dropped[what] = (this.dropped[what] ?? 0) + 1;
   };
+}
+
+/** 정본의 모든 런 (스토리마다, 표 블록은 건너뜀: 셀은 따로 스토리다) */
+function* allRuns(q: QuireDoc): Generator<{ m?: Record<string, unknown> }> {
+  for (const story of Object.values(q.stories)) {
+    if (!Array.isArray(story)) continue;
+    for (const b of story as Array<QuireParagraph | QuireTable>) if ('c' in b && Array.isArray(b.c)) yield* b.c as Array<{ m?: Record<string, unknown> }>;
+  }
+}
+
+const hasUnsafeLink = (r: { m?: Record<string, unknown> }) => r.m?.link !== undefined && safeLink(r.m.link) === null;
+
+/**
+ * 위험한 링크(16 §6: javascript:, data: …)를 런에서 뺀다. q를 고치고 뺀 런 수를 돌려준다.
+ * 가져오기는 끝에서 불러 보고서에 '위험한 링크'로 남긴다
+ */
+export function stripUnsafeLinks(q: QuireDoc): number {
+  let n = 0;
+  for (const r of allRuns(q)) {
+    if (!hasUnsafeLink(r)) continue;
+    delete r.m!.link;
+    if (Object.keys(r.m!).length === 0) delete r.m;
+    n++;
+  }
+  return n;
+}
+
+/** 내보내기용: 위험한 링크가 없으면 q 그대로, 있으면 뺀 사본 (부른 쪽 문서는 그대로) */
+export function withSafeLinks(q: QuireDoc): QuireDoc {
+  for (const r of allRuns(q)) {
+    if (!hasUnsafeLink(r)) continue;
+    const copy = structuredClone(q);
+    stripUnsafeLinks(copy);
+    return copy;
+  }
+  return q;
+}
+
+/** 가져오기 끝: 위험한 링크를 빼고 보고한다 */
+export function finishImport(q: QuireDoc, report: Report): void {
+  const n = stripUnsafeLinks(q);
+  if (n) report.dropped['위험한 링크'] = (report.dropped['위험한 링크'] ?? 0) + n;
 }
 
 /** 기본 스타일에 없는 것: 가져온 문서가 쓰면 정본 styles에 넣는다 (크기 1/1000pt) */

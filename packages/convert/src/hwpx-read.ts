@@ -6,7 +6,7 @@
  */
 import { PAPER_SIZES, defaultListDef, noteStoryId, type CommentThread, type FloatAttrs, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quire/model';
 import { readZip, type QuireDoc, type QuireParagraph, type QuireRun, type QuireTable } from '@quire/sync';
-import { Report, addAsset, addUsedStyles, emptyQuire, mimeOf, type ImportResult, type ImportedAsset } from './common';
+import { Report, finishImport, addAsset, addUsedStyles, emptyQuire, mimeOf, type ImportResult, type ImportedAsset } from './common';
 import { BASE_FONT, BASE_SIZE, HWP_NUM, HWP_STYLES, LINE_PERCENT } from './hwpx-write';
 import { descendants, kid, kids, parseXml, textOf, type XNode } from './xml';
 
@@ -31,6 +31,9 @@ const clean = <T extends Record<string, unknown>>(o: T): T => {
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** HWPX → 정본 */
+/** 표 열 수·칸 합치기 상한 */
+const MAX_TABLE_COLS = 1000;
+
 export async function importHwpx(bytes: Uint8Array): Promise<ImportResult> {
   const report = new Report();
   const assets = new Map<string, ImportedAsset>();
@@ -469,7 +472,9 @@ export async function importHwpx(bytes: Uint8Array): Promise<ImportResult> {
 
   const readTable = (tbl: XNode, ctx: Ctx): QuireTable => {
     const tk = ++tableSeq;
-    const colCnt = Number(tbl.attrs.colCnt ?? 1);
+    // 망가진 값이 배열·칸을 수억 개 만들지 않게 (16 §6)
+    const colCnt = Math.min(MAX_TABLE_COLS, Math.max(1, Math.floor(Number(tbl.attrs.colCnt ?? 1)) || 1));
+    const rowCnt = kids(tbl, 'hp:tr').length;
     const widths: number[] = Array.from({ length: colCnt }, () => 0);
     const rows: QuireTable['table']['rows'] = [];
     kids(tbl, 'hp:tr').forEach((tr, y) => {
@@ -479,8 +484,8 @@ export async function importHwpx(bytes: Uint8Array): Promise<ImportResult> {
         .sort((a, b) => a.x - b.x);
       for (const { tc, x } of cells) {
         const span = kid(tc, 'hp:cellSpan');
-        const cs = Math.max(1, Number(span?.attrs.colSpan ?? 1));
-        const rs = Math.max(1, Number(span?.attrs.rowSpan ?? 1));
+        const cs = Math.min(colCnt, Math.max(1, Math.floor(Number(span?.attrs.colSpan ?? 1)) || 1));
+        const rs = Math.min(Math.max(1, rowCnt - y), Math.max(1, Math.floor(Number(span?.attrs.rowSpan ?? 1)) || 1));
         const w = u10(kid(tc, 'hp:cellSz')?.attrs.width);
         if (cs === 1 && x < colCnt && w) widths[x] = w;
         const name = `t${tk}.r${y + 1}c${x + 1}`;
@@ -672,6 +677,7 @@ export async function importHwpx(bytes: Uint8Array): Promise<ImportResult> {
   if (Object.keys(bodyMarks).length || Object.keys(bodyPara).length)
     q.styles.body = { name: 'body', label: '본문', ...(Object.keys(bodyPara).length ? { para: bodyPara } : {}), ...(Object.keys(bodyMarks).length ? { marks: bodyMarks } : {}) };
   addUsedStyles(q);
+  finishImport(q, report);
   return { doc: q, assets, report };
 }
 

@@ -44,6 +44,9 @@ function decode(s: string): string {
   });
 }
 
+/** 요소 중첩 상한 */
+export const MAX_XML_DEPTH = 256;
+
 /** XML → 뿌리 요소 */
 export function parseXml(xml: string): XNode {
   const root: XNode = { name: '#root', attrs: {}, children: [] };
@@ -90,7 +93,11 @@ export function parseXml(xml: string): XNode {
     for (const [k, v] of Object.entries(raw)) if (k !== 'xmlns' && !k.startsWith('xmlns:')) attrs[rename(k, ns, true)] = v;
     const node: XNode = { name: rename(m[3], ns, false), attrs, children: [] };
     top().node.children.push(node);
-    if (!m[5]) stack.push({ node, ns });
+    if (!m[5]) {
+      stack.push({ node, ns });
+      // 깊은 중첩은 읽는 쪽의 재귀가 스택을 넘긴다 (16 §6). 실제 문서는 수십 단계
+      if (stack.length > MAX_XML_DEPTH) throw new Error(`xml: elements nested too deeply (> ${MAX_XML_DEPTH})`);
+    }
   }
   const el = root.children.find((c): c is XNode => typeof c !== 'string');
   return el ?? root;
