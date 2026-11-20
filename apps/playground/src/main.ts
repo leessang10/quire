@@ -508,9 +508,10 @@ viewSel.addEventListener('change', () => {
   suggestBtn.toggleAttribute('disabled', editor.viewMode !== 'suggestions');
 });
 
-// HTML·Markdown 가져오기·내보내기 (5-5)
+// HTML·Markdown·DOCX 가져오기·내보내기 (5-5, 5-6)
 document.getElementById('export-html')!.addEventListener('click', () => void saveAs(editor, 'html').then(showStats));
 document.getElementById('export-md')!.addEventListener('click', () => void saveAs(editor, 'md').then(showStats));
+document.getElementById('export-docx')!.addEventListener('click', () => void saveAs(editor, 'docx').then(showStats));
 const importFile = document.getElementById('import-file') as HTMLInputElement;
 document.getElementById('import-doc')!.addEventListener('click', () => importFile.click());
 importFile.addEventListener('change', () => {

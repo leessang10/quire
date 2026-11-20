@@ -6,3 +6,7 @@ export { EXTRA_STYLES, imageSize, fromDataUrl, mimeOf, toDataUrl } from './commo
 export type { AssetReader, ImportReport, ImportResult, ImportedAsset } from './common';
 export { SUPPORT, elementsDocument, firstDifference, project } from './elements';
 export type { Format, FormatSupport } from './elements';
+export { exportDocx } from './docx-write';
+export type { DocxExportOptions } from './docx-write';
+export { importDocx } from './docx-read';
+export { storyText } from './elements';
