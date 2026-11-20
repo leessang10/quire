@@ -112,6 +112,7 @@ export interface PaintOverlay {
   /** 각주 조각: 편집 중인 레이아웃을 돌려주면 그것으로 그린다 */
   note?(page: number, slot: NoteSlot): PagedLayout | null | undefined;
   /** 개체 크기·위치 미리 보기 (크기 조절·옮기기 중) */
+  /** 끄는 중인 개체의 크기와 왼쪽 위 이동 (원래 자리 기준) */
   objectBox?(offset: number, float: boolean, w: number, h: number): { w: number; h: number; dx: number; dy: number } | null;
   /** 개체를 그린 뒤 (선택 손잡이) */
   object?(o: ObjectPaint): void;
@@ -631,11 +632,17 @@ export class PagePainter {
       }
       let { w, h } = box;
       const offset = info.start + k;
+      let ox = x;
+      let y = baseY - h;
+      // 크기 조절 미리보기: 왼쪽 위(원래 자리) 기준으로 덧그리기가 준 만큼 옮긴다 (끄는 손잡이 반대쪽 변이 제자리)
       const g = this.ov.objectBox?.(offset, false, w, h);
-      if (g) ({ w, h } = g);
-      const y = baseY - h;
-      this.image(attrs?.asset, attrs?.alt, x, y, w, h, false);
-      this.ov.object?.({ offset, layout, float: false, para, x, y, w, h, px, top: 0 });
+      if (g) {
+        ({ w, h } = g);
+        ox += g.dx;
+        y += g.dy;
+      }
+      this.image(attrs?.asset, attrs?.alt, ox, y, w, h, false);
+      this.ov.object?.({ offset, layout, float: false, para, x: ox, y, w, h, px, top: 0 });
     }
   }
 

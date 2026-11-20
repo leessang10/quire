@@ -41,5 +41,5 @@ node scripts/build-packages.mjs  # @quire/* 패키지 빌드 (.build/packs) → 
 | [14. 협업과 이력](docs/design/14-collaboration-history.md) | 4단계: 주석, 댓글, 변경 추적, 버전, 권한 |
 | [15. 생태계](docs/design/15-ecosystem.md) | 5단계: 찾기, 맞춤법, PDF, HTML·Markdown·DOCX·HWPX, 플러그인·SDK |
 | [16. 출시 준비](docs/design/16-release.md) | 6단계: CI, 성능 벤치마크, 레이아웃 골든, 보안, 남은 일 분류, 패키지·예제 앱 |
-| [예제 앱](examples/README.md) | 바닐라, React+Tailwind, Next.js, Vue, SvelteKit, Node 변환기 |
+| [예제 앱](examples/README.md) | 기본: 바닐라, React+Tailwind, Next.js, Vue, SvelteKit, Node 변환기 · 전체 기능: React(Tailwind), Next.js(shadcn/ui) |
 | [ADR](docs/adr/) | 아키텍처 결정 기록 |
