@@ -31,18 +31,23 @@ export interface FormatSupport {
   comments: boolean;
   /** 제안 (삽입·삭제) */
   suggestions: boolean;
-  /** 길이의 단위 (1/1000pt): DOCX는 twip(1/20pt)이라 50 */
+  /** 길이의 단위 (1/1000pt): DOCX는 twip(1/20pt)이라 50, HWPX는 1/100pt라 10 */
   unit?: number;
+  /** 댓글 해결 표시 (HWPX 메모에는 없다) */
+  commentResolved?: boolean;
+  /** 이어지는 구역의 용지·여백·쪽 번호·머리말 (HWPX는 같은 쪽 안이라 단 정의만 바꾼다) */
+  continuousLayout?: boolean;
 }
 
 const HEADINGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
 
 const NONE = { sections: false, floats: false, comments: false, suggestions: false };
 
-export const SUPPORT: Record<'markdown' | 'html' | 'docx', FormatSupport> = {
+export const SUPPORT: Record<'markdown' | 'html' | 'docx' | 'hwpx', FormatSupport> = {
   markdown: { marks: ['bold', 'italic', 'strike', 'link'], styles: [...HEADINGS, 'quote', 'code'], paraLayout: false, emptyParas: false, edgeSpaces: false, imageSize: false, tableLayout: false, ...NONE },
   html: { marks: MARK_KEYS, styles: [...HEADINGS, 'quote', 'code'], paraLayout: true, emptyParas: true, edgeSpaces: true, imageSize: true, tableLayout: true, ...NONE },
   docx: { marks: MARK_KEYS, styles: [...HEADINGS, 'quote', 'code'], paraLayout: true, emptyParas: true, edgeSpaces: true, imageSize: true, tableLayout: true, sections: true, floats: true, comments: true, suggestions: true, unit: 50 },
+  hwpx: { marks: MARK_KEYS, styles: [...HEADINGS, 'quote', 'code'], paraLayout: true, emptyParas: true, edgeSpaces: true, imageSize: true, tableLayout: true, sections: true, floats: true, comments: true, suggestions: true, unit: 10, commentResolved: false, continuousLayout: false },
 };
 
 /** 스토리의 화면 글 (문단마다 ¶, 개체·표는 OBJ): 주석 오프셋의 기준 */
@@ -276,6 +281,7 @@ export function project(q: QuireDoc, s: FormatSupport): Block[] {
     out.push({
       sections: list.map((e) => {
         const f = fullSection(e as Partial<SectionProps>);
+        if (s.continuousLayout === false && f.start === 'continuous') return { start: f.start, columns: f.columns && f.columns.count > 1 ? { count: f.columns.count, gap: L(f.columns.gap), separator: !!f.columns.separator } : null };
         const hf: Record<string, unknown> = {};
         for (const part of ['header', 'footer'] as const) for (const kind of ['default', 'first', 'even'] as const) if (f[part]?.[kind]) hf[`${part}.${kind}`] = blocks(story(f[part]![kind]!));
         return {
@@ -300,7 +306,7 @@ export function project(q: QuireDoc, s: FormatSupport): Block[] {
         .filter((a) => a.type === 'comment')
         .map((a) => {
           const t = threads.get(String(a.data?.thread));
-          return { story: a.start!.story === 'body' || !a.start!.story ? 'body' : 'other', text: rangeText(a), resolved: !!t?.resolved, messages: (t?.messages ?? []).filter((m) => !m.deleted).map((m) => ({ author: m.author?.name, text: m.text, time: minute(m.time) })) };
+          return { story: a.start!.story === 'body' || !a.start!.story ? 'body' : 'other', text: rangeText(a), resolved: s.commentResolved === false ? null : !!t?.resolved, messages: (t?.messages ?? []).filter((m) => !m.deleted).map((m) => ({ author: m.author?.name, text: m.text, time: minute(m.time) })) };
         }),
     });
   }
