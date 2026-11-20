@@ -202,7 +202,7 @@
 - `scripts/golden.mjs` (`npm run golden`): 찾은 브라우저마다 헤드리스로 돌린다. 하나라도 다르면 종료 코드 1.
 - CI 빠른 작업에 넣었다 (글꼴 조각 빌드 1초 미만 + 골든 수 초). Ubuntu Chrome에서 같으면 운영체제가 달라도 쪽 나눔이 같다.
 
-**결과**: 기준 문서 6개(forms 3쪽, manual 8쪽, newsletter 2쪽, paper 4쪽, report 2쪽, schedule 9쪽)가 Chrome 157·Edge(헤드리스, Windows)에서 편집기 경로·통째 글꼴 경로 모두 Node 기대값과 같다.
+**결과**: 기준 문서 6개(forms 3쪽, manual 8쪽, newsletter 2쪽, paper 4쪽, report 2쪽, schedule 9쪽)가 Chrome 157·Edge(헤드리스, Windows)에서 편집기 경로·통째 글꼴 경로 모두 Node 기대값과 같다. CI(GitHub ubuntu-latest, Chrome 157 헤드리스)에서도 같다: 기대값은 Windows Node에서 만든 것이라 운영체제가 달라도 쪽 나눔이 같음을 확인했다.
 
 **찾아 고친 버그**: 머리말·꼬리말이 있는 문서를 처음부터 편집기에 주면(`new Editor({ document })`, SDK `createEditor({ doc })`) 생성 중 예외가 났다. `resetLayouts()`가 쪽 조판기를 먼저 만들었는데, 조판기는 만들 때 첫 프레임(구역의 머리말 높이)을 재고, 서식기에 측정기를 넣는 `fmt.reset`은 그다음 줄이었다. 순서를 바꿨다. 플레이그라운드는 열린 편집기에 `setDocument`로 넣어서 이 경로를 타지 않았다.
 
