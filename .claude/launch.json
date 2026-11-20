@@ -97,6 +97,30 @@
         "--strictPort"
       ],
       "port": 5305
+    },
+    {
+      "name": "example-react-full",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "examples/react-full/node_modules/vite/bin/vite.js",
+        "examples/react-full",
+        "--port",
+        "5306",
+        "--strictPort"
+      ],
+      "port": 5306
+    },
+    {
+      "name": "example-next-shadcn",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "examples/next-shadcn/node_modules/next/dist/bin/next",
+        "dev",
+        "examples/next-shadcn",
+        "-p",
+        "5307"
+      ],
+      "port": 5307
     }
   ]
 }

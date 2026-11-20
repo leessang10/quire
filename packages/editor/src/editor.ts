@@ -440,7 +440,8 @@ export class Editor {
   private readonly imageUsed = new Map<string, number>();
   private frame = 0;
   /** 크기 조절 중인 개체: 오프셋과 미리 보기 크기 (px) */
-  private resizing: { offset: number; w: number; h: number } | null = null;
+  /** 크기 조절 중인 개체: 새 크기와 왼쪽 위의 이동 (끄는 손잡이 반대쪽 변이 제자리에 남게) */
+  private resizing: { offset: number; w: number; h: number; dx: number; dy: number } | null = null;
   /** 옮기는 중인 떠 있는 개체: 오프셋과 끈 거리 (px) */
   private moving: { offset: number; dx: number; dy: number } | null = null;
   /** 캐럿에서 다음 입력이 받을 서식 (Ctrl+B 등을 선택 없이 눌렀을 때). at: 그 캐럿 오프셋 */
@@ -1062,7 +1063,8 @@ export class Editor {
         const blob = await this.assets.get(id);
         return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
       },
-      title: this.doc.paragraphs()[0]?.text.replaceAll(OBJ, '').trim() ?? '',
+      // 문서 제목은 본문 첫 문단 (캐럿이 셀·머리말에 있어도)
+      title: this.document.body.paragraphs()[0]?.text.replaceAll(OBJ, '').trim() ?? '',
     };
   }
 
@@ -1135,7 +1137,7 @@ export class Editor {
         const r = this.resizing && this.resizing.offset === offset ? this.resizing : null;
         const m = float && this.moving && this.moving.offset === offset ? this.moving : null;
         if (!r && !m) return null;
-        return { w: r ? r.w : w, h: r ? r.h : h, dx: m ? m.dx : 0, dy: m ? m.dy : 0 };
+        return { w: r ? r.w : w, h: r ? r.h : h, dx: (m ? m.dx : 0) + (r ? r.dx : 0), dy: (m ? m.dy : 0) + (r ? r.dy : 0) };
       },
       object: (o) => this.objectOverlay(o),
       cell: (v, start, x, y, cx, cy, cw, ch) => {
@@ -2120,10 +2122,16 @@ export class Editor {
       const sy = handle <= 2 ? -1 : handle === 3 || handle === 7 ? 0 : 1;
       let w = Math.max(16, obj.w + sx * dx);
       let h = Math.max(16, obj.h + sy * dy);
-      if (corner) h = w * ratio;
+      if (corner) {
+        // 비율 유지: 가로·세로 중 더 크게 바뀐 쪽을 따른다 (세로로만 끌어도 커진다)
+        const scale = Math.max(16 / obj.w, 16 / obj.h, Math.abs(w / obj.w - 1) >= Math.abs(h / obj.h - 1) ? w / obj.w : h / obj.h);
+        w = obj.w * scale;
+        h = obj.w * scale * ratio;
+      }
       if (sx === 0) w = obj.w;
       if (sy === 0) h = obj.h;
-      this.resizing = { offset: obj.offset, w, h };
+      // 왼쪽·위 손잡이면 오른쪽·아래 변을 고정한다: 손잡이가 커서를 따라간다
+      this.resizing = { offset: obj.offset, w, h, dx: sx < 0 ? obj.w - w : 0, dy: sy < 0 ? obj.h - h : 0 };
       this.scheduleRender();
     };
     const onUp = () => {
@@ -2135,6 +2143,12 @@ export class Editor {
       const toPt = (v: number) => Math.round(v * 0.75 * 1000);
       const before: Selection = { ...this.sel };
       const ops = [...this.doc.setObjAttr(r.offset, 'w', toPt(r.w)), ...this.doc.setObjAttr(r.offset, 'h', toPt(r.h))];
+      // 떠 있는 개체는 왼쪽·위 손잡이로 바꾼 만큼 자리도 옮긴다 (오른쪽·아래 변이 제자리). 정렬 자리(left·center·right)는 그대로
+      const fl = this.doc.objAt(r.offset)?.float;
+      if (fl && (r.dx || r.dy)) {
+        const next: FloatAttrs = { ...fl, y: fl.y + toPt(r.dy), ...(typeof fl.x === 'number' ? { x: fl.x + toPt(r.dx) } : {}) };
+        ops.push(...this.doc.setObjAttr(r.offset, 'float', next));
+      }
       this.history.seal();
       if (ops.length) this.commit(ops, before);
       else this.render();

@@ -1,0 +1,6 @@
+/* 전체 기능 예제: Tailwind (preflight 켬) */
+@import 'tailwindcss';
+
+body {
+  font-family: Pretendard, 'Noto Sans KR', 'Malgun Gothic', system-ui, sans-serif;
+}

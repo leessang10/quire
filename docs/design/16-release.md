@@ -148,6 +148,12 @@
 - Vue·Svelte용 공식 래퍼는 없다 (예제의 컴포저블·onMount 수준이면 충분해 보인다). 필요해지면 `@quire/vue` 등.
 - Node에서 PDF를 만들려면 앱이 글꼴 바이트를 manifest에서 모아 넘겨야 한다. 편의 함수(`fontsFromManifest`)는 6-5 후보.
 
+**전체 기능 예제 (6단계 뒤 더함)**: 기본 앱은 붙이는 법만 보여 주므로, Word·Google Docs식 화면으로 기능을 모두 보이는 앱 둘을 더했다 — `examples/react-full`(React + Vite + Tailwind, 직접 만든 컴포넌트)과 `examples/next-shadcn`(Next.js 16 + Tailwind + shadcn/ui Base UI판). 메뉴 막대·도구 막대·상황별 줄(표·그림·머리말·각주)·개요·댓글과 제안 창·찾기·쪽 설정·오른쪽 클릭·상태 줄. UI가 아닌 공통 코드는 `examples/shared/quire-app.ts`. 브라우저에서 확인: 예제 문서 6개가 기준 기대값과 같은 쪽 수로 열림, 저장 6형식과 `.quire` 왕복(글·댓글·제안 그대로), 표·머리말·각주·그림 도구 줄, 찾기, 2단 쪽 설정, 제안 모드, 댓글, 맞춤법. 두 앱 모두 프로덕션 빌드와 `npm audit` 0건.
+
+- 찾아 고친 편집기 버그: `printSource().title`이 본문이 아니라 편집 중인 스토리의 첫 문단을 읽어, 캐럿이 표 셀·머리말에 있을 때 저장한 PDF·HWPX·DOCX의 제목이 비었다 → 본문 첫 문단.
+- 찾아 고친 그림 크기 조절 (사용자 보고): 끄는 동안 미리보기가 글자처럼 놓인 그림은 아래·왼쪽 변, 떠 있는 그림은 위·왼쪽 변을 고정해 아래·왼쪽·위 손잡이가 커서와 반대로 움직였다. 모서리는 가로 움직임만 보아 세로로 끌면 반응이 없었다 → 끄는 손잡이 반대쪽 변을 고정하고(떠 있는 그림은 놓을 때 자리도 그만큼 옮김), 모서리는 가로·세로 중 더 크게 바뀐 쪽 비율로. 손잡이 8개 중 5가지 경우를 브라우저에서 끌어 확인했다.
+- shadcn CLI 4.22: Base UI판을 기본으로 깔고, `cn`을 npm의 제3자 패키지 `cn`에서 가져오게 썼다 (CLI 패키지의 의존성). 표준 `clsx` + `tailwind-merge`로 고치고 CLI 패키지를 의존성에서 뺐다 (감사 경고 4건도 CLI의 것이었다).
+
 ### 10.2 6-1 CI
 
 - `.github/workflows/ci.yml`: 푸시(main)·PR마다 `fast` 작업(`npm ci` → `npm run typecheck` → `vitest.fast.config.ts`). 매일 03:00(KST)과 손으로 돌릴 때 `slow` 작업(`vitest.slow.config.ts`, 제한 180분).

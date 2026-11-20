@@ -1,0 +1,36 @@
+{
+  "name": "quire-example-react-full",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "postinstall": "node ../shared/copy-assets.mjs public --samples",
+    "dev": "vite --port 5306 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5306"
+  },
+  "dependencies": {
+    "@quire/convert": "file:../../.build/packs/quire-convert-0.1.0.tgz",
+    "@quire/editor": "file:../../.build/packs/quire-editor-0.1.0.tgz",
+    "@quire/fonts": "file:../../.build/packs/quire-fonts-0.1.0.tgz",
+    "@quire/layout": "file:../../.build/packs/quire-layout-0.1.0.tgz",
+    "@quire/model": "file:../../.build/packs/quire-model-0.1.0.tgz",
+    "@quire/pdf": "file:../../.build/packs/quire-pdf-0.1.0.tgz",
+    "@quire/react": "file:../../.build/packs/quire-react-0.1.0.tgz",
+    "@quire/sdk": "file:../../.build/packs/quire-sdk-0.1.0.tgz",
+    "@quire/shaping": "file:../../.build/packs/quire-shaping-0.1.0.tgz",
+    "@quire/sync": "file:../../.build/packs/quire-sync-0.1.0.tgz",
+    "harfbuzzjs": "1.6.4",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "lucide-react": "1.66.0"
+  },
+  "devDependencies": {
+    "vite": "8.3.8",
+    "@vitejs/plugin-react": "^5",
+    "tailwindcss": "^4",
+    "@tailwindcss/vite": "^4",
+    "typescript": "5.8.3",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6"
+  }
+}
