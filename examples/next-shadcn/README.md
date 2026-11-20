@@ -1,7 +1,7 @@
-# 전체 기능 예제 · Next.js + Tailwind + shadcn/ui
+# 전체 기능 예제 · Next.js + Tailwind + shadcn/ui (Google Docs식)
 
 Next.js 16 App Router에서 Quire 편집기의 기능을 모두 보여 주는 앱입니다. 화면은 [shadcn/ui](https://ui.shadcn.com) 컴포넌트만으로 만들었습니다 (Base UI판).
-같은 기능을 Tailwind로 직접 만든 판은 [react-full](../react-full)입니다.
+같은 기능을 Tailwind로 직접 만든 판은 [react-full](../react-full)입니다. 같은 편집기를 다른 스타일로 꾸민 예제: [Word식](../next-word) · [Notion식](../next-notion).
 
 ![첫 화면](screenshots/overview.webp)
 

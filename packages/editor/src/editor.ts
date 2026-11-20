@@ -787,6 +787,27 @@ export class Editor {
     return summarizeLayout(this.document, this.bodyLayout, this.fmt, today);
   }
 
+  /**
+   * 지금 스토리의 [from, to)를 글로 바꾼다 (지우기만 하려면 ''). 실행 취소 한 단계이고, 제안 모드면 제안으로 남는다.
+   * 앱 명령용 (슬래시 메뉴가 "/찾을 말"을 지우고 명령을 실행하는 것 등)
+   */
+  replaceRange(from: number, to: number, text = ''): void {
+    this.input.commitComposition();
+    const n = this.doc.length;
+    const a = Math.max(0, Math.min(from, to, n));
+    const b = Math.max(0, Math.min(Math.max(from, to), n));
+    this.setSelection(a, b);
+    this.history.seal();
+    this.replaceSelection(text);
+    this.history.seal();
+  }
+
+  /** 캐럿 자리에 글을 넣는다 (선택이 있으면 바꾼다) */
+  insertText(text: string): void {
+    const [a, b] = this.range();
+    this.replaceRange(a, b, text);
+  }
+
   // ── 화면 테마 (17) ───────────────────────────────────
 
   /** 테마를 바꾼다 (문서·레이아웃은 그대로, 다시 그리기만) */

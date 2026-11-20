@@ -19,10 +19,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const vite = (dir, port) => [`examples/${dir}/node_modules/vite/bin/vite.js`, `examples/${dir}`, '--port', String(port), '--strictPort'];
 const next = (dir, port) => [`examples/${dir}/node_modules/next/dist/bin/next`, 'dev', `examples/${dir}`, '-p', String(port)];
 
-/** 편집기가 준비될 때까지: 글자 수 플러그인이 상태 줄을 채우면 (모든 예제에 있다) */
+/**
+ * 편집기가 준비될 때까지: 캔버스가 있고, 글자 수 플러그인이 상태 줄을 채웠거나(기본 예제) 편집기가 엔진 글꼴로 바뀌었으면
+ * (상태 줄이 없는 Notion식 등)
+ */
 async function ready(page) {
+  const probe = `!!document.querySelector('canvas') && (document.body.innerText.includes('어절') || String(window.quire?.handle?.editor?.textEngine ?? '').startsWith('HarfBuzz'))`;
   for (let i = 0; ; i++) {
-    const ok = await evaluate(page, `document.body.innerText.includes('어절') && !!document.querySelector('canvas')`).catch(() => false);
+    const ok = await evaluate(page, probe).catch(() => false);
     if (ok) break;
     // 첫 컴파일(Next.js)은 오래 걸린다. 그래도 3분 안에 안 뜨면 준비가 안 된 화면을 찍지 않고 멈춘다
     if (i > 360) throw new Error('편집기가 3분 안에 준비되지 않음 (같은 예제의 개발 서버가 이미 떠 있지 않은지 보세요: Next.js는 하나만 허용)');
@@ -83,6 +87,37 @@ const FULL_SHOTS = [
   },
 ];
 
+/** Word식 예제의 장면 */
+const WORD_SHOTS = [
+  { name: 'overview', about: '홈 탭: 글꼴·단락·스타일 갤러리·편집', run: async () => {} },
+  { name: 'insert', about: '삽입 탭', run: async (page) => { await click(page, 'text:삽입'); await sleep(500); } },
+  { name: 'layout', about: '레이아웃 탭: 여백·용지 방향·크기·단', run: async (page) => { await click(page, 'text:레이아웃'); await sleep(500); } },
+  { name: 'review', about: '검토 탭: 변경 내용 추적, 메모', run: async (page) => { await click(page, 'text:검토'); await sleep(500); } },
+  { name: 'file', about: '파일 메뉴', run: async (page) => { await click(page, 'text:파일'); await sleep(600); } },
+];
+
+/** Notion식 예제의 장면 */
+const NOTION_SHOTS = [
+  { name: 'overview', about: '페이지 목록, 연속 보기, 도구 막대 없음', run: async () => {} },
+  {
+    name: 'slash',
+    about: '/ 명령 메뉴',
+    run: async (page) => {
+      await evaluate(page, `(() => { const e = ${editor}; const p = e.doc.paragraphs()[1]; e.select(p.end); e.focus(); e.insertText(String.fromCharCode(10) + '/'); })()`);
+      await sleep(700);
+    },
+  },
+  {
+    name: 'floating',
+    about: '글을 고르면 뜨는 서식 막대',
+    run: async (page) => {
+      await evaluate(page, `(() => { const e = ${editor}; const p = e.doc.paragraphs()[1]; e.select(p.start, p.start + 12); e.focus(); })()`);
+      await sleep(700);
+    },
+  },
+  { name: 'dark', about: '어두운 화면: 문서 면까지 (앱 CSS로 --quire-page 덮어쓰기)', run: async (page) => { await click(page, 'text:어둡게'); await sleep(800); } },
+];
+
 const BASIC = [{ name: 'screenshot', about: '첫 화면', run: async () => {} }];
 
 const EXAMPLES = [
@@ -93,6 +128,8 @@ const EXAMPLES = [
   { id: 'svelte', args: (p) => vite('svelte', p), shots: BASIC },
   { id: 'react-full', args: (p) => vite('react-full', p), shots: FULL_SHOTS },
   { id: 'next-shadcn', args: (p) => next('next-shadcn', p), shots: FULL_SHOTS },
+  { id: 'next-word', args: (p) => next('next-word', p), shots: WORD_SHOTS },
+  { id: 'next-notion', args: (p) => next('next-notion', p), shots: NOTION_SHOTS },
 ];
 
 async function main() {
