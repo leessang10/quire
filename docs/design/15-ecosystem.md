@@ -1,6 +1,6 @@
 # 15. 생태계 (5단계)
 
-- 상태: 5단계 진행 중 (5-1 완료 §12, 5-2 완료 §13, 5-3 완료 §14, 5-4 완료 §15, 5-5 완료 §16, 5-6 완료 §17, 5-7 완료 §18)
+- 상태: 5단계 완료 (5-1 §12, 5-2 §13, 5-3 §14, 5-4 §15, 5-5 §16, 5-6 §17, 5-7 §18, 5-8 §19)
 - 범위: 06 5단계. 찾기·바꾸기, 맞춤법 검사, 쪽 그리기 분리와 PDF 내보내기·인쇄, 교환 포맷(Markdown·HTML·DOCX·HWPX), 플러그인 API.
 - 바탕: 00(아키텍처: 기능 플러그인 층), 01(문서 모델, 주석), 04(찾기 §4, 맞춤법 §5, 클립보드 §6, 인쇄 §7), 07(파일 §4 정본, 교환 포맷 §5), 08(공개 API, 서버 실행 §6), 11(스토리·표), 12(조판), 14(주석·제안·보기 모드).
 
@@ -267,7 +267,7 @@ interface QuirePlugin {
 | 5-5 | 문서 단위 HTML·Markdown 가져오기·내보내기, `@quire/convert`와 주요 요소 시험 틀(§6.1) | **완료** (§16, 예제 6종 왕복 투영 같음) |
 | 5-6 | DOCX 가져오기·내보내기 | **완료** (§17, Word로 열고 다시 저장해도 DOCX 열 같음) |
 | 5-7 | HWPX 가져오기·내보내기 | **완료** (§18, 한글로 열고 다시 저장해도 HWPX 열 같음) |
-| 5-8 | 플러그인 API(§7), 찾기·맞춤법을 플러그인으로, 예제 플러그인, `createEditor`·`@quire/react`(§8) | G6 |
+| 5-8 | 플러그인 API(§7), 찾기·맞춤법을 플러그인으로, 예제 플러그인, `createEditor`·`@quire/react`(§8) | **완료** (§19, 찾기·맞춤법이 API만으로 같은 동작) |
 
 - 5-1이 장식 레이어를 만들고 5-2·5-8이 그것을 쓴다. 5-4는 5-3 위에 있다. 5-5가 변환 틀(정본 거치기, 주요 요소 시험)을 만들고 5-6·5-7이 그 위에 포맷만 더한다.
 - 5-3은 기능이 늘지 않는 리팩터링이라 앞의 다른 단계와 겹치지 않게 따로 둔다.
@@ -686,3 +686,72 @@ interface QuirePlugin {
 ### 다음
 
 - 5-8 플러그인 API(§7), 찾기·맞춤법을 플러그인으로, 예제 플러그인, `createEditor`·`@quire/react`(§8).
+
+## 19. 5-8 결과: 플러그인 API, createEditor, React 래퍼
+
+### 구현
+
+- **플러그인 API** (`plugins.ts`, §7):
+  - `QuirePlugin`에는 `name`, `commands`, `keymap`, `decorations`, `decorationStyles`, `contextMenu`, `exporters`, `data`(schemaVersion·migrate), `init`(정리 함수)이 있다.
+  - §7의 `painters`(겉그리기 갈고리) 대신 `decorationStyles`(바탕·물결·밑줄)를 두었다. 찾기·맞춤법·예제에 충분했다.
+  - **`PluginContext`**(좁은 면):
+    - 읽기: `document()`, `story()`, `doc()`, `selection()`
+    - 선택: `select()`, `reveal(story, from, to)`(셀·각주·머리말로 들어가 고르고 스크롤)
+    - 트랜잭션: `edit(fn)`은 편집 중인 스토리 Doc 연산으로 실행 취소·동기화·제안 기록을 탄다. `editDocument(fn)`은 여러 스토리에 걸친 연산이고 실행 취소 한 단계다. 둘 다 `canEdit()`이 아니면 fn을 부르지 않는다.
+    - 좌표: `caretRect()`, `rangeRects()`(뷰포트), `hitTest()`
+    - 기타: `redraw()`, `on('change' | 'selection' | 'beforeRender' | 'afterRender')`, `run()`, `getData()`·`setData()`
+  - 단축키: `'Mod+F'` 꼴을 정규화한다. 한글 자판에서도 `code`로 글자를 맞춘다 (`ㄹ` → F).
+- **편집기**:
+  - `use(plugin)`·`unuse(name)`·`pluginNames()`·`run('플러그인.명령')`·`commandNames()`·`exporters()`·`exportWith(id)`. 옵션 `plugins`.
+  - 키 처리에서 플러그인 단축키를 먼저 본다. 명령이 true면 기본 동작을 막는다.
+  - 오른쪽 클릭은 `onContextMenu(e, spell, items)`로 플러그인 메뉴 항목을 함께 넘긴다.
+  - 그리기 앞뒤로 `beforeRender`·`afterRender`를 알린다.
+  - `undo`·`redo`를 공개했다.
+- **찾기·맞춤법을 내장 플러그인으로** (G6):
+  - `find-plugin.ts`, `spell-plugin.ts`는 `PluginContext`만 쓴다. 편집기 본체의 찾기 상태·맞춤법 세션·일정 코드(약 400줄)를 옮겼다.
+  - 편집기의 `find`·`findNext`·`replace`·`replaceAll`·`clearFind`·`setSpellChecker`·`spellSession`·`spellAt`은 이 플러그인에 맡긴다 (공개 API 그대로).
+  - Ctrl+F·Ctrl+H·F3도 찾기 플러그인의 단축키다.
+  - 맞춤법의 "보인 문단 알리기·유휴 검사"는 `afterRender` 이벤트로, 캐럿 문단 입력 멈춤은 `selection()`과 자체 타이머로 한다.
+  - 미러(스크린리더용 aria-invalid)만 편집기가 내장 맞춤법 플러그인의 세션을 읽는다.
+- **예제 플러그인** (`example-plugins.ts`):
+  - 글자 수 세기: change 이벤트(묶어서), 명령, 내보내기 형식(통계 글), 장식 없음.
+  - 강조 낱말: 장식 소스·겉모양, 명령(더하기·빼기·선택 더하기·다음), 단축키(Ctrl+Alt+K·J), 오른쪽 클릭 항목, 문서 데이터(낱말 목록, 판 1 쉼표 글 → 판 2 옮기기).
+- **문서 데이터** (07 §4): `Document.ext`(이름 → `{v, data}`). 정본 `x`로 저장·복원한다 (`quireFromDocument`·`documentFromQuire`). 실시간 동기화는 하지 않는다.
+- **`@quire/sdk`** `createEditor({host, doc: QuireDoc, plugins, …})` (08 §3):
+  - `run`: 내장 명령은 점 없는 이름(toggleBold·undo·setStyle·bulletList·insertTable…, 플러그인 `core`), 플러그인 명령은 '이름.명령'.
+  - `getState`: 불변 스냅샷 — 선택, 캐럿 서식, 문단 스타일, 실행 취소 가능, 제안 모드, 찾기, 플러그인. 값이 같으면 같은 객체다.
+  - `subscribe`: 그리기가 끝날 때 알린다. 그 밖에 `caretRect`·`rangeRects`·`toJSON`·`use`·`destroy`.
+- **`@quire/react`** (08 §4, JSX 없이 `createElement`):
+  - `useQuire(options)`: 처음 옵션으로 제어기 하나.
+  - `QuireEditor`: div에 붙인다. 떼면 문서를 정본으로 들고 있다가 다시 붙일 때 이어 쓴다 (StrictMode 이중 마운트).
+  - `useEditorState(editor, selector, isEqual)`: `useSyncExternalStore` 기반이고, 고른 값이 같으면 같은 값을 돌려줘 다시 그리지 않는다.
+  - `createController`는 React 밖에서 쓴다. react·react-dom 19.1.0은 피어 의존성이고, 시험은 happy-dom 21.0.4(15판의 심각한 취약점 때문에 올렸다)로 한다.
+- **플레이그라운드**: 예제 플러그인 둘을 붙였다. 상태 칸에 플러그인 글자 수와 플러그인 목록을 보이고, 오른쪽 클릭 메뉴가 플러그인 항목도 보인다.
+
+### 검증
+
+- 시험 `plugins.test.ts` 4개 (Node, 편집기 없이 문서 하나 위의 가짜 `PluginContext`):
+  - 찾기 플러그인: 결과 3개와 장식(find-current·find), 다음 고르기, 바꾸기 뒤 다음 결과, 모두 바꾸기 한 트랜잭션, 읽기 전용이면 바꾸지 않음, 틀린 정규식, 지우기.
+  - 강조 낱말: 판 옮기기, 장식, 명령과 문서 데이터, 다음 낱말.
+  - 글자 수: 처음·변경(묶음)·내보내기.
+  - 단축키 정규화 (한글 자판 Ctrl+F).
+- 시험 `react.test.ts` 3개 (happy-dom):
+  - 선택이 20번 바뀌어도 굵게를 고른 컴포넌트는 다시 그리지 않고, 굵게가 바뀌면 한 번만 그린다. 새 객체를 고르면 isEqual로 막는다.
+  - 옵션이 렌더마다 바뀌어도 제어기는 하나다.
+  - StrictMode에서 살아 있는 에디터는 하나이고, 뗐다 붙이면 문서를 잇는다.
+- **브라우저** (플레이그라운드, 리팩터링한 편집기):
+  - 플러그인 4개(find·wordCount·highlightWords·spell)와 명령 16개가 붙는다. 상태 칸의 플러그인 글자 수 584자는 편집기 글자 수와 같다. 'Quire'에 강조 바탕이 칠해진다.
+  - Ctrl+F가 찾기 막대를 연다 (결과 "1 / 5", Enter로 다음 선택). F3 두 번이면 결과 0 → 2. 모두 바꾸기 5개는 실행 취소 한 번에 되돌아간다.
+  - 맞춤법 물결(금새·몇일 …). 오른쪽 클릭 메뉴에 고칠 말 '금세', 무시, 사전, 플러그인 항목 "강조 낱말로 더하기"가 나온다. '금세'를 고르면 글이 고쳐지고, 캐럿이 낱말 뒤로 가며, 실행 취소할 수 있고, 다시 검사하면 그 오류가 빠진다.
+  - SDK: `createEditor`로 띄워 `run('toggleBold')`·`undo`, 스냅샷(알림 5번에 다른 객체 3개), `toJSON`에 굵게 반영, 캐럿 사각형, 같은 host에 destroy 뒤 다시 만들기.
+- 타입 검사 통과. 편집기·변환·PDF·React·모델·정본 시험 264개 통과 (한글·Word 다시 저장 시험은 파일이 있을 때).
+
+### 한계
+
+- 겉그리기 갈고리(`painters`)는 두지 않았다 (장식 겉모양 셋으로 충분했다). 플러그인 데이터는 실시간 동기화하지 않는다 (정본·`.quire`로 남는다).
+- 플러그인 명령 이름이 겹치면 나중 것이 이긴다. 권한(읽기 전용·역할)은 트랜잭션에서 막지만, 플러그인이 받은 Document 객체를 직접 바꾸는 것까지 막지는 않는다 (읽기 전용 프록시는 하지 않았다).
+- `createEditor`의 `assets`(wasmUrl·workerUrl·fontBaseUrl, 08 §3)는 편집기 옵션(`fonts`, `assets` 저장소)으로 대신한다.
+
+### 다음
+
+- 5단계 끝. 6단계(06 로드맵)로.

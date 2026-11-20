@@ -29,6 +29,10 @@ const EMPTY_STATE: SegState = { order: [], hidden: [], placeholder: [], used: []
 export type DocumentListener = (story: StoryId | null, c: RawChange | TableChange | AnnotationChange | CommentChange) => void;
 
 export class Document {
+  /**
+   * 플러그인 문서 데이터 (15 §7, 정본 x.<이름> = { v: 스키마 판, data }). 실시간 동기화는 하지 않는다 (정본·.quire로 남는다)
+   */
+  readonly ext = new Map<string, unknown>();
   private readonly map = new Map<StoryId, Doc>();
   private readonly tableMap = new Map<string, TableRecord>();
   /** 주석 (14 §2) */

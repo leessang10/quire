@@ -2,7 +2,7 @@
  * 맞춤법 검사 데모 (15 §4): 자주 틀리는 한국어 표기 몇 개를 찾는 작은 검사기와 오른쪽 클릭 메뉴.
  * 실제 한국어 검사기는 앱이 끼운다 (O-36). 영어 낱말은 WordListChecker로 작은 목록만 본다.
  */
-import { WordListChecker, type Editor, type SpellChecker, type SpellIssue, type SpellMenu } from '@quire/editor';
+import { WordListChecker, type Editor, type MenuItem, type SpellChecker, type SpellIssue, type SpellMenu } from '@quire/editor';
 
 /** 틀린 표기 → 고칠 말 (낱말 경계와 상관없이 찾는다: 활용형 앞부분이 같다) */
 const MISTAKES: Array<[string, string[], SpellIssue['kind'], string?]> = [
@@ -88,18 +88,25 @@ export class SpellContextMenu {
   }
 
   /** onContextMenu에서 부른다. 메뉴를 열었으면 true */
-  open(e: MouseEvent, spell: SpellMenu | null): boolean {
+  open(e: MouseEvent, spell: SpellMenu | null, extra: MenuItem[] = []): boolean {
     this.close();
-    if (!spell) return false;
+    if (!spell && !extra.length) return false;
     const items: Array<[string, () => void, string?]> = [];
-    for (const s of spell.suggestions) items.push([s, () => spell.apply(s), 'fix']);
-    if (!spell.suggestions.length) items.push(['고칠 말 없음', () => {}, 'none']);
-    items.push(['모두 무시', () => spell.ignore()]);
-    items.push(['사전에 더하기', () => spell.addWord()]);
-    const head = document.createElement('div');
-    head.className = 'ctx-head';
-    head.textContent = spell.message ?? (spell.kind === 'spacing' ? '띄어쓰기' : spell.kind === 'grammar' ? '문법' : '맞춤법');
-    this.el.replaceChildren(head);
+    if (spell) {
+      for (const s of spell.suggestions) items.push([s, () => spell.apply(s), 'fix']);
+      if (!spell.suggestions.length) items.push(['고칠 말 없음', () => {}, 'none']);
+      items.push(['모두 무시', () => spell.ignore()]);
+      items.push(['사전에 더하기', () => spell.addWord()]);
+    }
+    // 플러그인 항목 (15 §7)
+    for (const it of extra) items.push([it.label, it.run, it.disabled ? 'none' : undefined]);
+    this.el.replaceChildren();
+    if (spell) {
+      const head = document.createElement('div');
+      head.className = 'ctx-head';
+      head.textContent = spell.message ?? (spell.kind === 'spacing' ? '띄어쓰기' : spell.kind === 'grammar' ? '문법' : '맞춤법');
+      this.el.append(head);
+    }
     for (const [label, run, cls] of items) {
       const b = document.createElement('button');
       b.setAttribute('role', 'menuitem');
