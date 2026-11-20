@@ -1,6 +1,7 @@
 import { Editor, type InputLogEntry } from '@quire/editor';
 import { CommentsPane } from './comments-pane';
 import { FindBar } from './find-bar';
+import { openPdf } from './pdf-export';
 import { DemoChecker, SpellContextMenu } from './spell-demo';
 import { documentFromQuire, quireFromDocument } from '@quire/sync';
 import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
@@ -504,6 +505,20 @@ viewSel.addEventListener('change', () => {
   viewSel.title = `${Math.round(performance.now() - t)} ms`;
   suggestBtn.toggleAttribute('disabled', editor.viewMode !== 'suggestions');
 });
+
+// PDF 내보내기·인쇄 (5-4): 버튼, Ctrl+P (브라우저 인쇄 대신 쪽 그대로의 PDF)
+const pdfBtn = document.getElementById('pdf-export')!;
+pdfBtn.addEventListener('click', () => openPdf(editor));
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'p') {
+      e.preventDefault();
+      openPdf(editor);
+    }
+  },
+  true,
+);
 
 // 제안 모드 (4-3)
 const suggestBtn = document.getElementById('suggest')!;

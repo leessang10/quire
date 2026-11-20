@@ -64,10 +64,12 @@ export interface DrawStyle {
   highlight: string | null;
   /** 기준선 이동 (px, 위가 음수): 위·아래 첨자 */
   shift: number;
+  /** 링크 주소 (PDF 링크 주석) */
+  link: string | null;
 }
 
 export const PLAIN_DRAW: DrawStyle = {
-  run: PLAIN_STYLE, bold: false, italic: false, underline: false, strike: false, color: null, highlight: null, shift: 0,
+  run: PLAIN_STYLE, bold: false, italic: false, underline: false, strike: false, color: null, highlight: null, shift: 0, link: null,
 };
 /** 위·아래 첨자: 크기 배율, 기준선 이동 (em) */
 const SCRIPT_SCALE = 0.65;
@@ -505,6 +507,7 @@ export class Formatter {
         color: m.color ?? (m.link ? LINK_COLOR : null),
         highlight: m.highlight ?? null,
         shift: script === 'sup' ? SUP_SHIFT * sizePx : script === 'sub' ? SUB_SHIFT * sizePx : 0,
+        link: typeof m.link === 'string' && m.link ? m.link : null,
       };
     }
     table[id] = d;

@@ -3,6 +3,7 @@
  * 설계: docs/design/03, 04, 08
  */
 import {
+  OBJ,
   BODY_STYLE,
   Doc,
   Document,
@@ -494,6 +495,8 @@ export class Editor {
   private shapedFonts: string[] | null = null;
   /** 글꼴 번호별 굵은 얼굴의 가족 이름 (불러온 것만). 없으면 합성 굵게 */
   private boldFonts: Array<string | null> = [];
+  /** 글꼴 자리마다 불러온 파일 (PDF에 넣는다): 보통·굵은 얼굴 */
+  private fontFiles: Array<{ name: string; regular: Uint8Array | null; bold: Uint8Array | null }> = [];
   private metrics: FontMetrics = { ...DEFAULT_METRICS };
   private readonly assets: AssetStore;
   /** 자산 ID → 그릴 이미지 (불러오는 중 null) */
@@ -695,6 +698,8 @@ export class Editor {
       document.fonts.add(await new FontFace(family, data.slice().buffer).load());
     };
     const boldFonts: Array<string | null> = slots.map(() => null);
+    const files = slots.map((s) => ({ name: s.name, regular: null as Uint8Array | null, bold: null as Uint8Array | null }));
+    for (const { i, data } of ready) files[i]!.regular = data;
     await Promise.all(ready.map(({ i, data }) => register(families[i]!, data)));
 
     let loadedBytes = 0;
@@ -715,6 +720,8 @@ export class Editor {
       loadedBytes += data.length;
       shaper.loaded(i, shaping.loadShapingFont(data, slot.name), face);
       if (face === 1) boldFonts[i] = family;
+      if (face === 1) files[i]!.bold = data;
+      else files[i]!.regular = data;
     };
     // 편집 중 새 글자가 아직 안 받은 조각에 있으면: 모아서 받고 한 번에 다시 조판 (키 = 얼굴 × 256 + 자리)
     const queue = new Set<number>();
@@ -776,6 +783,7 @@ export class Editor {
     this.measurer = shaper;
     this.shapedFonts = families;
     this.boldFonts = boldFonts;
+    this.fontFiles = files;
     // 기준선·밑줄은 기본 글꼴(공백을 가진 자리)의 치수로
     const base = slots.find((s) => s.covers(0x20) && s.font)?.font ?? slots.find((s) => s.font)?.font;
     if (base) {
@@ -1079,6 +1087,35 @@ export class Editor {
     this.flushSpell();
     this.reportSelection();
     this.stats.renderMs = performance.now() - t0;
+  }
+
+  /**
+   * PDF로 내보낼 것 (15 §5.2, @quire/pdf의 exportPdf): 그리기 환경(이미지는 자산을 따로 받는다), 글꼴 자리별 파일, 자산 바이트.
+   * 엔진 글꼴(셰이핑)을 불러오지 않았으면 글꼴이 없다 (글자를 그리지 못한다)
+   */
+  printSource(): {
+    env: PainterEnv;
+    fonts: { count: number; face(slot: number, bold: boolean): { bytes: Uint8Array; name: string } | null };
+    asset(id: string): Promise<Uint8Array | null>;
+    title: string;
+  } {
+    const files = this.shapedFonts ? this.fontFiles : [];
+    return {
+      env: this.painterEnv(),
+      fonts: {
+        count: files.length,
+        face: (slot, bold) => {
+          const f = files[slot];
+          const bytes = f ? (bold ? f.bold : f.regular) : null;
+          return f && bytes ? { bytes, name: bold ? `${f.name} Bold` : f.name } : null;
+        },
+      },
+      asset: async (id) => {
+        const blob = await this.assets.get(id);
+        return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+      },
+      title: this.doc.paragraphs()[0]?.text.replaceAll(OBJ, '').trim() ?? '',
+    };
   }
 
   /** 쪽 그리기기가 읽는 것들 (게터: 글꼴을 불러오면 셰이핑 글꼴이 바뀐다) */

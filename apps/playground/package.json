@@ -10,6 +10,8 @@
   "dependencies": {
     "@quire/editor": "*",
     "@quire/sync": "*",
-    "@quire/model": "*"
+    "@quire/model": "*",
+    "@quire/pdf": "*",
+    "harfbuzzjs": "1.6.4"
   }
 }
