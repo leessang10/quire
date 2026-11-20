@@ -84,13 +84,21 @@ export class HttpAssets implements AssetStore {
   private readonly unsent = new Map<string, Blob>();
   private sending = false;
 
-  /** base: 자산 주소의 앞부분 (예: `http://localhost:8787/방이름/assets/`) */
+  /**
+   * base: 자산 주소의 앞부분 (예: `http://localhost:8787/방이름/assets/`).
+   * token: 권한이 걸린 방의 토큰 (14 §6). 내려받기·올리기에 `?token=`으로 싣는다
+   */
   constructor(
     private readonly base: string,
     cacheName?: string,
+    private readonly token?: string | null,
   ) {
     this.cache = new IdbCache(cacheName);
     if (typeof window !== 'undefined') window.addEventListener('online', () => void this.flush());
+  }
+
+  private url(id: string): string {
+    return this.base + id + (this.token ? `?token=${encodeURIComponent(this.token)}` : '');
   }
 
   async get(id: string): Promise<Blob | null> {
@@ -98,7 +106,7 @@ export class HttpAssets implements AssetStore {
     const c = await this.cache.get(id);
     if (c) return c;
     try {
-      const r = await fetch(this.base + id);
+      const r = await fetch(this.url(id));
       if (!r.ok) return null;
       const blob = await r.blob();
       await this.cache.put(id, blob);
@@ -123,7 +131,7 @@ export class HttpAssets implements AssetStore {
     try {
       for (const [id, blob] of [...this.unsent]) {
         try {
-          const r = await fetch(this.base + id, { method: 'PUT', body: blob, headers: { 'content-type': blob.type || 'application/octet-stream' } });
+          const r = await fetch(this.url(id), { method: 'PUT', body: blob, headers: { 'content-type': blob.type || 'application/octet-stream' } });
           if (r.ok || r.status === 400 || r.status === 413 || r.status === 415) this.unsent.delete(id); // 다시 해도 안 될 오류도 버린다
         } catch {
           break; // 오프라인: 다음에

@@ -481,7 +481,8 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     if (req.method === 'GET') {
       const a = store.getAsset(id);
       if (!a) reply(res, 404, 'no such asset');
-      else reply(res, 200, a.bytes, a.mime, { 'cache-control': 'public, max-age=31536000, immutable' });
+      // 권한이 걸린 방의 자산은 공유 캐시(프록시·CDN)에 남기지 않는다
+      else reply(res, 200, a.bytes, a.mime, { 'cache-control': `${store.access() ? 'private' : 'public'}, max-age=31536000, immutable` });
       idle(room);
       return;
     }

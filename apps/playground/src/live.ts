@@ -114,7 +114,7 @@ void (async () => {
     onChange: () => editor?.setRemoteCarets(client.remotes()),
     onSelectionChange: (a, h, story, page) => client.setSelection(a, h, story, page),
     // 이미지 원본은 서버의 자산 저장소 (11 §2.2)
-    assets: new HttpAssets(`${server.replace(/^ws/, 'http')}/${encodeURIComponent(room)}/assets/`),
+    assets: new HttpAssets(`${server.replace(/^ws/, 'http')}/${encodeURIComponent(room)}/assets/`, undefined, token),
   });
   showPeople = () => {
     const ed = editor!;
