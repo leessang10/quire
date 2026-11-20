@@ -36,6 +36,67 @@
         "--idle=10000"
       ],
       "port": 8787
+    },
+    {
+      "name": "example-vanilla",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "examples/vanilla/node_modules/vite/bin/vite.js",
+        "examples/vanilla",
+        "--port",
+        "5301",
+        "--strictPort"
+      ],
+      "port": 5301
+    },
+    {
+      "name": "example-react",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "examples/react-vite/node_modules/vite/bin/vite.js",
+        "examples/react-vite",
+        "--port",
+        "5302",
+        "--strictPort"
+      ],
+      "port": 5302
+    },
+    {
+      "name": "example-next",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "examples/next/node_modules/next/dist/bin/next",
+        "dev",
+        "examples/next",
+        "-p",
+        "5303"
+      ],
+      "port": 5303
+    },
+    {
+      "name": "example-vue",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "examples/vue/node_modules/vite/bin/vite.js",
+        "examples/vue",
+        "--port",
+        "5304",
+        "--strictPort"
+      ],
+      "port": 5304
+    },
+    {
+      "name": "example-svelte",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "examples/svelte/node_modules/vite/bin/vite.js",
+        "dev",
+        "examples/svelte",
+        "--port",
+        "5305",
+        "--strictPort"
+      ],
+      "port": 5305
     }
   ]
 }

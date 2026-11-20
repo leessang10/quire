@@ -110,6 +110,7 @@ export function exportMarkdown(q: QuireDoc, opts: MarkdownExportOptions = {}): s
     /** 수준별 번호 */
     const counters: number[] = [];
     let code: string[] | null = null;
+    let listId: string | null = null;
     const flush = () => {
       if (listGroup) groups.push(listGroup.join('\n'));
       if (code) groups.push(['```', ...code, '```'].join('\n'));
@@ -132,11 +133,14 @@ export function exportMarkdown(q: QuireDoc, opts: MarkdownExportOptions = {}): s
       if (code) flush();
       const text = inlineMd(b.c ?? [], notes, assetPath, false);
       if (p.list) {
+        // 다른 목록(최상위 항목의 목록이 바뀜)이면 끊는다: 빈 줄로 나눠야 Markdown이 다른 목록으로 읽는다
+        if (listGroup && p.list.level === 0 && p.list.id !== listId) flush();
         if (!listGroup) {
           flush();
           listGroup = [];
           counters.length = 0;
         }
+        if (p.list.level === 0) listId = p.list.id;
         const level = p.list.level;
         counters.length = level + 1;
         counters[level] = (counters[level] ?? 0) + 1;

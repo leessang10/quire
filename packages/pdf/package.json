@@ -11,6 +11,7 @@
     "@quire/layout": "*",
     "@quire/model": "*",
     "@quire/shaping": "*",
+    "@quire/sync": "*",
     "harfbuzzjs": "1.6.4"
   }
 }

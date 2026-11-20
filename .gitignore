@@ -11,3 +11,14 @@ Thumbs.db
 .quire-data/
 apps/playground/public/spike-fonts/
 apps/playground/public/fonts/
+.build/
+# 예제 앱 (6-6): 설치·복사·빌드 결과
+examples/*/public/quire/
+examples/*/static/quire/
+examples/*/.next/
+examples/*/.svelte-kit/
+examples/*/build/
+examples/*/next-env.d.ts
+examples/*/install.log
+examples/*/package-lock.json
+examples/node/out/

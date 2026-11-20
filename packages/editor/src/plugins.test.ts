@@ -144,6 +144,8 @@ describe('plugin API (15 §7)', () => {
     const seen: WordCount[] = [];
     const wc = wordCountPlugin((c) => seen.push(c));
     const ctx = h.use(wc);
+    expect(seen).toHaveLength(0); // 첫 알림은 미룬다
+    await new Promise((r) => setTimeout(r, 0));
     expect(seen[0]).toEqual({ chars: 15, charsNoSpace: 12, words: 5, paragraphs: 2 });
     h.document.body.insertText(0, '영 ');
     h.emit('change');
@@ -152,6 +154,26 @@ describe('plugin API (15 §7)', () => {
     expect(seen).toHaveLength(2);
     expect(seen[1]!.words).toBe(6);
     expect(await wc.exporters!.stats!.export(ctx)).toBe('글자 17 (공백 빼고 13)\n어절 6\n문단 2\n');
+  });
+
+  it('one plugin object on two editors (StrictMode double mount): disposing the first does not break the second', async () => {
+    const seen: number[] = [];
+    const wc = wordCountPlugin((c) => seen.push(c.chars));
+    const hw = highlightWordsPlugin(['둘']);
+    const a = host('하나 둘');
+    const b = host('둘 셋 넷');
+    // 앞 편집기에 붙고, 뒤 편집기에 붙은 다음, 앞 편집기를 늦게 정리한다
+    const ca = a.use(wc);
+    a.use(hw);
+    b.use(wc);
+    b.use(hw);
+    void ca;
+    const disposeA = wc.init!(a.use({ name: 'probe' }));
+    if (typeof disposeA === 'function') disposeA();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen).toContain(5); // 뒤 편집기('둘 셋 넷')의 첫 알림
+    expect(b.decorations().map((d) => d.text)).toEqual(['둘']);
+    expect(a.decorations().map((d) => d.text)).toEqual(['둘']);
   });
 
   it('normalizes key specs and events', () => {

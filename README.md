@@ -6,7 +6,7 @@
 — 진짜 페이지 레이아웃, 정밀한 한글 조판, IME 완전 제어, 초대형 문서, 블록 이동까지 포함한 협업 —
 를 처음부터 다른 구조로 풀기 위한 프로젝트입니다.
 
-> 상태: **0단계 프로토타입** — [편집기·성능 결과](docs/spikes/phase0-baseline.md), [동기화(CRDT) 비교 결과](docs/spikes/phase0-crdt.md)
+> 상태: **6단계 (출시 준비·안정화)** — 1–5단계 완료 ([로드맵](docs/design/06-roadmap.md)). 0단계 결과: [편집기·성능](docs/spikes/phase0-baseline.md), [동기화(CRDT) 비교](docs/spikes/phase0-crdt.md)
 
 ## 실행
 
@@ -31,4 +31,6 @@ npm run typecheck
 | [06. 로드맵](docs/design/06-roadmap.md) | 단계별 범위, 0단계 검증 기준, 성능 목표, 위험 |
 | [07. 파일 포맷](docs/design/07-file-format.md) | 저장 층, `.quire` 컨테이너, `document.json`, 마이그레이션 |
 | [08. 앱 통합](docs/design/08-integration.md) | 공개 API, React 래퍼, Next.js, 서버 실행 |
+| [10–15](docs/design/) | 서식, 블록, 고급 조판, 협업과 이력, 생태계 (2–5단계 설계와 결과) |
+| [16. 출시 준비](docs/design/16-release.md) | 6단계: CI, 성능, 골든, 보안, 패키지 |
 | [ADR](docs/adr/) | 아키텍처 결정 기록 |
