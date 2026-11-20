@@ -44,7 +44,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { LoroDoc, VersionVector } from 'loro-crdt';
+import { LoroDoc, VersionVector, decodeImportBlobMeta } from 'loro-crdt';
 import { assetIdOf, assetIdsOf, canonicalJson, compactDocument, documentFromLoro, documentFromQuire, openQuire, packQuire, quireFromDocument, quireFromText, readEpoch, restoreInto, type QuireAsset } from '@quire/sync';
 import { fileStorage, memoryStorage, type PeerUser, type Role, type RoomStore, type Storage, type VersionRecord } from './store';
 
@@ -160,6 +160,16 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       return commentOnlyUpdate(room.doc, update);
     } finally {
       stats.checkMs.push(performance.now() - t0);
+    }
+  }
+
+  /** 업데이트에 문서가 아직 모르는 연산이 있는가 (모르는 형식이면 있다고 보고 검사에 맡긴다) */
+  function addsOps(doc: LoroDoc, update: Uint8Array): boolean {
+    try {
+      const c = decodeImportBlobMeta(update, false).partialEndVersionVector.compare(doc.oplogVersion());
+      return c === 1 || c === undefined;
+    } catch {
+      return true;
     }
   }
 
@@ -715,6 +725,8 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     } else if (type === MSG.UPDATE) {
       if (!conn.ready) return;
       const update = new Uint8Array(body);
+      // 새 연산이 없는 업데이트(빈 업데이트, 이미 받은 것)는 버린다: 보기 역할이 그것으로 거부·재동기화되지 않게
+      if (conn.role !== 'edit' && !addsOps(room.doc, update)) return;
       if (!allowed(conn, update)) {
         deny(conn, '업데이트');
         return;

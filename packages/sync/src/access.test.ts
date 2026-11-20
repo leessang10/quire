@@ -85,6 +85,10 @@ describe('access control (14 §6)', () => {
     const v = await peer(url('tok-v'), 13);
     await until(() => c.client.doc.text() === '하나 둘 셋\n' && v.client.doc.text() === '하나 둘 셋\n', 5000, 'joined');
     await until(() => c.roles.includes('comment') && v.roles.includes('view'), 5000, 'roles');
+    // 붙는 것만으로는 거부되지 않는다 (변경 없는 SYNC 뒤 빈 업데이트를 보내지 않는다)
+    await new Promise((r) => setTimeout(r, 100));
+    expect(s.stats.denied).toBe(0);
+    expect(v.resets).toEqual([]);
     // view의 본문 편집: 거부되고 서버 상태로 돌아간다
     v.client.doc.insertText(0, 'V');
     await until(() => v.resets.length > 0, 5000, 'view reset');

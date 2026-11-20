@@ -152,11 +152,12 @@ export class WsLink implements NetOut {
       this.first = false;
       this.h.onSync({ first, create, update });
       // 서버에 없는 이쪽 변경 (처음 만든 내용, 끊긴 동안의 편집)
+      // 변경이 없어도 export는 빈 업데이트(머리만 있는 바이트)를 돌려준다. 버전으로 판단해야 보기 역할이 빈 업데이트로 거부되지 않는다
       const from = serverVV.length ? VersionVector.decode(serverVV) : new VersionVector(null);
-      const mine = this.loro.export({ mode: 'update', from });
+      const ahead = this.loro.oplogVersion().compare(from);
       this.synced = true;
       this.delay = this.opts.minDelayMs;
-      if (mine.length > 0) this.send(MSG.UPDATE, mine);
+      if (ahead === 1 || ahead === undefined) this.send(MSG.UPDATE, this.loro.export({ mode: 'update', from }));
       this.h.onStatus?.(true);
     } else if (type === MSG.UPDATE) {
       this.h.onDoc(body.slice());
