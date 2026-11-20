@@ -20,6 +20,7 @@ examples/*/.svelte-kit/
 examples/*/build/
 examples/*/next-env.d.ts
 examples/*/tsconfig.tsbuildinfo
+examples/*/AGENTS.md
 examples/*/install.log
 examples/*/package-lock.json
 examples/node/out/

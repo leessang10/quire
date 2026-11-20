@@ -5,6 +5,27 @@
 - **기본 앱 6개**: 환경마다 붙이는 법. 프레임워크 다섯 개에 CSS 방식을 하나씩 짝지어 두 축(에디터 수명주기·전역 스타일 충돌)을 덮는다 ([16 §8](../docs/design/16-release.md)).
 - **전체 기능 앱 2개**: Word·Google Docs식 화면으로 편집기의 기능을 모두 보인다. 같은 기능을 두 가지 UI로.
 
+<table>
+<tr>
+<td width="50%"><a href="react-full"><img src="react-full/screenshots/overview.webp" alt="react-full"></a><br><b><a href="react-full">react-full</a></b> · 전체 기능, React + Tailwind</td>
+<td width="50%"><a href="next-shadcn"><img src="next-shadcn/screenshots/overview.webp" alt="next-shadcn"></a><br><b><a href="next-shadcn">next-shadcn</a></b> · 전체 기능, Next.js + shadcn/ui</td>
+</tr>
+<tr>
+<td><a href="vanilla"><img src="vanilla/screenshots/screenshot.webp" alt="vanilla"></a><br><b><a href="vanilla">vanilla</a></b> · HTML + JS, 순수 CSS</td>
+<td><a href="react-vite"><img src="react-vite/screenshots/screenshot.webp" alt="react-vite"></a><br><b><a href="react-vite">react-vite</a></b> · React + Tailwind</td>
+</tr>
+<tr>
+<td><a href="next"><img src="next/screenshots/screenshot.webp" alt="next"></a><br><b><a href="next">next</a></b> · Next.js + styled-components</td>
+<td><a href="vue"><img src="vue/screenshots/screenshot.webp" alt="vue"></a><br><b><a href="vue">vue</a></b> · Vue 3 + SCSS</td>
+</tr>
+<tr>
+<td><a href="svelte"><img src="svelte/screenshots/screenshot.webp" alt="svelte"></a><br><b><a href="svelte">svelte</a></b> · SvelteKit + scoped 스타일</td>
+<td><a href="node"><b>node</b></a> · Node 변환기 (화면 없음): HWPX·DOCX·Markdown·HTML → PDF·HWPX·DOCX·Markdown·HTML</td>
+</tr>
+</table>
+
+예제마다 README에 실행 방법, 파일 구성, 편집기를 붙이는 핵심 코드가 있습니다. 스크린샷은 `node scripts/example-screenshots.mjs [예제]`로 다시 찍습니다 (헤드리스 Chrome, 예제를 먼저 설치).
+
 ## 전체 기능 앱
 
 | 예제 | 스택 | UI | 포트 |
