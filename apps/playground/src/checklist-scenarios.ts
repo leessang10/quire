@@ -1,11 +1,17 @@
 /**
  * 0단계 실제 환경 확인 시나리오 (06 §2 V1–V3).
  *
+ * V4(6-7)는 0단계 뒤에 생긴 입력 자리(표 셀, 각주, 머리말, 제안 모드)에서 같은 IME 동작을 본다. setup이 처음 상태를 만들고
+ * read가 판정할 글(그 스토리)을 읽는다.
+ *
  * V1·V2는 처음 상태(텍스트·선택)에서 시작해 손으로 입력한 결과를 기대값과 자동 비교한다. 브라우저·IME마다 정당하게
  * 달라질 수 있는 경우(조합 중 방향키 등)는 accept 함수로 허용 범위를 둔다. V3(스크린리더)와 후보 창 위치는 눈·귀로 판정한다.
  */
 
-export type Group = 'V1' | 'V2' | 'V3';
+import type { Editor } from '@quire/editor';
+import { isHFStory } from '@quire/model';
+
+export type Group = 'V1' | 'V2' | 'V3' | 'V4';
 
 export interface Scenario {
   id: string;
@@ -23,7 +29,24 @@ export interface Scenario {
   accept?: (text: string) => boolean;
   /** 자동 비교 말고 눈·귀로 볼 것 */
   look?: string;
+  /** 처음 상태를 만든 뒤 (표 넣기, 각주·머리말로 들어가기 등) */
+  setup?: (editor: Editor) => void;
+  /** 판정할 글 (없으면 본문) */
+  read?: (editor: Editor) => string;
 }
+
+/** 고른 스토리들의 글 (끝 ¶ 빼고, 빈 스토리 빼고 줄바꿈으로 잇는다) */
+function storyText(editor: Editor, pick: (id: string) => boolean): string {
+  return editor.document
+    .storyIds()
+    .filter((id) => id !== null && pick(id))
+    .map((id) => editor.document.story(id).text().replace(/\n$/, ''))
+    .filter(Boolean)
+    .join('\n');
+}
+const cells = (e: Editor) => storyText(e, (id) => id.includes('|') && !id.startsWith('fn|') && !isHFStory(id));
+const notes = (e: Editor) => storyText(e, (id) => id.startsWith('fn|'));
+const headers = (e: Editor) => storyText(e, (id) => id.startsWith('hdr|'));
 
 /** 남으면 안 되는 낱자모 (조합 중간 상태가 문서에 들어간 흔적) */
 const JAMO = /[ㄱ-ㆎ]/;
@@ -187,6 +210,78 @@ export const SCENARIOS: Scenario[] = [
     look: '후보 창 위치가 스크롤 전 위치(문서 맨 위)에 남아 있지 않다.',
   },
 
+  // ── V4 새 입력 자리 (6-7: 0단계 뒤에 생긴 표 셀·각주·머리말·제안 모드) ──
+  {
+    id: 'v4-cell',
+    group: 'V4',
+    title: '표 셀 안에서 조합',
+    start: { text: '', anchor: 0 },
+    setup: (e) => e.insertTable(2, 2),
+    read: cells,
+    steps: ['캐럿이 첫 셀에 있다. "표 안 입력"을 입력한다.'],
+    expect: '첫 셀에 "표 안 입력". 조합 중 글자가 셀 안에 보이고 셀 밖(본문)에 새지 않는다.',
+    expected: '표 안 입력',
+  },
+  {
+    id: 'v4-cell-enter',
+    group: 'V4',
+    title: '셀 안에서 조합 중 Enter',
+    start: { text: '', anchor: 0 },
+    setup: (e) => e.insertTable(2, 2),
+    read: cells,
+    steps: ['첫 셀에서 "첫줄"을 입력하고, "줄"이 조합 중일 때 Enter.', '"둘째"를 입력한다.'],
+    expect: '첫 셀이 두 문단 "첫줄" / "둘째". 빈 문단이 더 생기지 않는다 (Enter가 두 번 들어오는 IME).',
+    expected: '첫줄\n둘째',
+  },
+  {
+    id: 'v4-cell-hanja',
+    group: 'V4',
+    title: '셀 안 한자 변환 후보 창',
+    only: 'desktop',
+    start: { text: '', anchor: 0 },
+    setup: (e) => e.insertTable(2, 2),
+    read: cells,
+    steps: ['첫 셀에서 "한"을 입력하고 한자 키를 누른다.', '韓을 고른다.'],
+    expect: '첫 셀에 "韓"',
+    expected: '韓',
+    look: '후보 창이 셀 안 캐럿 옆에 뜬다 (본문 맨 위나 화면 구석이 아님).',
+  },
+  {
+    id: 'v4-note',
+    group: 'V4',
+    title: '각주 안에서 조합',
+    start: { text: '본문 문장.', anchor: 6 },
+    setup: (e) => e.insertFootnote(),
+    read: notes,
+    steps: ['캐럿이 쪽 아래 각주 칸에 있다. "각주 내용"을 입력한다.'],
+    expect: '각주가 "각주 내용". 본문은 그대로 "본문 문장." + 각주 번호.',
+    expected: '각주 내용',
+    look: '조합 중 글자가 각주 칸(쪽 아래)에 보인다.',
+  },
+  {
+    id: 'v4-header',
+    group: 'V4',
+    title: '머리말 안에서 조합',
+    start: { text: '본문', anchor: 0 },
+    setup: (e) => e.editHeaderFooter('header'),
+    read: headers,
+    steps: ['캐럿이 쪽 위 머리말에 있다. "머리말 글"을 입력한다.'],
+    expect: '머리말이 "머리말 글".',
+    expected: '머리말 글',
+    look: '조합 중 글자가 머리말 자리에 보이고, 후보 창(한자 키)도 머리말 캐럿 옆에 뜬다.',
+  },
+  {
+    id: 'v4-suggest',
+    group: 'V4',
+    title: '제안 모드에서 조합',
+    start: { text: '본문 ', anchor: 3 },
+    setup: (e) => e.setSuggesting(true),
+    steps: ['"제안 글"을 입력한다.'],
+    expect: '"본문 제안 글". 넣은 글이 제안(색·밑줄)으로 보인다.',
+    expected: '본문 제안 글',
+    look: '조합 중 글자도 제안 색인지, 확정 뒤 제안 하나로 묶이는지 (댓글 창 없음: 색만 본다).',
+  },
+
   // ── V3 스크린리더 ──
   {
     id: 'v3-focus',
@@ -213,6 +308,19 @@ export const SCENARIOS: Scenario[] = [
     steps: ['→를 몇 번 누른다.', '↓, ↑를 누른다.'],
     expect: '←/→는 지나간 글자를, ↑/↓는 그 줄 전체를 읽는다.',
     look: '읽은 내용을 메모에 적는다. 아무것도 읽지 않으면 실패.',
+  },
+  {
+    id: 'v3-table',
+    group: 'V3',
+    title: '표 읽기 (6-7)',
+    start: { text: '표 앞 문단', anchor: 6 },
+    setup: (e) => {
+      e.insertTable(2, 2);
+      e.focus();
+    },
+    steps: ['첫 셀에 "가"를 입력하고 Tab, 둘째 셀에 "나"를 입력한다.', '모두 읽기, 그리고 ↑로 표 앞 문단으로 나갔다가 ↓로 돌아온다.'],
+    expect: '셀 글을 읽고, 표에 들어가고 나가는 것을 알 수 있다.',
+    look: '읽은 내용을 메모에 적는다 ("표", 행·열 안내가 있는지).',
   },
   {
     id: 'v3-echo',

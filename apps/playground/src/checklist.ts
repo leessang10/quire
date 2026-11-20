@@ -187,7 +187,7 @@ function renderList(): void {
       group = s.group;
       const h = document.createElement('li');
       h.className = 'ck-group';
-      h.textContent = { V1: 'V1 한글 IME', V2: 'V2 후보 창', V3: 'V3 스크린리더' }[s.group];
+      h.textContent = { V1: 'V1 한글 IME', V2: 'V2 후보 창', V3: 'V3 스크린리더', V4: 'V4 새 입력 자리 (6-7)' }[s.group];
       items.push(h);
     }
     const li = document.createElement('li');
@@ -249,6 +249,9 @@ function reset(): void {
   if (!s.start) return;
   editor.setText(s.start.text);
   editor.select(s.start.anchor, s.start.head ?? s.start.anchor);
+  // 제안 모드 등 앞 시나리오의 상태를 끄고, 이 시나리오의 처음 상태를 만든다 (V4)
+  editor.setSuggesting(false);
+  s.setup?.(editor);
   log = [];
   logEl.replaceChildren();
   editor.focus();
@@ -258,7 +261,7 @@ function reset(): void {
 function showJudge(): void {
   const s = SCENARIOS[current]!;
   const el = $('judge');
-  const text = editor.getText();
+  const text = s.read ? s.read(editor) : editor.getText();
   const ok = judge(s, text);
   if (ok === null) {
     el.className = 'ck-judge';
@@ -272,7 +275,7 @@ function showJudge(): void {
 
 function record(status: Status): void {
   const s = SCENARIOS[current]!;
-  const text = s.start ? editor.getText() : null;
+  const text = s.start ? (s.read ? s.read(editor) : editor.getText()) : null;
   run().results[s.id] = {
     status,
     note: $<HTMLTextAreaElement>('note').value.trim(),
