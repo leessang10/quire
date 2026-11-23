@@ -969,9 +969,12 @@ export class Editor {
     this.setDocument(doc === this.document.body ? this.document : new Document(doc));
   }
 
-  /** 여러 스토리 문서를 통째로 바꾼다 (setDoc과 같다. 편집 중인 셀에서는 나온다) */
-  setDocument(document: Document): void {
-    const { anchor, head } = this.inBody ? this.selection() : { anchor: 0, head: 0 };
+  /**
+   * 여러 스토리 문서를 통째로 바꾼다 (setDoc과 같다. 편집 중인 셀에서는 나온다).
+   * 기본은 같은 문서의 새 판이라 캐럿 오프셋을 지킨다. 다른 문서를 열 때는 `{ reset: true }`: 캐럿은 처음, 화면은 맨 위
+   */
+  setDocument(document: Document, opts: { reset?: boolean } = {}): void {
+    const { anchor, head } = this.inBody && !opts.reset ? this.selection() : { anchor: 0, head: 0 };
     this.cell = null;
     this.hf = null;
     this.note = null;
@@ -983,6 +986,10 @@ export class Editor {
     this.resetLayouts();
     this.history = new History();
     this.setSelection(anchor, head);
+    if (opts.reset) {
+      this.scroller.scrollTop = 0;
+      this.scroller.scrollLeft = 0;
+    }
     this.refresh();
   }
 
@@ -1435,7 +1442,7 @@ export class Editor {
           const brk = isBody ? this.breakAfter(l.index) : null;
           if (brk && this.breakVisible(l.index)) {
             const x0 = l.px + para.frameLeft;
-            this.drawBreakMark(brk, x0, x0 + para.width, y + ln.height + 2);
+            this.drawBreakMark(brk, x0, x0 + para.width, y + ln.height + 2, X(ln.end));
           }
         }
       },
@@ -2125,7 +2132,7 @@ export class Editor {
    * 나눔 표시: 문단 아래 경계(y)에 본문 폭 x0..x1의 반투명 점선(구역은 두 줄, 단은 잘게)과 오른쪽 끝의 작은 배지.
    * 글자 줄 위가 아니라 문단 사이에 덧그리므로 글을 가리지 않고, 줄이 꽉 차도 넘치지 않는다
    */
-  private drawBreakMark(brk: { kind: 'page' | 'column' | 'section'; label: string }, x0: number, x1: number, y: number): void {
+  private drawBreakMark(brk: { kind: 'page' | 'column' | 'section'; label: string }, x0: number, x1: number, y: number, textEnd: number): void {
     const { ctx } = this;
     const c = this.colors;
     ctx.save();
@@ -2145,7 +2152,9 @@ export class Editor {
     const h = 15;
     const bw = tw + 12;
     const bx = Math.max(x0, x1 - bw);
-    const by = Math.round(y - h / 2);
+    // 배지는 점선 위(이 문단의 마지막 줄 오른쪽 빈자리)에 둔다: 점선 가운데에 두면 아래 글(다음 구역·단의 첫 줄)을 가린다.
+    // 마지막 줄 글이 배지 자리까지 오면 점선 가운데로
+    const by = textEnd < bx - 4 ? Math.round(y - h - 1) : Math.round(y - h / 2);
     ctx.globalAlpha = 0.9;
     ctx.fillStyle = c.page;
     ctx.beginPath();

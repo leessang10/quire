@@ -53,7 +53,7 @@ export async function importAs(editor: Editor, data: string | Uint8Array, kind: 
   const r =
     kind === 'html' ? await c.importHtml(data as string) : kind === 'md' ? await c.importMarkdown(data as string) : kind === 'hwpx' ? await c.importHwpx(data as Uint8Array) : await c.importDocx(data as Uint8Array);
   for (const [, a] of r.assets) await editor.putAsset(new Blob([a.bytes as BlobPart], { type: a.type }));
-  editor.setDocument(documentFromQuire(r.doc).document);
+  editor.setDocument(documentFromQuire(r.doc).document, { reset: true });
   const dropped = Object.entries(r.report.dropped);
   lastConvert = `${LABEL[kind]} 가져옴${dropped.length ? ` · 버림: ${dropped.map(([k, n]) => `${editor.t(dropMessageKey(k as DropKind))} ${n}`).join(', ')}` : ''}`;
   return r.report.dropped;
