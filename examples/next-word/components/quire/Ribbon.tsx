@@ -65,6 +65,8 @@ import { cn } from '@/lib/utils';
 import type { Act } from '@/lib/use-ui';
 import { COLORS, FONTS, HIGHLIGHTS, LINE_SPACINGS, PAPERS, STYLES, applyPageForm, pageFormOf, paperSize, type Ui } from '@/lib/quire-app';
 import type { Editor } from '@quire/editor';
+import { LOCALES, useI18n, useT } from '@/lib/i18n';
+import type { AppMessageKey } from '@/lib/messages';
 
 const keep = { onMouseDown: (e: React.MouseEvent) => e.preventDefault() };
 
@@ -138,6 +140,7 @@ export interface RibbonActions {
 
 export function Ribbon({ ui, act, a, editor, panels, file }: { ui: Ui | null; act: Act; a: RibbonActions; editor: Editor | null; panels: { outline: boolean; review: boolean }; file: ReactNode }) {
   const [tab, setTab] = useState<string>('home');
+  const { t, locale, setLocale } = useI18n();
   return (
     <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className="gap-0 border-b bg-background">
       <div className="flex items-center gap-1 px-2 pt-1">
@@ -145,15 +148,15 @@ export function Ribbon({ ui, act, a, editor, panels, file }: { ui: Ui | null; ac
         <TabsList variant="line" className="h-8">
           {(
             [
-              ['home', '홈'],
-              ['insert', '삽입'],
-              ['layout', '레이아웃'],
-              ['review', '검토'],
-              ['view', '보기'],
+              ['home', 'word.tab.home'],
+              ['insert', 'word.tab.insert'],
+              ['layout', 'word.tab.layout'],
+              ['review', 'word.tab.review'],
+              ['view', 'word.tab.view'],
             ] as const
           ).map(([v, label]) => (
             <TabsTrigger key={v} value={v} className="px-3 data-active:text-primary" {...keep}>
-              {label}
+              {t(label)}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -163,31 +166,31 @@ export function Ribbon({ ui, act, a, editor, panels, file }: { ui: Ui | null; ac
           <HomeTab ui={ui} act={act} a={a} />
         </TabsContent>
         <TabsContent value="insert" className="flex">
-          <Group label="표">
+          <Group label={t('word.g.tables')}>
             <TablePopover onPick={(r, c) => act((e) => e.insertTable(r, c))} />
           </Group>
-          <Group label="그림">
-            <Big label="그림" icon={<ImagePlus />} onClick={a.image} />
+          <Group label={t('word.g.illustrations')}>
+            <Big label={t('word.pictures')} icon={<ImagePlus />} onClick={a.image} />
           </Group>
-          <Group label="링크">
-            <Big label="링크" icon={<Link2 />} onClick={a.link} pressed={!!ui?.marks.link} />
-            <Big label="댓글" icon={<MessageSquarePlus />} onClick={a.comment} />
+          <Group label={t('word.g.links')}>
+            <Big label={t('word.link')} icon={<Link2 />} onClick={a.link} pressed={!!ui?.marks.link} />
+            <Big label={t('word.comment')} icon={<MessageSquarePlus />} onClick={a.comment} />
           </Group>
-          <Group label="각주">
-            <Big label="각주 넣기" icon={<Footprints />} onClick={() => act((e) => e.insertFootnote())} />
+          <Group label={t('word.g.footnotes')}>
+            <Big label={t('word.footnote')} icon={<Footprints />} onClick={() => act((e) => e.insertFootnote())} />
           </Group>
-          <Group label="머리글/바닥글">
+          <Group label={t('word.g.headerFooter')}>
             <Col>
-              <Small label="머리말" icon={<PanelTop className="size-3.5" />} onClick={() => act((e) => e.editHeaderFooter('header'))} />
-              <Small label="꼬리말" icon={<PanelBottom className="size-3.5" />} onClick={() => act((e) => e.editHeaderFooter('footer'))} />
-              <Small label="쪽 번호" icon={<Hash className="size-3.5" />} onClick={() => act((e) => e.insertField('page'))} />
+              <Small label={t('word.header')} icon={<PanelTop className="size-3.5" />} onClick={() => act((e) => e.editHeaderFooter('header'))} />
+              <Small label={t('word.footer')} icon={<PanelBottom className="size-3.5" />} onClick={() => act((e) => e.editHeaderFooter('footer'))} />
+              <Small label={t('word.pageNumber')} icon={<Hash className="size-3.5" />} onClick={() => act((e) => e.insertField('page'))} />
             </Col>
           </Group>
-          <Group label="나누기">
+          <Group label={t('word.breaks')}>
             <Col>
-              <Small label="쪽 나누기" icon={<SeparatorHorizontal className="size-3.5" />} onClick={() => act((e) => e.insertPageBreak())} />
-              <Small label="단 나누기" icon={<Columns2 className="size-3.5" />} onClick={() => act((e) => e.insertColumnBreak())} />
-              <Small label="구역 나누기" icon={<ScrollText className="size-3.5" />} onClick={() => act((e) => e.insertSectionBreak('nextPage'))} />
+              <Small label={t('word.pageBreak')} icon={<SeparatorHorizontal className="size-3.5" />} onClick={() => act((e) => e.insertPageBreak())} />
+              <Small label={t('word.columnBreak')} icon={<Columns2 className="size-3.5" />} onClick={() => act((e) => e.insertColumnBreak())} />
+              <Small label={t('word.sectionBreak')} icon={<ScrollText className="size-3.5" />} onClick={() => act((e) => e.insertSectionBreak('nextPage'))} />
             </Col>
           </Group>
         </TabsContent>
@@ -195,43 +198,44 @@ export function Ribbon({ ui, act, a, editor, panels, file }: { ui: Ui | null; ac
           <LayoutTab ui={ui} act={act} a={a} editor={editor} />
         </TabsContent>
         <TabsContent value="review" className="flex">
-          <Group label="언어 교정">
-            <Big label="맞춤법" icon={<SpellCheck />} pressed={!!ui?.spell} onClick={a.toggleSpell} />
-            <Big label="글자 수" icon={<BookOpenCheck />} onClick={a.wordCount} />
+          <Group label={t('word.g.proofing')}>
+            <Big label={t('word.spelling')} icon={<SpellCheck />} pressed={!!ui?.spell} onClick={a.toggleSpell} />
+            <Big label={t('word.countButton')} icon={<BookOpenCheck />} onClick={a.wordCount} />
           </Group>
-          <Group label="메모">
-            <Big label="새 메모" icon={<MessageSquarePlus />} onClick={a.comment} />
-            <Big label="메모 창" icon={<PanelRight />} pressed={panels.review} onClick={() => a.togglePanel('review')} />
+          <Group label={t('word.g.comments')}>
+            <Big label={t('word.newComment')} icon={<MessageSquarePlus />} onClick={a.comment} />
+            <Big label={t('word.commentPane')} icon={<PanelRight />} pressed={panels.review} onClick={() => a.togglePanel('review')} />
           </Group>
-          <Group label="변경 내용 추적">
-            <Big label="변경 내용 추적" icon={<PencilLine />} pressed={!!ui?.suggesting} onClick={() => act((e) => e.setSuggesting(!ui?.suggesting))} />
+          <Group label={t('word.g.tracking')}>
+            <Big label={t('word.trackChanges')} icon={<PencilLine />} pressed={!!ui?.suggesting} onClick={() => act((e) => e.setSuggesting(!ui?.suggesting))} />
             <Col>
-              <Small label="제안 표시" icon={<span className="size-3.5" />} pressed={ui?.viewMode === 'suggestions'} onClick={() => act((e) => e.setViewMode('suggestions'))} />
-              <Small label="최종본" icon={<span className="size-3.5" />} pressed={ui?.viewMode === 'final'} onClick={() => act((e) => e.setViewMode('final'))} />
-              <Small label="원본" icon={<span className="size-3.5" />} pressed={ui?.viewMode === 'original'} onClick={() => act((e) => e.setViewMode('original'))} />
+              <Small label={t('word.allMarkup')} icon={<span className="size-3.5" />} pressed={ui?.viewMode === 'suggestions'} onClick={() => act((e) => e.setViewMode('suggestions'))} />
+              <Small label={t('word.noMarkup')} icon={<span className="size-3.5" />} pressed={ui?.viewMode === 'final'} onClick={() => act((e) => e.setViewMode('final'))} />
+              <Small label={t('word.original')} icon={<span className="size-3.5" />} pressed={ui?.viewMode === 'original'} onClick={() => act((e) => e.setViewMode('original'))} />
             </Col>
           </Group>
-          <Group label="변경 내용">
-            <Big label="모두 적용" icon={<CheckCheck />} disabled={!ui?.suggestions} onClick={() => act((e) => e.acceptAll())} />
-            <Big label="모두 취소" icon={<XCircle />} disabled={!ui?.suggestions} onClick={() => act((e) => e.rejectAll())} />
+          <Group label={t('word.g.changes')}>
+            <Big label={t('word.acceptAll')} icon={<CheckCheck />} disabled={!ui?.suggestions} onClick={() => act((e) => e.acceptAll())} />
+            <Big label={t('word.rejectAll')} icon={<XCircle />} disabled={!ui?.suggestions} onClick={() => act((e) => e.rejectAll())} />
           </Group>
         </TabsContent>
         <TabsContent value="view" className="flex">
-          <Group label="보기">
-            <Big label="인쇄 모양" icon={<FileText />} pressed={ui?.appearance.pageView !== 'continuous'} onClick={() => act((e) => e.setPageView('print'))} />
-            <Big label="연속 보기" icon={<ScrollText />} pressed={ui?.appearance.pageView === 'continuous'} onClick={() => act((e) => e.setPageView('continuous'))} />
+          <Group label={t('word.g.views')}>
+            <Big label={t('word.printLayout')} icon={<FileText />} pressed={ui?.appearance.pageView !== 'continuous'} onClick={() => act((e) => e.setPageView('print'))} />
+            <Big label={t('word.continuous')} icon={<ScrollText />} pressed={ui?.appearance.pageView === 'continuous'} onClick={() => act((e) => e.setPageView('continuous'))} />
           </Group>
-          <Group label="표시">
-            <Big label="탐색 창" icon={<PanelLeft />} pressed={panels.outline} onClick={() => a.togglePanel('outline')} />
-            <Big label="메모 창" icon={<PanelRight />} pressed={panels.review} onClick={() => a.togglePanel('review')} />
+          <Group label={t('word.g.show')}>
+            <Big label={t('word.navigation')} icon={<PanelLeft />} pressed={panels.outline} onClick={() => a.togglePanel('outline')} />
+            <Big label={t('word.commentPane')} icon={<PanelRight />} pressed={panels.review} onClick={() => a.togglePanel('review')} />
           </Group>
-          <Group label="화면 색">
-            <Big label="밝게" icon={<Sun />} pressed={ui?.appearance.colorScheme !== 'dark'} onClick={() => act((e) => e.setColorScheme('light'))} />
-            <Big label="어둡게" icon={<Moon />} pressed={ui?.appearance.colorScheme === 'dark'} onClick={() => act((e) => e.setColorScheme('dark'))} />
+          <Group label={t('word.g.theme')}>
+            <Big label={t('word.light')} icon={<Sun />} pressed={ui?.appearance.colorScheme !== 'dark'} onClick={() => act((e) => e.setColorScheme('light'))} />
+            <Big label={t('word.dark')} icon={<Moon />} pressed={ui?.appearance.colorScheme === 'dark'} onClick={() => act((e) => e.setColorScheme('dark'))} />
           </Group>
-          <Group label="편집기 언어">
-            <Big label="한국어" icon={<Languages />} pressed={ui?.locale === 'ko'} onClick={() => act((e) => e.setLocale('ko'))} />
-            <Big label="English" icon={<Languages />} pressed={ui?.locale === 'en'} onClick={() => act((e) => e.setLocale('en'))} />
+          <Group label={t('app.language')}>
+            {LOCALES.map((l) => (
+              <Big key={l.id} label={l.label} icon={<Languages />} pressed={locale === l.id} onClick={() => setLocale(l.id)} />
+            ))}
           </Group>
         </TabsContent>
       </div>
@@ -244,13 +248,14 @@ function HomeTab({ ui, act, a }: { ui: Ui | null; act: Act; a: RibbonActions }) 
   const p = ui?.para;
   const size = m?.size ?? null;
   const setSize = (v: number) => act((e) => e.setMark('size', Math.round(Math.max(1, Math.min(400, v)) * 1000)));
+  const t = useT();
   return (
     <>
-      <Group label="글꼴">
+      <Group label={t('word.g.font')}>
         <Col>
           <Row>
             <Select items={FONTS.map((f) => ({ value: f, label: f }))} value={m?.font ?? null} onValueChange={(v) => v && act((e) => e.setMark('font', v === 'Pretendard' ? undefined : String(v)))}>
-              <SelectTrigger size="sm" className="h-7 w-36 bg-background" aria-label="글꼴">
+              <SelectTrigger size="sm" className="h-7 w-36 bg-background" aria-label={t('word.font')}>
                 <SelectValue placeholder="—" />
               </SelectTrigger>
               <SelectContent>
@@ -262,7 +267,7 @@ function HomeTab({ ui, act, a }: { ui: Ui | null; act: Act; a: RibbonActions }) 
               </SelectContent>
             </Select>
             <input
-              aria-label="글자 크기"
+              aria-label={t('word.fontSize')}
               className="h-7 w-11 rounded-md border bg-background text-center text-sm tabular-nums"
               defaultValue={size ?? ''}
               key={String(size)}
@@ -270,77 +275,77 @@ function HomeTab({ ui, act, a }: { ui: Ui | null; act: Act; a: RibbonActions }) 
                 if (e.key === 'Enter') setSize(Number((e.target as HTMLInputElement).value));
               }}
             />
-            <T label="글자 크게" onClick={() => setSize((size ?? 12) + 1)}>
+            <T label={t('word.grow')} onClick={() => setSize((size ?? 12) + 1)}>
               <Plus />
             </T>
-            <T label="글자 작게" onClick={() => setSize((size ?? 12) - 1)}>
+            <T label={t('word.shrink')} onClick={() => setSize((size ?? 12) - 1)}>
               <Minus />
             </T>
-            <T label="서식 지우기" onClick={() => act((e) => e.clearMarks())}>
+            <T label={t('word.clear')} onClick={() => act((e) => e.clearMarks())}>
               <Eraser />
             </T>
           </Row>
           <Row>
-            <T label="굵게" shortcut="Ctrl+B" pressed={m?.bold} onClick={() => act((e) => e.toggleMark('bold'))}>
+            <T label={t('attr.bold')} shortcut="Ctrl+B" pressed={m?.bold} onClick={() => act((e) => e.toggleMark('bold'))}>
               <Bold />
             </T>
-            <T label="기울임꼴" shortcut="Ctrl+I" pressed={m?.italic} onClick={() => act((e) => e.toggleMark('italic'))}>
+            <T label={t('word.italic')} shortcut="Ctrl+I" pressed={m?.italic} onClick={() => act((e) => e.toggleMark('italic'))}>
               <Italic />
             </T>
-            <T label="밑줄" shortcut="Ctrl+U" pressed={m?.underline} onClick={() => act((e) => e.toggleMark('underline'))}>
+            <T label={t('attr.underline')} shortcut="Ctrl+U" pressed={m?.underline} onClick={() => act((e) => e.toggleMark('underline'))}>
               <Underline />
             </T>
-            <T label="취소선" pressed={m?.strike} onClick={() => act((e) => e.toggleMark('strike'))}>
+            <T label={t('attr.strike')} pressed={m?.strike} onClick={() => act((e) => e.toggleMark('strike'))}>
               <Strikethrough />
             </T>
-            <T label="아래 첨자" pressed={m?.script === 'sub'} onClick={() => act((e) => e.toggleScript('sub'))}>
+            <T label={t('attr.sub')} pressed={m?.script === 'sub'} onClick={() => act((e) => e.toggleScript('sub'))}>
               <Subscript />
             </T>
-            <T label="위 첨자" pressed={m?.script === 'sup'} onClick={() => act((e) => e.toggleScript('sup'))}>
+            <T label={t('attr.sup')} pressed={m?.script === 'sup'} onClick={() => act((e) => e.toggleScript('sup'))}>
               <Superscript />
             </T>
-            <ColorPopover label="텍스트 강조 색" icon={<Highlighter />} value={m?.highlight ?? null} colors={HIGHLIGHTS} none="색 없음" onPick={(c) => act((e) => e.setMark('highlight', c ?? undefined))} />
-            <ColorPopover label="글꼴 색" icon={<Baseline />} value={m?.color ?? null} colors={COLORS} none="자동" onPick={(c) => act((e) => e.setMark('color', c ?? undefined))} />
+            <ColorPopover label={t('word.highlight')} icon={<Highlighter />} value={m?.highlight ?? null} colors={HIGHLIGHTS} none={t('word.noColor')} onPick={(c) => act((e) => e.setMark('highlight', c ?? undefined))} />
+            <ColorPopover label={t('word.fontColor')} icon={<Baseline />} value={m?.color ?? null} colors={COLORS} none={t('word.automatic')} onPick={(c) => act((e) => e.setMark('color', c ?? undefined))} />
           </Row>
         </Col>
       </Group>
-      <Group label="단락">
+      <Group label={t('word.g.paragraph')}>
         <Col>
           <Row>
-            <T label="글머리 기호" pressed={p?.list === 'bullet'} onClick={() => act((e) => e.toggleList('bullet'))}>
+            <T label={t('word.bullets')} pressed={p?.list === 'bullet'} onClick={() => act((e) => e.toggleList('bullet'))}>
               <List />
             </T>
-            <T label="번호 매기기" pressed={p?.list === 'number'} onClick={() => act((e) => e.toggleList('number'))}>
+            <T label={t('word.numbering')} pressed={p?.list === 'number'} onClick={() => act((e) => e.toggleList('number'))}>
               <ListOrdered />
             </T>
-            <T label="내어쓰기" onClick={() => act((e) => e.indent(-1))}>
+            <T label={t('word.outdent')} onClick={() => act((e) => e.indent(-1))}>
               <IndentDecrease />
             </T>
-            <T label="들여쓰기" onClick={() => act((e) => e.indent(1))}>
+            <T label={t('word.indent')} onClick={() => act((e) => e.indent(1))}>
               <IndentIncrease />
             </T>
           </Row>
           <Row>
             {(
               [
-                ['left', '왼쪽 맞춤', AlignLeft],
-                ['center', '가운데 맞춤', AlignCenter],
-                ['right', '오른쪽 맞춤', AlignRight],
-                ['justify', '양쪽 맞춤', AlignJustify],
+                ['left', 'word.alignLeft', AlignLeft],
+                ['center', 'word.alignCenter', AlignCenter],
+                ['right', 'word.alignRight', AlignRight],
+                ['justify', 'word.justify', AlignJustify],
               ] as const
             ).map(([al, label, Icon]) => (
-              <T key={al} label={label} pressed={p?.align === al} onClick={() => act((e) => e.setParagraphAttr('align', al === 'left' ? undefined : al))}>
+              <T key={al} label={t(label)} pressed={p?.align === al} onClick={() => act((e) => e.setParagraphAttr('align', al === 'left' ? undefined : al))}>
                 <Icon />
               </T>
             ))}
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="sm" className="h-7 gap-0.5 px-1.5 text-xs" aria-label="줄 간격" {...keep} />}>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="sm" className="h-7 gap-0.5 px-1.5 text-xs" aria-label={t('word.lineSpacing')} {...keep} />}>
                 <TextCursorInput className="size-4" />
                 <ChevronDown className="size-3 opacity-60" />
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-36" finalFocus={false}>
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel>줄 간격</DropdownMenuLabel>
+                  <DropdownMenuLabel>{t('word.lineSpacing')}</DropdownMenuLabel>
                   {LINE_SPACINGS.map((v) => (
                     <DropdownMenuItem key={v} onClick={() => act((e) => e.setParagraphAttr('line', v === 1 ? undefined : { rule: 'multiple', value: v }))}>
                       {v === p?.line ? '✓ ' : ''}
@@ -353,7 +358,7 @@ function HomeTab({ ui, act, a }: { ui: Ui | null; act: Act; a: RibbonActions }) 
           </Row>
         </Col>
       </Group>
-      <Group label="스타일" className="gap-1">
+      <Group label={t('word.g.styles')} className="gap-1">
         {STYLES.map((s) => (
           <button
             key={s.id}
@@ -366,30 +371,31 @@ function HomeTab({ ui, act, a }: { ui: Ui | null; act: Act; a: RibbonActions }) 
             )}
           >
             <span className={cn('truncate text-sm leading-tight', s.id === 'h1' && 'text-base font-bold', s.id === 'h2' && 'font-bold', s.id === 'h3' && 'font-semibold', s.id === 'quote' && 'italic text-muted-foreground')}>가나다AaBb</span>
-            <span className="text-[11px] text-muted-foreground">{s.label}</span>
+            <span className="text-[11px] text-muted-foreground">{t(`style.${s.id}` as AppMessageKey)}</span>
           </button>
         ))}
       </Group>
-      <Group label="편집">
+      <Group label={t('word.g.editing')}>
         <Col>
-          <Small label="찾기" icon={<Search className="size-3.5" />} onClick={() => a.find(false)} />
-          <Small label="바꾸기" icon={<Replace className="size-3.5" />} onClick={() => a.find(true)} />
-          <Small label="맞춤법" icon={<Languages className="size-3.5" />} pressed={!!ui?.spell} onClick={a.toggleSpell} />
+          <Small label={t('word.find')} icon={<Search className="size-3.5" />} onClick={() => a.find(false)} />
+          <Small label={t('word.replace')} icon={<Replace className="size-3.5" />} onClick={() => a.find(true)} />
+          <Small label={t('word.spelling')} icon={<Languages className="size-3.5" />} pressed={!!ui?.spell} onClick={a.toggleSpell} />
         </Col>
       </Group>
     </>
   );
 }
 
-const MARGINS: Array<[string, number]> = [
-  ['보통 (25.4mm)', 25.4],
-  ['좁게 (12.7mm)', 12.7],
-  ['넓게 (38.1mm)', 38.1],
+const MARGINS: Array<[AppMessageKey, number]> = [
+  ['word.marginNormal', 25.4],
+  ['word.marginNarrow', 12.7],
+  ['word.marginWide', 38.1],
 ];
 
 function LayoutTab({ ui, act, a, editor }: { ui: Ui | null; act: Act; a: RibbonActions; editor: Editor | null }) {
   const form = editor ? pageFormOf(editor.sectionInfo().props) : null;
   const p = ui?.para;
+  const t = useT();
   const apply = (patch: (f: NonNullable<typeof form>) => void) =>
     act((e) => {
       const f = pageFormOf(e.sectionInfo().props);
@@ -398,28 +404,28 @@ function LayoutTab({ ui, act, a, editor }: { ui: Ui | null; act: Act; a: RibbonA
     });
   return (
     <>
-      <Group label="페이지 설정">
+      <Group label={t('word.pageSetup')}>
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" className="flex h-[62px] flex-col gap-1 px-2 text-xs font-normal [&_svg]:size-6!" {...keep} />}>
             <RectangleVertical />
-            여백
+            {t('word.margins')}
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-48" finalFocus={false}>
             <DropdownMenuGroup>
-              <DropdownMenuLabel>여백</DropdownMenuLabel>
+              <DropdownMenuLabel>{t('word.margins')}</DropdownMenuLabel>
               {MARGINS.map(([label, mm]) => (
                 <DropdownMenuItem key={label} onClick={() => apply((f) => void (f.margin = [mm, mm, mm, mm]))}>
-                  {label}
+                  {t(label)}
                 </DropdownMenuItem>
               ))}
-              <DropdownMenuItem onClick={a.pageSetup}>사용자 지정 여백…</DropdownMenuItem>
+              <DropdownMenuItem onClick={a.pageSetup}>{t('word.customMargins')}</DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" className="flex h-[62px] flex-col gap-1 px-2 text-xs font-normal [&_svg]:size-6!" {...keep} />}>
             {form?.orientation === 'landscape' ? <RectangleHorizontal /> : <RectangleVertical />}
-            용지 방향
+            {t('word.orientation')}
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-36" finalFocus={false}>
             <DropdownMenuGroup>
@@ -436,7 +442,7 @@ function LayoutTab({ ui, act, a, editor }: { ui: Ui | null; act: Act; a: RibbonA
                   }
                 >
                   {form?.orientation === o ? '✓ ' : ''}
-                  {o === 'portrait' ? '세로' : '가로'}
+                  {o === 'portrait' ? t('page.portrait') : t('page.landscape')}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuGroup>
@@ -445,7 +451,7 @@ function LayoutTab({ ui, act, a, editor }: { ui: Ui | null; act: Act; a: RibbonA
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" className="flex h-[62px] flex-col gap-1 px-2 text-xs font-normal [&_svg]:size-6!" {...keep} />}>
             <FileText />
-            크기
+            {t('word.size')}
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-36" finalFocus={false}>
             <DropdownMenuGroup>
@@ -469,36 +475,37 @@ function LayoutTab({ ui, act, a, editor }: { ui: Ui | null; act: Act; a: RibbonA
         </DropdownMenu>
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" className="flex h-[62px] flex-col gap-1 px-2 text-xs font-normal [&_svg]:size-6!" {...keep} />}>
-            <Columns2 />단
+            <Columns2 />
+            {t('word.columns')}
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-32" finalFocus={false}>
             <DropdownMenuGroup>
               {[1, 2, 3].map((n) => (
                 <DropdownMenuItem key={n} onClick={() => apply((f) => void (f.columns = n))}>
                   {form?.columns === n ? '✓ ' : ''}
-                  {n}단
+                  {t('page.columnsN', { count: n })}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
         <Col>
-          <Small label="나누기" icon={<SeparatorHorizontal className="size-3.5" />} onClick={() => act((e) => e.insertPageBreak())} />
-          <Small label="페이지 설정…" icon={<PanelTop className="size-3.5" />} onClick={a.pageSetup} />
+          <Small label={t('word.breaks')} icon={<SeparatorHorizontal className="size-3.5" />} onClick={() => act((e) => e.insertPageBreak())} />
+          <Small label={t('word.pageSetupDots')} icon={<PanelTop className="size-3.5" />} onClick={a.pageSetup} />
         </Col>
       </Group>
-      <Group label="단락 (쪽 나눔)">
+      <Group label={t('word.g.pagination')}>
         <Col>
-          <Small label="앞에서 쪽 나누기" icon={<span className="size-3.5" />} pressed={!!p?.pageBreakBefore} onClick={() => act((e) => e.toggleParagraphKeep('pageBreakBefore'))} />
-          <Small label="다음 단락과 함께" icon={<span className="size-3.5" />} pressed={!!p?.keepWithNext} onClick={() => act((e) => e.toggleParagraphKeep('keepWithNext'))} />
-          <Small label="단락 나누지 않기" icon={<span className="size-3.5" />} pressed={!!p?.keepTogether} onClick={() => act((e) => e.toggleParagraphKeep('keepTogether'))} />
+          <Small label={t('word.pageBreakBefore')} icon={<span className="size-3.5" />} pressed={!!p?.pageBreakBefore} onClick={() => act((e) => e.toggleParagraphKeep('pageBreakBefore'))} />
+          <Small label={t('word.keepWithNext')} icon={<span className="size-3.5" />} pressed={!!p?.keepWithNext} onClick={() => act((e) => e.toggleParagraphKeep('keepWithNext'))} />
+          <Small label={t('word.keepTogether')} icon={<span className="size-3.5" />} pressed={!!p?.keepTogether} onClick={() => act((e) => e.toggleParagraphKeep('keepTogether'))} />
         </Col>
       </Group>
-      <Group label="한글 조판">
+      <Group label={t('format.korean')}>
         <Col>
-          <Small label="글자 단위 줄 바꿈" icon={<span className="size-3.5" />} pressed={p?.koreanBreak === 'char'} onClick={() => act((e) => e.setParagraphAttr('koreanBreak', p?.koreanBreak === 'char' ? undefined : 'char'))} />
-          <Small label="문장부호 내어 쓰기" icon={<span className="size-3.5" />} pressed={!!p?.hangPunct} onClick={() => act((e) => e.setParagraphAttr('hangPunct', p?.hangPunct ? undefined : true))} />
-          <Small label="줄 끝 공백 줄이기" icon={<span className="size-3.5" />} pressed={!!p?.squeeze} onClick={() => act((e) => e.setParagraphAttr('squeeze', p?.squeeze ? undefined : true))} />
+          <Small label={t('word.breakChar')} icon={<span className="size-3.5" />} pressed={p?.koreanBreak === 'char'} onClick={() => act((e) => e.setParagraphAttr('koreanBreak', p?.koreanBreak === 'char' ? undefined : 'char'))} />
+          <Small label={t('format.hangPunct')} icon={<span className="size-3.5" />} pressed={!!p?.hangPunct} onClick={() => act((e) => e.setParagraphAttr('hangPunct', p?.hangPunct ? undefined : true))} />
+          <Small label={t('format.squeeze')} icon={<span className="size-3.5" />} pressed={!!p?.squeeze} onClick={() => act((e) => e.setParagraphAttr('squeeze', p?.squeeze ? undefined : true))} />
         </Col>
       </Group>
     </>
@@ -536,13 +543,15 @@ function ColorPopover(props: { label: string; icon: ReactNode; value: string | n
 function TablePopover({ onPick }: { onPick: (rows: number, cols: number) => void }) {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<[number, number]>([0, 0]);
+  const t = useT();
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={<Button variant="ghost" className="flex h-[62px] flex-col gap-1 px-2 text-xs font-normal [&_svg]:size-6!" {...keep} />}>
-        <Table />표
+        <Table />
+        {t('word.table')}
       </PopoverTrigger>
       <PopoverContent className="w-auto p-2" initialFocus={false} finalFocus={false}>
-        <div className="mb-1.5 text-xs text-muted-foreground">{hover[0] ? `${hover[1]} × ${hover[0]} 표` : '표 삽입'}</div>
+        <div className="mb-1.5 text-xs text-muted-foreground">{hover[0] ? t('word.tableSize', { cols: hover[1], rows: hover[0] }) : t('word.insertTable')}</div>
         <div className="grid grid-cols-10 gap-0.5" onMouseLeave={() => setHover([0, 0])}>
           {Array.from({ length: 80 }, (_, i) => {
             const r = Math.floor(i / 10) + 1;
@@ -552,7 +561,7 @@ function TablePopover({ onPick }: { onPick: (rows: number, cols: number) => void
               <button
                 key={i}
                 type="button"
-                aria-label={`${r}×${c} 표`}
+                aria-label={t('toolbar.tableCell', { rows: r, cols: c })}
                 onMouseEnter={() => setHover([r, c])}
                 {...keep}
                 onClick={() => {

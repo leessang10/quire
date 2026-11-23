@@ -9,6 +9,7 @@
 |---|---|
 | ![삽입](screenshots/insert.webp) 삽입 탭 | ![레이아웃](screenshots/layout.webp) 레이아웃 탭: 여백·용지 방향·크기·단 |
 | ![검토](screenshots/review.webp) 검토 탭: 변경 내용 추적(제안), 메모(댓글) | ![파일](screenshots/file.webp) 파일 메뉴: 새로 만들기, 열기, 서식 파일, 다른 이름으로 저장 |
+| ![영어 화면](screenshots/english.webp) 영어 화면 (보기 탭 › 언어, `?lang=en`) | |
 
 ## 실행
 
@@ -28,7 +29,12 @@ npm run dev        # http://localhost:5308
 | 삽입 | 표(크기 고르기), 그림, 링크·댓글, 각주, 머리글/바닥글(머리말·꼬리말·쪽 번호), 나누기(쪽·단·구역) |
 | 레이아웃 | 페이지 설정(여백 미리 정한 값·용지 방향·크기·단·페이지 설정 대화상자), 단락 쪽 나눔 제어, 한글 조판 |
 | 검토 | 언어 교정(맞춤법·글자 수), 메모, 변경 내용 추적(제안 모드, 제안 표시·최종본·원본), 변경 내용 모두 적용·취소 |
-| 보기 | 인쇄 모양·연속 보기(편집기 `setPageView`), 탐색 창·메모 창, 밝게·어둡게(편집기 `setColorScheme`) |
+| 보기 | 인쇄 모양·연속 보기(편집기 `setPageView`), 탐색 창·메모 창, 밝게·어둡게(편집기 `setColorScheme`), 언어 |
+
+## 언어 (한국어 · English)
+
+화면 전체가 한국어·영어 두 벌입니다. 리본 보기 탭 › 언어에서 바꾸거나 `?lang=en`으로 열면 되고, 고른 언어는 브라우저에 기억합니다. 문서 내용은 바뀌지 않습니다.
+방식은 [Google Docs식](../next-shadcn#언어-한국어--english)과 같습니다: 앱 메시지 표([`lib/messages.ts`](lib/messages.ts))를 편집기의 `Messages`에 덧붙여 쓰고([`lib/i18n.tsx`](lib/i18n.tsx)), 언어를 바꾸면 `editor.setLocale`로 편집기도 함께 바뀝니다. 이 예제만의 문구는 표 끝의 `word.*` 키입니다.
 
 ## 꾸미는 법
 

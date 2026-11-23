@@ -3,7 +3,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import './globals.css';
 
-export const metadata: Metadata = { title: 'Quire 문서 · Word식 예제' };
+export const metadata: Metadata = { title: 'Quire · Word style' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

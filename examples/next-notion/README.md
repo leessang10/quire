@@ -8,7 +8,7 @@
 | | |
 |---|---|
 | ![슬래시](screenshots/slash.webp) `/` 명령 메뉴: 이어 치는 글로 거르고 ↑↓ Enter | ![서식 막대](screenshots/floating.webp) 글을 고르면 뜨는 서식 막대 |
-| ![어두운 화면](screenshots/dark.webp) 어두운 화면: 문서 면까지 (앱 CSS로) | |
+| ![어두운 화면](screenshots/dark.webp) 어두운 화면: 문서 면까지 (앱 CSS로) | ![영어 화면](screenshots/english.webp) 영어 화면 (사이드바 › 언어, `?lang=en`) |
 
 ## 실행
 
@@ -19,6 +19,13 @@ cd examples/next-notion
 npm install
 npm run dev        # http://localhost:5309
 ```
+
+## 언어 (한국어 · English)
+
+화면 전체가 한국어·영어 두 벌입니다. 사이드바 아래 언어 단추에서 바꾸거나 `?lang=en`으로 열면 되고, 고른 언어는 브라우저에 기억합니다. 문서 내용은 바뀌지 않습니다.
+방식은 [Google Docs식](../next-shadcn#언어-한국어--english)과 같습니다: 앱 메시지 표([`lib/messages.ts`](lib/messages.ts))를 편집기의 `Messages`에 덧붙여 쓰고([`lib/i18n.tsx`](lib/i18n.tsx)), 언어를 바꾸면 `editor.setLocale`로 편집기도 함께 바뀝니다. 이 예제만의 문구는 표 끝의 `notion.*` 키입니다.
+
+`/` 명령 메뉴의 찾는 낱말(keywords)은 두 언어를 다 담아, 영어 화면에서 `/제목`을, 한국어 화면에서 `/heading`을 쳐도 걸립니다.
 
 ## 꾸미는 법
 
