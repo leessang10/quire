@@ -394,6 +394,13 @@ export const ko = {
   // 이 예제만의 문구
   'view.formatMarks': '편집 기호 표시',
   'word.marks': '편집 기호',
+
+  // 이 예제만의 문구
+  'zoom.label': '확대/축소',
+  'zoom.in': '확대',
+  'zoom.out': '축소',
+  'zoom.reset': '100%로',
+  'zoom.fitWidth': '쪽 폭에 맞춤',
 };
 
 export type AppMessageKey = keyof typeof ko;
@@ -775,4 +782,10 @@ export const en: Record<AppMessageKey, string> = {
 
   'view.formatMarks': 'Show formatting marks',
   'word.marks': 'Show/Hide ¶',
+
+  'zoom.label': 'Zoom',
+  'zoom.in': 'Zoom in',
+  'zoom.out': 'Zoom out',
+  'zoom.reset': 'Reset to 100%',
+  'zoom.fitWidth': 'Fit page width',
 };

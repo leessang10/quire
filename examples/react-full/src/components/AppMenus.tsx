@@ -21,7 +21,7 @@ import {
   Undo2,
 } from 'lucide-react';
 import type { Editor } from '@quire/editor';
-import { SAMPLES, SAVE_FORMATS, type SaveFormat, type Ui } from '../lib/quire-app';
+import { SAMPLES, SAVE_FORMATS, zoomPercent, zoomStep, type SaveFormat, type Ui } from '../lib/quire-app';
 import { BarMenu, MenuBar, MenuItem, MenuLabel, MenuSeparator, SubMenu } from './ui';
 
 type Act = (f: (e: Editor) => unknown) => void;
@@ -110,6 +110,12 @@ export function AppMenus({ ui, act, a, panels }: { ui: Ui | null; act: Act; a: M
         <MenuItem checked={!!ui?.formatMarks} onSelect={() => act((e) => e.setShowMarks(!ui?.formatMarks))}>
           편집 기호 표시
         </MenuItem>
+        <MenuSeparator />
+        <MenuLabel>확대/축소 ({zoomPercent(ui?.zoom ?? 1)})</MenuLabel>
+        <MenuItem onSelect={() => act((e) => e.setZoom(zoomStep(e.zoom, 1)))}>확대</MenuItem>
+        <MenuItem onSelect={() => act((e) => e.setZoom(zoomStep(e.zoom, -1)))}>축소</MenuItem>
+        <MenuItem onSelect={() => act((e) => e.setZoom(1))}>100%</MenuItem>
+        <MenuItem onSelect={() => act((e) => e.setZoom(e.fitWidthZoom()))}>쪽 폭에 맞춤</MenuItem>
         <MenuSeparator />
         <MenuLabel>문서 보기</MenuLabel>
         <MenuItem checked={ui?.viewMode === 'suggestions'} onSelect={() => act((e) => e.setViewMode('suggestions'))}>

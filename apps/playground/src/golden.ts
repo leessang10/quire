@@ -5,7 +5,7 @@
  * - editor: 실제 편집기(조각 글꼴, 백그라운드 조판)를 열고 `layoutSummary()` — 사용자가 보는 쪽 나눔
  * - whole: 통째 글꼴로 Node 시험과 똑같이 처음부터 조판 (`composeReference`) — JS 엔진·플랫폼 차이만 본다
  *
- * 그리고 marks: 편집 기호를 켜고 연속 보기로 바꿔도 레이아웃 요약과 저장 문서(정본)가 그대로인가, 어두운 화면에서도 PDF에 화면 색이
+ * 그리고 marks: 편집 기호를 켜고 연속 보기로 바꾸고 2배로 확대해도 레이아웃 요약과 저장 문서(정본)가 그대로인가, 어두운 화면에서도 PDF에 화면 색이
  *   실리지 않는가 — 화면 설정은 덧그림일 뿐 (17 §10)
  *
  * 결과는 `window.goldenResult`. 쿼리 ?only=report 로 한 문서만.
@@ -25,7 +25,7 @@ export interface GoldenDoc {
   pages: number;
   editor: { ok: boolean; diff: string | null; ms: number };
   whole: { ok: boolean; diff: string | null };
-  /** 편집 기호·연속 보기를 켜도 같은가 */
+  /** 편집 기호·연속 보기·확대 2배를 켜도 같은가 (화면 표시) */
   marks: { ok: boolean; diff: string | null };
 }
 export interface GoldenResult {
@@ -95,17 +95,24 @@ async function viaEditor(host: HTMLElement, raw: string): Promise<{ summary: Lay
       last = j;
     }
     const summary = JSON.parse(last) as LayoutSummary;
-    // 편집 기호(¶·나눔 배지)와 연속 보기는 화면 덧그림: 레이아웃 요약과 저장 문서가 바이트까지 같아야 한다
+    // 편집 기호(¶·나눔 배지)·연속 보기·확대는 화면 덧그림: 레이아웃 요약과 저장 문서가 바이트까지 같아야 한다
     const saved = JSON.stringify(quireFromDocument(editor.document));
     editor.setShowMarks(true);
     editor.setPageView('continuous');
     await sleep(200);
     const marked = editor.layoutSummary();
+    // 화면 확대도 그리기만: 2배로 키워도 레이아웃 요약이 같다
+    editor.setZoom(2);
+    await sleep(200);
+    const zoomed = editor.layoutSummary();
+    const zoomDiff = editor.zoom === 2 ? firstDiff(zoomed, summary) : `배율이 ${editor.zoom}`;
+    editor.setZoom(1);
     // 어두운 화면도 화면만: 인쇄·PDF(printSource)는 화면 테마 색을 싣지 않는다 (흰 종이에 밝은 글자가 가지 않게)
     editor.setColorScheme('dark');
     const printColors = editor.printSource().env.colors;
     const marksDiff =
       firstDiff(marked, summary) ??
+      (zoomDiff ? `확대: ${zoomDiff}` : null) ??
       (JSON.stringify(quireFromDocument(editor.document)) === saved ? null : '저장 문서가 바뀜') ??
       (printColors ? `PDF에 화면 색이 실림 (글자 ${printColors.text})` : null);
     return { summary, marksDiff };
@@ -149,9 +156,9 @@ function show(docs: GoldenDoc[]): void {
   const mark = (ok: boolean) => (ok ? '<span class="ok">같음</span>' : '<span class="fail">다름</span>');
   const table = document.getElementById('table')!;
   table.innerHTML =
-    '<tr><th>문서</th><th>쪽</th><th>편집기</th><th>통째 글꼴</th><th>편집 기호</th></tr>' +
+    '<tr><th>문서</th><th>쪽</th><th>편집기</th><th>통째 글꼴</th><th>화면 표시</th></tr>' +
     docs.map((d) => `<tr><td>${d.name}</td><td class="num">${d.pages}</td><td>${mark(d.editor.ok)}</td><td>${mark(d.whole.ok)}</td><td>${mark(d.marks.ok)}</td></tr>`).join('');
-  const diffs = docs.flatMap((d) => [d.editor.diff && `${d.name} 편집기 ${d.editor.diff}`, d.whole.diff && `${d.name} 통째 ${d.whole.diff}`, d.marks.diff && `${d.name} 편집 기호 ${d.marks.diff}`].filter(Boolean));
+  const diffs = docs.flatMap((d) => [d.editor.diff && `${d.name} 편집기 ${d.editor.diff}`, d.whole.diff && `${d.name} 통째 ${d.whole.diff}`, d.marks.diff && `${d.name} 화면 표시 ${d.marks.diff}`].filter(Boolean));
   document.getElementById('result')!.textContent = diffs.join('\n');
 }
 

@@ -33,7 +33,7 @@ import { I18nProvider, LOCALES, initialLocale, useI18n, type Locale, type T } fr
 import type { AppMessageKey } from '@/lib/messages';
 import { Ribbon } from './Ribbon';
 import { ContextBar } from './ContextBar';
-import { FindCard, OutlinePanel, ReviewPanel } from './Panels';
+import { FindCard, OutlinePanel, ReviewPanel, ZoomBar } from './Panels';
 import { InfoDialog, PageSetupDialog, PromptDialog, ShortcutsBody, WordCountBody } from './Dialogs';
 
 type DialogKind = 'page' | 'link' | 'alt' | 'count' | 'keys' | 'about' | 'report' | null;
@@ -315,6 +315,8 @@ function App() {
               <TooltipContent>{label}</TooltipContent>
             </Tooltip>
           ))}
+          <span className="mx-1.5 h-4 w-px bg-border" />
+          <ZoomBar ui={ui} editor={editor} act={act} />
         </div>
       </footer>
 

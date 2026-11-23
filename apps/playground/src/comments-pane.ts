@@ -139,19 +139,19 @@ export class CommentsPane {
 
   /** 범위 y에 맞추어 놓기: 겹치면 아래로 민다. 고른 스레드는 제자리에 두고 위 카드를 위로 민다 */
   private place(): void {
-    const top = this.editor.scrollElement.scrollTop;
+    const vy = (y: number) => this.editor.viewportY(y); // 문서 y → 스크롤 상자 화면 y (확대 반영)
     const items: Array<{ e: HTMLElement; y: number; id: string }> = [];
     if (this.composer) {
       const e = this.track.querySelector<HTMLElement>('.cm-composer');
-      if (e) items.push({ e, y: this.composer.y - top, id: '' });
+      if (e) items.push({ e, y: vy(this.composer.y), id: '' });
     }
     for (const v of this.views) {
       const e = this.cards.get(v.id);
-      if (e && v.y !== null) items.push({ e, y: v.y - top, id: v.id });
+      if (e && v.y !== null) items.push({ e, y: vy(v.y), id: v.id });
     }
     for (const s of this.sviews) {
       const e = this.cards.get(`s:${s.id}`);
-      if (e && s.y !== null) items.push({ e, y: s.y - top, id: `s:${s.id}` });
+      if (e && s.y !== null) items.push({ e, y: vy(s.y), id: `s:${s.id}` });
     }
     items.sort((a, b) => a.y - b.y);
     const ys = items.map((it) => it.y);
@@ -184,7 +184,7 @@ export class CommentsPane {
       this.flash('먼저 댓글을 달 글을 선택하세요');
       return;
     }
-    this.composer = { y: this.editor.selectionY() ?? this.editor.scrollElement.scrollTop + 40 };
+    this.composer = { y: this.editor.selectionY() ?? this.editor.viewportTop + 40 };
     this.focused = null;
     this.key = '';
     this.update();
