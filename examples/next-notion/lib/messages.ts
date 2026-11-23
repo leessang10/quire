@@ -390,6 +390,10 @@ export const ko = {
   'float.textColor': '글자 색',
   'float.background': '배경',
   'float.default': '기본 색으로',
+
+  // 이 예제만의 문구
+  'view.formatMarks': '편집 기호 표시',
+  'word.marks': '편집 기호',
 };
 
 export type AppMessageKey = keyof typeof ko;
@@ -768,4 +772,7 @@ export const en: Record<AppMessageKey, string> = {
   'float.textColor': 'Text color',
   'float.background': 'Background',
   'float.default': 'Default color',
+
+  'view.formatMarks': 'Show formatting marks',
+  'word.marks': 'Show/Hide ¶',
 };

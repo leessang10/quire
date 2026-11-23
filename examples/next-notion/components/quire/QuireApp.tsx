@@ -253,6 +253,9 @@ function App() {
                   <DropdownMenuCheckboxItem checked={!!ui?.suggesting} onCheckedChange={() => act((e) => e.setSuggesting(!ui?.suggesting))}>
                     {t('notion.suggesting')}
                   </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem checked={!!ui?.formatMarks} onCheckedChange={() => act((e) => e.setShowMarks(!ui?.formatMarks))}>
+                    {t('view.formatMarks')}
+                  </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem checked={!!ui?.spell} onCheckedChange={() => act((e) => e.setSpellChecker(ui?.spell ? null : spell))}>
                     {t('notion.spell')}
                   </DropdownMenuCheckboxItem>

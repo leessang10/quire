@@ -327,6 +327,10 @@ export const ko = {
   'shortcut.highlight': '강조 낱말 더하기 / 다음 강조 낱말',
   'shortcut.save': 'Quire 문서로 저장',
   'shortcut.print': '인쇄 (PDF)',
+
+  // 이 예제만의 문구
+  'view.formatMarks': '편집 기호 표시',
+  'word.marks': '편집 기호',
 };
 
 export type AppMessageKey = keyof typeof ko;
@@ -643,4 +647,7 @@ export const en: Record<AppMessageKey, string> = {
   'shortcut.highlight': 'Add highlighted word / Next highlighted word',
   'shortcut.save': 'Save as a Quire document',
   'shortcut.print': 'Print (PDF)',
+
+  'view.formatMarks': 'Show formatting marks',
+  'word.marks': 'Show/Hide ¶',
 };

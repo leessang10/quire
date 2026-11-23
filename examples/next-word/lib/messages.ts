@@ -439,6 +439,10 @@ export const ko = {
   // 이 예제만의 문구
   'word.ribbonCollapse': '리본 축소',
   'word.ribbonPin': '리본 펼치기',
+
+  // 이 예제만의 문구
+  'view.formatMarks': '편집 기호 표시',
+  'word.marks': '편집 기호',
 };
 
 export type AppMessageKey = keyof typeof ko;
@@ -865,4 +869,7 @@ export const en: Record<AppMessageKey, string> = {
 
   'word.ribbonCollapse': 'Collapse the ribbon',
   'word.ribbonPin': 'Expand the ribbon',
+
+  'view.formatMarks': 'Show formatting marks',
+  'word.marks': 'Show/Hide ¶',
 };

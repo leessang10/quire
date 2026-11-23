@@ -52,6 +52,7 @@ import {
   CheckCheck,
   XCircle,
   PencilLine,
+  Pilcrow,
   Hash,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -347,6 +348,9 @@ function HomeTab({ ui, act, a }: { ui: Ui | null; act: Act; a: RibbonActions }) 
             </T>
             <T label={t('word.indent')} onClick={() => act((e) => e.indent(1))}>
               <IndentIncrease />
+            </T>
+            <T label={t('word.marks')} pressed={!!ui?.formatMarks} onClick={() => act((e) => e.setShowMarks(!ui?.formatMarks))}>
+              <Pilcrow />
             </T>
           </Row>
           <Row>
