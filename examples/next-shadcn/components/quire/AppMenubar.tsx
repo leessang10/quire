@@ -162,6 +162,9 @@ export function AppMenubar({ ui, act, a, panels }: { ui: Ui | null; act: Act; a:
           <Check checked={panels.review} onSelect={() => a.togglePanel('review')}>
             {t('view.review')}
           </Check>
+          <Check checked={!!ui?.formatMarks} onSelect={() => act((e) => e.setShowMarks(!ui?.formatMarks))}>
+            {t('view.formatMarks')}
+          </Check>
         </MenubarGroup>
         <MenubarSeparator />
         <MenubarGroup>

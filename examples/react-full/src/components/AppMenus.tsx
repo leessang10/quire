@@ -107,6 +107,9 @@ export function AppMenus({ ui, act, a, panels }: { ui: Ui | null; act: Act; a: M
         <MenuItem checked={panels.review} onSelect={() => a.togglePanel('review')}>
           댓글·제안
         </MenuItem>
+        <MenuItem checked={!!ui?.formatMarks} onSelect={() => act((e) => e.setShowMarks(!ui?.formatMarks))}>
+          편집 기호 표시
+        </MenuItem>
         <MenuSeparator />
         <MenuLabel>문서 보기</MenuLabel>
         <MenuItem checked={ui?.viewMode === 'suggestions'} onSelect={() => act((e) => e.setViewMode('suggestions'))}>

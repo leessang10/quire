@@ -99,6 +99,11 @@ export interface EditorOptions {
   colorScheme?: ColorScheme;
   /** print(기본: 쪽마다 종이와 틈)·continuous(쪽 경계 없이 이어서). 레이아웃은 같다 */
   pageView?: PageView;
+  /**
+   * 편집 기호 표시 (¶, 쪽·단·구역 나눔). 기본 false: 나눔 표시는 캐럿이 그 옆에 있을 때와 연속 보기에서만 보인다.
+   * 표시는 화면 위 덧그림이라 레이아웃·문서·내보내기를 바꾸지 않는다
+   */
+  showMarks?: boolean;
   /** 화면 언어 (18, BCP 47: ko·en·en-GB). 기본 ko. 정확히 없으면 앞부분(en)으로, 빠진 키는 영어 → 한국어 순으로 */
   locale?: string;
   /** 언어별 메시지 덮어쓰기·추가 언어 (키 단위, 18 §5): { en: { 'break.page': 'Page break' } } */
@@ -460,6 +465,7 @@ export class Editor {
   private themeName: ThemeName = 'classic';
   private scheme: ColorScheme = 'light';
   private pageViewMode: PageView = 'print';
+  private marksShown = false;
   /** 색을 풀어 쓰는 숨긴 요소 */
   private themeProbe: HTMLElement | null = null;
   private readonly painter = new PagePainter(this.painterEnv());
@@ -606,6 +612,7 @@ export class Editor {
     this.themeName = opts.theme ?? 'classic';
     this.scheme = opts.colorScheme ?? 'light';
     this.pageViewMode = opts.pageView ?? 'print';
+    this.marksShown = !!opts.showMarks;
     const probe = document.createElement('span');
     probe.setAttribute('aria-hidden', 'true');
     Object.assign(probe.style, { position: 'absolute', width: '0', height: '0', overflow: 'hidden', visibility: 'hidden' });
@@ -870,6 +877,19 @@ export class Editor {
     this.opts.host.lang = this.i18n.locale;
     this.input.setLabel(this.t('a11y.input'));
     this.mirror.setAttribute('aria-label', this.t('a11y.document'));
+  }
+
+  /** 편집 기호(¶, 쪽·단·구역 나눔)를 보이는가 */
+  get showMarks(): boolean {
+    return this.marksShown;
+  }
+
+  /** 편집 기호 표시를 켜고 끈다 (다시 그리기만: 레이아웃·문서는 그대로) */
+  setShowMarks(show: boolean): void {
+    if (show === this.marksShown) return;
+    this.marksShown = show;
+    this.render();
+    this.opts.onChange?.(this);
   }
 
   /** 지금 테마·색 모드(auto면 auto)·쪽 보기 */
@@ -1401,10 +1421,14 @@ export class Editor {
             ctx.fillRect(X(a), y + ln.height - 5, X(b) - X(a), 1.5);
           }
         }
-        // 구역 나눔 표시 (12 §3.1): 구역 끝 문단의 마지막 줄 뒤에 점선과 다음 구역의 시작 방식. 쪽 나눔(다음 문단이 앞에서 쪽 나눔)도
+        // 편집 기호 (12 §3.1): 문단 끝 ¶, 문단 뒤의 쪽·단·구역 나눔. 글 위에 반투명하게 덧그릴 뿐 자리를 차지하지 않는다
         if (isBody && ln.index === para.lines.length - 1) {
-          const mark = this.breakLabel(l.index);
-          if (mark) this.drawBreakMark(mark, X(ln.end) + this.fontSize * 0.6, l.px + para.frameLeft + para.width, y + ln.height / 2);
+          if (this.marksShown) this.drawPilcrow(X(ln.end), y, ln.height);
+          const brk = this.breakAfter(l.index);
+          if (brk && this.breakVisible(l.index)) {
+            const x0 = l.px + para.frameLeft;
+            this.drawBreakMark(brk, x0, x0 + para.width, y + ln.height + 2);
+          }
         }
       },
     };
@@ -2056,38 +2080,75 @@ export class Editor {
     return null;
   }
 
-  /** 본문 문단 i 뒤의 나눔 표시: 구역 나눔, 다음 문단의 앞에서 쪽 나눔 (없으면 null) */
-  private breakLabel(i: number): string | null {
+  /** 본문 문단 i 뒤의 나눔: 구역 나눔, 다음 문단의 앞에서 쪽·단 나눔 (없으면 null) */
+  private breakAfter(i: number): { kind: 'page' | 'column' | 'section'; label: string } | null {
     const b = this.body;
     if (b.paraAttrs(i).section !== undefined) {
       const start = fullSection(b.sectionDef(b.sectionOf(i + 1).id)).start;
-      return this.t('break.section', { start: this.t(SECTION_LABELS[start]) });
+      return { kind: 'section', label: this.t('break.section', { start: this.t(SECTION_LABELS[start]) }) };
     }
     const next = this.bodyLayout.paras[i + 1];
-    if (next?.layout.box?.keep?.breakBefore) return this.t('break.page');
-    if (next?.layout.box?.keep?.column) return this.t('break.column');
+    if (next?.layout.box?.keep?.breakBefore) return { kind: 'page', label: this.t('break.page') };
+    if (next?.layout.box?.keep?.column) return { kind: 'column', label: this.t('break.column') };
     return null;
   }
 
-  /** 나눔 점선과 이름: x0..x1 (화면), 가운데 y */
-  private drawBreakMark(label: string, x0: number, x1: number, y: number): void {
+  /** 문단 i 뒤의 나눔을 보일까: 편집 기호를 켰거나, 연속 보기(쪽 경계가 없어 달리 알 길이 없다)이거나, 캐럿이 바로 앞뒤 문단에 있을 때 */
+  private breakVisible(i: number): boolean {
+    if (this.marksShown || this.pageViewMode === 'continuous') return true;
+    if (!this.inBody) return false;
+    const p = this.body.paragraphIndexAt(this.headOffset());
+    return p === i || p === i + 1;
+  }
+
+  /** 문단 끝 ¶ (편집 기호): 마지막 글자 뒤에 반투명하게 */
+  private drawPilcrow(x: number, y: number, h: number): void {
     const { ctx } = this;
     ctx.save();
-    ctx.font = `11px ${this.family}`;
-    const tw = ctx.measureText(label).width;
-    const mid = Math.max(x0 + 8, (x0 + x1 - tw) / 2);
-    ctx.strokeStyle = this.colors.placeholderText;
-    ctx.setLineDash([3, 3]);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x0, y + 0.5);
-    ctx.lineTo(mid - 6, y + 0.5);
-    ctx.moveTo(mid + tw + 6, y + 0.5);
-    ctx.lineTo(Math.max(mid + tw + 6, x1), y + 0.5);
-    ctx.stroke();
-    ctx.fillStyle = this.colors.placeholderText;
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = this.colors.mark;
+    ctx.font = `${Math.round(this.fontSize * 0.85)}px ${this.family}`;
     ctx.textBaseline = 'middle';
-    ctx.fillText(label, mid, y);
+    ctx.fillText('¶', x + 1, y + h / 2);
+    ctx.restore();
+  }
+
+  /**
+   * 나눔 표시: 문단 아래 경계(y)에 본문 폭 x0..x1의 반투명 점선(구역은 두 줄, 단은 잘게)과 오른쪽 끝의 작은 배지.
+   * 글자 줄 위가 아니라 문단 사이에 덧그리므로 글을 가리지 않고, 줄이 꽉 차도 넘치지 않는다
+   */
+  private drawBreakMark(brk: { kind: 'page' | 'column' | 'section'; label: string }, x0: number, x1: number, y: number): void {
+    const { ctx } = this;
+    const c = this.colors;
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = c.mark;
+    ctx.lineWidth = 1;
+    ctx.setLineDash(brk.kind === 'column' ? [2, 3] : [5, 3]);
+    ctx.beginPath();
+    for (const dy of brk.kind === 'section' ? [-1.5, 1.5] : [0]) {
+      ctx.moveTo(x0, Math.round(y + dy) + 0.5);
+      ctx.lineTo(x1, Math.round(y + dy) + 0.5);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = `10px ${this.family}`;
+    const tw = ctx.measureText(brk.label).width;
+    const h = 15;
+    const bw = tw + 12;
+    const bx = Math.max(x0, x1 - bw);
+    const by = Math.round(y - h / 2);
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = c.page;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(bx, by, bw, h, h / 2);
+    else ctx.rect(bx, by, bw, h);
+    ctx.fill();
+    ctx.globalAlpha = 0.7;
+    ctx.stroke();
+    ctx.fillStyle = c.placeholderText;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(brk.label, bx + 6, by + h / 2 + 0.5);
     ctx.restore();
   }
 

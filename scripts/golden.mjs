@@ -46,9 +46,10 @@ async function main() {
         const ua = (r.userAgent.match(/Edg\/[\d.]+/) ?? r.userAgent.match(/(HeadlessChrome|Chrome)\/[\d.]+/))?.[0] ?? r.userAgent;
         console.log(`\n${exe}\n  ${ua}`);
         for (const d of r.docs) {
-          console.log(`  ${d.name.padEnd(12)} ${String(d.pages).padStart(3)}쪽  편집기 ${d.editor.ok ? '같음' : '다름'} (${d.editor.ms} ms)  통째 글꼴 ${d.whole.ok ? '같음' : '다름'}`);
+          console.log(`  ${d.name.padEnd(12)} ${String(d.pages).padStart(3)}쪽  편집기 ${d.editor.ok ? '같음' : '다름'} (${d.editor.ms} ms)  통째 글꼴 ${d.whole.ok ? '같음' : '다름'}  편집 기호 ${d.marks.ok ? '같음' : '다름'}`);
           if (d.editor.diff) console.log(`      편집기: ${d.editor.diff}`);
           if (d.whole.diff) console.log(`      통째: ${d.whole.diff}`);
+          if (d.marks.diff) console.log(`      편집 기호: ${d.marks.diff}`);
         }
         ok &&= r.ok;
         results.push({ browser: exe, ...r });
