@@ -236,12 +236,12 @@ function App() {
         <span className="text-xs opacity-70">{t('word.badge')}</span>
       </div>
       <Ribbon ui={ui} act={act} a={actions} editor={editor} panels={panels} file={fileMenu} />
-      <ContextBar ui={ui} act={act} onAlt={() => setDialog('alt')} />
       <main className="flex min-h-0 flex-1">
         {panels.outline && <OutlinePanel editor={editor} version={version} />}
         <ContextMenu>
           <ContextMenuTrigger render={<div className="relative min-w-0 flex-1" />}>
             <QuireEditor editor={ctl} className="h-full" />
+            <ContextBar ui={ui} act={act} onAlt={() => setDialog('alt')} />
             {find && <FindCard key={find.key} editor={editor} replace={find.replace} onClose={() => setFind(null)} />}
           </ContextMenuTrigger>
           <ContextMenuContent className="w-56" finalFocus={false}>

@@ -211,12 +211,12 @@ function App() {
           <Toolbar ui={ui} act={act} onLink={actions.link} onImage={actions.image} />
         </div>
       </header>
-      <ContextBar ui={ui} act={act} onAlt={() => setDialog('alt')} />
       <main className="flex min-h-0 flex-1">
         {panels.outline && <OutlinePanel editor={editor} version={version} />}
         <ContextMenu>
           <ContextMenuTrigger render={<div className="relative min-w-0 flex-1 bg-muted/60" />}>
             <QuireEditor editor={ctl} className="h-full" />
+            <ContextBar ui={ui} act={act} onAlt={() => setDialog('alt')} />
             {find && <FindCard key={find.key} editor={editor} replace={find.replace} onClose={() => setFind(null)} />}
           </ContextMenuTrigger>
           <ContextMenuContent className="w-56" finalFocus={false}>

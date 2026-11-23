@@ -1,5 +1,5 @@
 'use client';
-/** 상황별 도구 줄: 표 안·그림을 고름·머리말/꼬리말 편집·각주 편집일 때 나타난다 */
+/** 상황별 도구 줄: 표 안·그림을 고름·머리말/꼬리말 편집·각주 편집일 때 나타난다. 편집 영역 위에 떠 있어 자리를 차지하지 않는다 (나타나고 사라질 때 문서가 밀리면 두 번 누르기의 두 번째가 다른 곳에 떨어진다) */
 import type { ReactNode } from 'react';
 import { ArrowDownToLine, ArrowRightToLine, Combine, Footprints, Image as ImageIcon, PaintBucket, PanelTop, Split, Table, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,7 @@ const Sep = () => <Separator orientation="vertical" className="mx-1 h-5!" />;
 
 function Bar({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-1 border-b bg-muted/30 px-4 py-1.5">
+    <div className="absolute inset-x-0 top-0 z-20 flex flex-wrap items-center gap-1 shadow-sm backdrop-blur-sm border-b bg-background/95 px-4 py-1.5" onContextMenu={(e) => e.stopPropagation()}>
       <span className="mr-2 flex items-center gap-1.5 text-sm font-medium">
         {icon}
         {title}

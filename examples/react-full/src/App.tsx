@@ -161,11 +161,11 @@ export function App() {
           <Toolbar ui={ui} act={act} onLink={actions.link} onImage={actions.image} />
         </div>
       </header>
-      <ContextBar ui={ui} act={act} onAlt={() => setDialog('alt')} />
       <main className="flex min-h-0 flex-1">
         {panels.outline && <OutlinePanel editor={editor} version={version} />}
         <div className="relative min-w-0 flex-1 bg-slate-100">
           <QuireEditor editor={ctl} className="h-full" />
+          <ContextBar ui={ui} act={act} onAlt={() => setDialog('alt')} />
           {find && <FindPanel key={String(find.replace)} editor={editor} replace={find.replace} onClose={() => setFind(null)} />}
         </div>
         {panels.review && <ReviewPanel editor={editor} version={version} composing={composing} onComposeDone={() => setComposing(false)} />}

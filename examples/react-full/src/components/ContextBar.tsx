@@ -1,4 +1,4 @@
-/** 상황별 도구 줄: 표 안·그림을 고름·머리말/꼬리말 편집·각주 편집일 때 도구 막대 아래에 나타난다 */
+/** 상황별 도구 줄: 표 안·그림을 고름·머리말/꼬리말 편집·각주 편집일 때 도구 막대 아래에 나타난다. 편집 영역 위에 떠 있어 자리를 차지하지 않는다 (나타나고 사라질 때 문서가 밀리면 두 번 누르기의 두 번째가 다른 곳에 떨어진다) */
 import { ArrowDownToLine, ArrowRightToLine, Combine, Footprints, Image as ImageIcon, PaintBucket, PanelTop, Split, Table, Trash2, X } from 'lucide-react';
 import type { Editor } from '@quire/editor';
 import type { Placement, Ui } from '../lib/quire-app';
@@ -16,7 +16,7 @@ const PLACEMENTS: Array<[Placement, string]> = [
 
 function Bar({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 bg-sky-50/60 px-4 py-1 text-[13px]">
+    <div className="absolute inset-x-0 top-0 z-20 flex flex-wrap items-center gap-1 shadow-sm backdrop-blur-sm border-b border-slate-200 bg-sky-50/95 px-4 py-1 text-[13px]" onContextMenu={(e) => e.stopPropagation()}>
       <span className="mr-2 flex items-center gap-1.5 font-medium text-sky-900">
         {icon}
         {title}
