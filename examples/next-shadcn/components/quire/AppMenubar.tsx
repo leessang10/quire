@@ -21,6 +21,9 @@ import {
 } from '@/components/ui/menubar';
 import type { Act } from '@/lib/use-ui';
 import { SAMPLES, SAVE_FORMATS, type SaveFormat, type Ui } from '@/lib/quire-app';
+import { LOCALES, useI18n, type Locale } from '@/lib/i18n';
+import type { AppMessageKey } from '@/lib/messages';
+import { formatLabel } from './QuireApp';
 
 export interface MenuActions {
   newDoc: () => void;
@@ -76,31 +79,32 @@ const Hint = ({ children }: { children: ReactNode }) => <span className="text-xs
 
 export function AppMenubar({ ui, act, a, panels }: { ui: Ui | null; act: Act; a: MenuActions; panels: { outline: boolean; review: boolean } }) {
   const p = ui?.para;
-  const t = ui?.table;
+  const tb = ui?.table;
   const icon = 'size-4 text-muted-foreground';
+  const { t, locale, setLocale } = useI18n();
   return (
     <Menubar className="h-7 border-0 bg-transparent p-0 shadow-none">
-      <Menu label="파일" wide>
+      <Menu label={t('menu.file')} wide>
         <MenubarGroup>
           <Item icon={<FilePlus className={icon} />} onSelect={a.newDoc}>
-            새 문서
+            {t('file.new')}
           </Item>
           <Item icon={<FolderOpen className={icon} />} shortcut="Ctrl+O" onSelect={a.open}>
-            열기…
+            {t('file.open')}
           </Item>
           <MenubarSub>
             <MenubarSubTrigger>
               <BookOpen className={icon} />
-              예제 문서
+              {t('file.samples')}
             </MenubarSubTrigger>
             <MenubarSubContent className="w-72">
               <Item icon={<Sparkles className={icon} />} onSelect={a.tour}>
-                기능 둘러보기
+                {t('file.tour')}
               </Item>
               <MenubarSeparator />
               {SAMPLES.map((s) => (
                 <Item key={s.id} icon={<FileText className={icon} />} onSelect={() => a.sample(s.id)}>
-                  {s.label} <Hint>· {s.about}</Hint>
+                  {t(`sample.${s.id}` as AppMessageKey)} <Hint>· {t(`sample.${s.id}.about` as AppMessageKey)}</Hint>
                 </Item>
               ))}
             </MenubarSubContent>
@@ -111,89 +115,92 @@ export function AppMenubar({ ui, act, a, panels }: { ui: Ui | null; act: Act; a:
           <MenubarSub>
             <MenubarSubTrigger>
               <Download className={icon} />
-              내려받기
+              {t('file.download')}
             </MenubarSubTrigger>
             <MenubarSubContent className="w-56">
               {SAVE_FORMATS.map((f) => (
                 <Item key={f.kind} onSelect={() => a.save(f.kind)} shortcut={f.kind === 'quire' ? 'Ctrl+S' : undefined}>
-                  {f.label} <Hint>{f.ext}</Hint>
+                  {formatLabel(t, f)} <Hint>{f.ext}</Hint>
                 </Item>
               ))}
             </MenubarSubContent>
           </MenubarSub>
           <Item icon={<PanelTop className={icon} />} onSelect={a.pageSetup}>
-            쪽 설정…
+            {t('file.pageSetup')}
           </Item>
           <Item icon={<Printer className={icon} />} shortcut="Ctrl+P" onSelect={a.print}>
-            인쇄 (PDF)
+            {t('file.print')}
           </Item>
         </MenubarGroup>
       </Menu>
 
-      <Menu label="수정">
+      <Menu label={t('menu.edit')}>
         <MenubarGroup>
           <Item icon={<Undo2 className={icon} />} shortcut="Ctrl+Z" disabled={!ui?.canUndo} onSelect={() => act((e) => e.undo())}>
-            실행 취소
+            {t('edit.undo')}
           </Item>
           <Item icon={<Redo2 className={icon} />} shortcut="Ctrl+Y" disabled={!ui?.canRedo} onSelect={() => act((e) => e.redo())}>
-            다시 실행
+            {t('edit.redo')}
           </Item>
         </MenubarGroup>
         <MenubarSeparator />
         <MenubarGroup>
           <Item icon={<Search className={icon} />} shortcut="Ctrl+F" onSelect={() => a.find(false)}>
-            찾기
+            {t('edit.find')}
           </Item>
           <Item shortcut="Ctrl+H" onSelect={() => a.find(true)}>
-            찾아 바꾸기
+            {t('edit.replace')}
           </Item>
         </MenubarGroup>
       </Menu>
 
-      <Menu label="보기">
+      <Menu label={t('menu.view')}>
         <MenubarGroup>
           <Check checked={panels.outline} onSelect={() => a.togglePanel('outline')}>
-            개요
+            {t('view.outline')}
           </Check>
           <Check checked={panels.review} onSelect={() => a.togglePanel('review')}>
-            댓글·제안
+            {t('view.review')}
           </Check>
         </MenubarGroup>
         <MenubarSeparator />
         <MenubarGroup>
-          <MenubarLabel>문서 보기</MenubarLabel>
+          <MenubarLabel>{t('view.documentView')}</MenubarLabel>
           <MenubarRadioGroup value={ui?.viewMode ?? 'suggestions'} onValueChange={(v) => act((e) => e.setViewMode(v as 'suggestions'))}>
-            <MenubarRadioItem value="suggestions">제안 표시</MenubarRadioItem>
-            <MenubarRadioItem value="final">최종본</MenubarRadioItem>
-            <MenubarRadioItem value="original">원본</MenubarRadioItem>
+            <MenubarRadioItem value="suggestions">{t('view.suggestions')}</MenubarRadioItem>
+            <MenubarRadioItem value="final">{t('view.final')}</MenubarRadioItem>
+            <MenubarRadioItem value="original">{t('view.original')}</MenubarRadioItem>
           </MenubarRadioGroup>
         </MenubarGroup>
         <MenubarSeparator />
         <MenubarGroup>
-          <MenubarLabel>편집기 언어</MenubarLabel>
-          <MenubarRadioGroup value={ui?.locale ?? 'ko'} onValueChange={(v) => act((e) => e.setLocale(String(v)))}>
-            <MenubarRadioItem value="ko">한국어</MenubarRadioItem>
-            <MenubarRadioItem value="en">English</MenubarRadioItem>
+          <MenubarLabel>{t('app.language')}</MenubarLabel>
+          <MenubarRadioGroup value={locale} onValueChange={(v) => setLocale(v as Locale)}>
+            {LOCALES.map((l) => (
+              <MenubarRadioItem key={l.id} value={l.id}>
+                {l.label}
+              </MenubarRadioItem>
+            ))}
           </MenubarRadioGroup>
         </MenubarGroup>
       </Menu>
 
-      <Menu label="삽입">
+      <Menu label={t('menu.insert')}>
         <MenubarGroup>
           <Item icon={<ImagePlus className={icon} />} onSelect={a.image}>
-            그림…
+            {t('insert.image')}
           </Item>
           <Item icon={<Table className={icon} />} onSelect={() => act((e) => e.insertTable(3, 3))}>
-            표 (3×3)
+            {t('insert.table3')}
           </Item>
           <Item icon={<Link2 className={icon} />} onSelect={a.link}>
-            링크…
+            {t('insert.link')}
           </Item>
           <Item icon={<MessageSquarePlus className={icon} />} shortcut="Ctrl+Alt+M" onSelect={a.comment}>
-            댓글
+            {t('insert.comment')}
           </Item>
           <Item icon={<Footprints className={icon} />} onSelect={() => act((e) => e.insertFootnote())}>
-            각주
+            {t('insert.footnote')}
           </Item>
         </MenubarGroup>
         <MenubarSeparator />
@@ -201,100 +208,100 @@ export function AppMenubar({ ui, act, a, panels }: { ui: Ui | null; act: Act; a:
           <MenubarSub>
             <MenubarSubTrigger>
               <SeparatorHorizontal className={icon} />
-              나누기
+              {t('insert.breaks')}
             </MenubarSubTrigger>
             <MenubarSubContent className="w-60">
               <Item shortcut="Ctrl+Enter" onSelect={() => act((e) => e.insertPageBreak())}>
-                쪽 나누기
+                {t('insert.pageBreak')}
               </Item>
               <Item shortcut="Ctrl+Shift+Enter" onSelect={() => act((e) => e.insertColumnBreak())}>
-                단 나누기
+                {t('insert.columnBreak')}
               </Item>
               <Item shortcut="Ctrl+Alt+Enter" onSelect={() => act((e) => e.insertSectionBreak('nextPage'))}>
-                구역 나누기 (다음 쪽)
+                {t('insert.sectionNextPage')}
               </Item>
-              <Item onSelect={() => act((e) => e.insertSectionBreak('continuous'))}>구역 나누기 (이어서)</Item>
+              <Item onSelect={() => act((e) => e.insertSectionBreak('continuous'))}>{t('insert.sectionContinuous')}</Item>
             </MenubarSubContent>
           </MenubarSub>
           <MenubarSub>
             <MenubarSubTrigger>
               <PanelTop className={icon} />
-              머리말·꼬리말
+              {t('insert.headerFooter')}
             </MenubarSubTrigger>
             <MenubarSubContent className="w-48">
-              <Item onSelect={() => act((e) => e.editHeaderFooter('header'))}>머리말 고치기</Item>
-              <Item onSelect={() => act((e) => e.editHeaderFooter('footer'))}>꼬리말 고치기</Item>
+              <Item onSelect={() => act((e) => e.editHeaderFooter('header'))}>{t('insert.editHeader')}</Item>
+              <Item onSelect={() => act((e) => e.editHeaderFooter('footer'))}>{t('insert.editFooter')}</Item>
             </MenubarSubContent>
           </MenubarSub>
           <MenubarSub>
             <MenubarSubTrigger>
               <FileText className={icon} />
-              쪽 번호
+              {t('insert.pageNumber')}
             </MenubarSubTrigger>
             <MenubarSubContent className="w-48">
-              <Item onSelect={() => act((e) => e.insertField('page'))}>지금 쪽 번호</Item>
-              <Item onSelect={() => act((e) => e.insertField('pages'))}>전체 쪽 수</Item>
+              <Item onSelect={() => act((e) => e.insertField('page'))}>{t('insert.fieldPage')}</Item>
+              <Item onSelect={() => act((e) => e.insertField('pages'))}>{t('insert.fieldPages')}</Item>
             </MenubarSubContent>
           </MenubarSub>
         </MenubarGroup>
       </Menu>
 
-      <Menu label="서식">
+      <Menu label={t('menu.format')}>
         <MenubarGroup>
           <MenubarSub>
-            <MenubarSubTrigger className="pl-7">글자</MenubarSubTrigger>
+            <MenubarSubTrigger className="pl-7">{t('format.text')}</MenubarSubTrigger>
             <MenubarSubContent className="w-52">
               <Check checked={!!ui?.marks.bold} shortcut="Ctrl+B" onSelect={() => act((e) => e.toggleMark('bold'))}>
-                굵게
+                {t('attr.bold')}
               </Check>
               <Check checked={!!ui?.marks.italic} shortcut="Ctrl+I" onSelect={() => act((e) => e.toggleMark('italic'))}>
-                기울임
+                {t('attr.italic')}
               </Check>
               <Check checked={!!ui?.marks.underline} shortcut="Ctrl+U" onSelect={() => act((e) => e.toggleMark('underline'))}>
-                밑줄
+                {t('attr.underline')}
               </Check>
               <Check checked={!!ui?.marks.strike} onSelect={() => act((e) => e.toggleMark('strike'))}>
-                취소선
+                {t('attr.strike')}
               </Check>
               <Check checked={ui?.marks.script === 'sup'} onSelect={() => act((e) => e.toggleScript('sup'))}>
-                위 첨자
+                {t('attr.sup')}
               </Check>
               <Check checked={ui?.marks.script === 'sub'} onSelect={() => act((e) => e.toggleScript('sub'))}>
-                아래 첨자
+                {t('attr.sub')}
               </Check>
               <MenubarSeparator />
-              <Item onSelect={() => act((e) => e.clearMarks())}>서식 지우기</Item>
+              <Item onSelect={() => act((e) => e.clearMarks())}>{t('format.clear')}</Item>
             </MenubarSubContent>
           </MenubarSub>
           <MenubarSub>
-            <MenubarSubTrigger className="pl-7">쪽 나눔 제어</MenubarSubTrigger>
+            <MenubarSubTrigger className="pl-7">{t('format.keep')}</MenubarSubTrigger>
             <MenubarSubContent className="w-56">
               <Check checked={!!p?.pageBreakBefore} onSelect={() => act((e) => e.toggleParagraphKeep('pageBreakBefore'))}>
-                문단 앞에서 쪽 나누기
+                {t('format.pageBreakBefore')}
               </Check>
               <Check checked={!!p?.keepWithNext} onSelect={() => act((e) => e.toggleParagraphKeep('keepWithNext'))}>
-                다음 문단과 같은 쪽에
+                {t('format.keepWithNext')}
               </Check>
               <Check checked={!!p?.keepTogether} onSelect={() => act((e) => e.toggleParagraphKeep('keepTogether'))}>
-                문단을 나누지 않기
+                {t('format.keepTogether')}
               </Check>
             </MenubarSubContent>
           </MenubarSub>
           <MenubarSub>
-            <MenubarSubTrigger className="pl-7">한글 조판</MenubarSubTrigger>
+            <MenubarSubTrigger className="pl-7">{t('format.korean')}</MenubarSubTrigger>
             <MenubarSubContent className="w-56">
               <MenubarGroup>
                 <MenubarRadioGroup value={p?.koreanBreak ?? 'word'} onValueChange={(v) => act((e) => e.setParagraphAttr('koreanBreak', v === 'char' ? 'char' : undefined))}>
-                  <MenubarRadioItem value="word">어절 단위로 줄 바꾸기</MenubarRadioItem>
-                  <MenubarRadioItem value="char">글자 단위로 줄 바꾸기</MenubarRadioItem>
+                  <MenubarRadioItem value="word">{t('format.breakWord')}</MenubarRadioItem>
+                  <MenubarRadioItem value="char">{t('format.breakChar')}</MenubarRadioItem>
                 </MenubarRadioGroup>
               </MenubarGroup>
               <MenubarSeparator />
               <Check checked={!!p?.hangPunct} onSelect={() => act((e) => e.setParagraphAttr('hangPunct', p?.hangPunct ? undefined : true))}>
-                문장부호 내어 쓰기
+                {t('format.hangPunct')}
               </Check>
               <Check checked={!!p?.squeeze} onSelect={() => act((e) => e.setParagraphAttr('squeeze', p?.squeeze ? undefined : true))}>
-                줄 끝 공백 줄이기
+                {t('format.squeeze')}
               </Check>
             </MenubarSubContent>
           </MenubarSub>
@@ -302,96 +309,96 @@ export function AppMenubar({ ui, act, a, panels }: { ui: Ui | null; act: Act; a:
         <MenubarSeparator />
         <MenubarGroup>
           <Item icon={<Columns2 className={icon} />} onSelect={a.pageSetup}>
-            쪽 설정·다단…
+            {t('format.pageColumns')}
           </Item>
         </MenubarGroup>
       </Menu>
 
-      <Menu label="표">
+      <Menu label={t('menu.table')}>
         <MenubarGroup>
-          <Item onSelect={() => act((e) => e.insertTable(3, 3))}>표 넣기 (3×3)</Item>
+          <Item onSelect={() => act((e) => e.insertTable(3, 3))}>{t('table.insert3')}</Item>
         </MenubarGroup>
         <MenubarSeparator />
         <MenubarGroup>
-          <Item disabled={!t?.inTable} onSelect={() => act((e) => e.tableAddRow(false))}>
-            위에 행 넣기
+          <Item disabled={!tb?.inTable} onSelect={() => act((e) => e.tableAddRow(false))}>
+            {t('table.rowAbove')}
           </Item>
-          <Item disabled={!t?.inTable} onSelect={() => act((e) => e.tableAddRow(true))}>
-            아래에 행 넣기
+          <Item disabled={!tb?.inTable} onSelect={() => act((e) => e.tableAddRow(true))}>
+            {t('table.rowBelow')}
           </Item>
-          <Item disabled={!t?.inTable} onSelect={() => act((e) => e.tableAddCol(false))}>
-            왼쪽에 열 넣기
+          <Item disabled={!tb?.inTable} onSelect={() => act((e) => e.tableAddCol(false))}>
+            {t('table.colLeft')}
           </Item>
-          <Item disabled={!t?.inTable} onSelect={() => act((e) => e.tableAddCol(true))}>
-            오른쪽에 열 넣기
-          </Item>
-        </MenubarGroup>
-        <MenubarSeparator />
-        <MenubarGroup>
-          <Item disabled={!t?.inTable} onSelect={() => act((e) => e.tableDelete('row'))}>
-            행 지우기
-          </Item>
-          <Item disabled={!t?.inTable} onSelect={() => act((e) => e.tableDelete('col'))}>
-            열 지우기
-          </Item>
-          <Item disabled={!t?.inTable} onSelect={() => act((e) => e.deleteTable())}>
-            표 지우기
+          <Item disabled={!tb?.inTable} onSelect={() => act((e) => e.tableAddCol(true))}>
+            {t('table.colRight')}
           </Item>
         </MenubarGroup>
         <MenubarSeparator />
         <MenubarGroup>
-          <Item disabled={!t?.range} onSelect={() => act((e) => e.tableMerge())}>
-            셀 합치기
+          <Item disabled={!tb?.inTable} onSelect={() => act((e) => e.tableDelete('row'))}>
+            {t('table.deleteRow')}
           </Item>
-          <Item disabled={!t?.merged} onSelect={() => act((e) => e.tableUnmerge())}>
-            셀 나누기
+          <Item disabled={!tb?.inTable} onSelect={() => act((e) => e.tableDelete('col'))}>
+            {t('table.deleteCol')}
+          </Item>
+          <Item disabled={!tb?.inTable} onSelect={() => act((e) => e.deleteTable())}>
+            {t('table.delete')}
           </Item>
         </MenubarGroup>
         <MenubarSeparator />
         <MenubarGroup>
-          <Check disabled={!t?.inTable} checked={!!t?.header} onSelect={() => act((e) => e.tableSetRowFlag('header', !t?.header))}>
-            제목 행 (쪽마다 반복)
+          <Item disabled={!tb?.range} onSelect={() => act((e) => e.tableMerge())}>
+            {t('table.merge')}
+          </Item>
+          <Item disabled={!tb?.merged} onSelect={() => act((e) => e.tableUnmerge())}>
+            {t('table.unmerge')}
+          </Item>
+        </MenubarGroup>
+        <MenubarSeparator />
+        <MenubarGroup>
+          <Check disabled={!tb?.inTable} checked={!!tb?.header} onSelect={() => act((e) => e.tableSetRowFlag('header', !tb?.header))}>
+            {t('table.headerRow')}
           </Check>
-          <Check disabled={!t?.inTable} checked={!!t?.cantSplit} onSelect={() => act((e) => e.tableSetRowFlag('cantSplit', !t?.cantSplit))}>
-            행을 쪽에서 나누지 않기
+          <Check disabled={!tb?.inTable} checked={!!tb?.cantSplit} onSelect={() => act((e) => e.tableSetRowFlag('cantSplit', !tb?.cantSplit))}>
+            {t('table.cantSplit')}
           </Check>
         </MenubarGroup>
       </Menu>
 
-      <Menu label="도구" wide>
+      <Menu label={t('menu.tools')} wide>
         <MenubarGroup>
           <Check checked={!!ui?.spell} onSelect={a.toggleSpell}>
-            맞춤법 검사 <Hint>(데모 검사기)</Hint>
+            {t('tools.spell')} <Hint>{t('tools.spellHint')}</Hint>
           </Check>
-          <Item onSelect={a.wordCount}>글자 수 세기</Item>
+          <Item onSelect={a.wordCount}>{t('tools.wordCount')}</Item>
         </MenubarGroup>
         <MenubarSeparator />
         <MenubarGroup>
           <Check checked={!!ui?.suggesting} onSelect={() => act((e) => e.setSuggesting(!ui?.suggesting))}>
-            제안 모드
+            {t('tools.suggesting')}
           </Check>
           <Item disabled={!ui?.suggestions} onSelect={() => act((e) => e.acceptAll())}>
-            제안 모두 수락
+            {t('tools.acceptAll')}
           </Item>
           <Item disabled={!ui?.suggestions} onSelect={() => act((e) => e.rejectAll())}>
-            제안 모두 거부
+            {t('tools.rejectAll')}
           </Item>
         </MenubarGroup>
         <MenubarSeparator />
         <MenubarGroup>
           <Item shortcut="Ctrl+Alt+K" disabled={!ui?.hasSelection} onSelect={() => act((e) => e.run('highlightWords.addSelection'))}>
-            강조 낱말로 더하기 <Hint>(플러그인)</Hint>
+            {t('highlightWords.add')} <Hint>{t('tools.pluginHint')}</Hint>
           </Item>
           <Item shortcut="Ctrl+Alt+J" onSelect={() => act((e) => e.run('highlightWords.next'))}>
-            다음 강조 낱말로
+            {t('tools.nextHighlight')}
           </Item>
         </MenubarGroup>
       </Menu>
 
-      <Menu label="도움말">
+      <Menu label={t('menu.help')}>
         <MenubarGroup>
-          <Item onSelect={a.shortcuts}>단축키</Item>
-          <Item onSelect={a.about}>이 예제에 대해</Item>
+          <Item onSelect={a.shortcuts}>{t('help.shortcuts')}</Item>
+          <Item onSelect={a.about}>{t('help.about')}</Item>
         </MenubarGroup>
       </Menu>
     </Menubar>

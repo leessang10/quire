@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import type { Act } from '@/lib/use-ui';
 import type { Placement, Ui } from '@/lib/quire-app';
+import { useT } from '@/lib/i18n';
 
 const keep = { onMouseDown: (e: React.MouseEvent) => e.preventDefault() };
 const Sep = () => <Separator orientation="vertical" className="mx-1 h-5!" />;
@@ -32,52 +33,47 @@ function Flag({ pressed, onClick, children, disabled }: { pressed: boolean; onCl
   );
 }
 
-const PLACEMENTS: Array<[Placement, string]> = [
-  ['inline', '글자처럼'],
-  ['square', '어울림'],
-  ['topBottom', '위아래'],
-  ['front', '글 앞'],
-  ['behind', '글 뒤'],
-];
+const PLACEMENTS: Placement[] = ['inline', 'square', 'topBottom', 'front', 'behind'];
 
 export function ContextBar({ ui, act, onAlt }: { ui: Ui | null; act: Act; onAlt: () => void }) {
+  const t = useT();
   if (!ui) return null;
   const icon = 'size-4 text-muted-foreground';
   if (ui.headerFooter) {
     const h = ui.headerFooter;
     return (
-      <Bar icon={<PanelTop className={icon} />} title={h.part === 'header' ? '머리말' : '꼬리말'}>
+      <Bar icon={<PanelTop className={icon} />} title={h.part === 'header' ? t('ctx.header') : t('ctx.footer')}>
         <Flag pressed={h.titlePage} onClick={() => act((e) => e.setHeaderFooterOption('titlePage', !h.titlePage))}>
-          첫 쪽 다르게
+          {t('ctx.titlePage')}
         </Flag>
         <Flag pressed={h.oddEven} onClick={() => act((e) => e.setHeaderFooterOption('oddEven', !h.oddEven))}>
-          홀짝 쪽 다르게
+          {t('ctx.oddEven')}
         </Flag>
         <Flag pressed={h.linked} disabled={h.first} onClick={() => act((e) => e.setHeaderFooterLinked(!h.linked))}>
-          앞 구역과 연결
+          {t('ctx.linked')}
         </Flag>
         <Sep />
         <Button variant="ghost" size="sm" {...keep} onClick={() => act((e) => e.insertField('page'))}>
-          쪽 번호
+          {t('insert.pageNumber')}
         </Button>
         <Button variant="ghost" size="sm" {...keep} onClick={() => act((e) => e.insertField('pages'))}>
-          전체 쪽 수
+          {t('insert.fieldPages')}
         </Button>
         <Button variant="ghost" size="sm" {...keep} onClick={() => act((e) => e.editHeaderFooter(h.part === 'header' ? 'footer' : 'header'))}>
-          {h.part === 'header' ? '꼬리말로' : '머리말로'}
+          {h.part === 'header' ? t('ctx.toFooter') : t('ctx.toHeader')}
         </Button>
         <Button variant="ghost" size="sm" className="ml-auto" {...keep} onClick={() => act((e) => e.closeHeaderFooter())}>
-          <X /> 닫기
+          <X /> {t('ctx.close')}
         </Button>
       </Bar>
     );
   }
   if (ui.note) {
     return (
-      <Bar icon={<Footprints className={icon} />} title={`각주 ${ui.note.number}`}>
-        <span className="text-xs text-muted-foreground">본문으로 돌아가려면 Esc</span>
+      <Bar icon={<Footprints className={icon} />} title={t('ctx.footnote', { number: ui.note.number })}>
+        <span className="text-xs text-muted-foreground">{t('ctx.footnoteHint')}</span>
         <Button variant="ghost" size="sm" className="ml-auto" {...keep} onClick={() => act((e) => e.closeNote())}>
-          <X /> 닫기
+          <X /> {t('ctx.close')}
         </Button>
       </Bar>
     );
@@ -85,60 +81,60 @@ export function ContextBar({ ui, act, onAlt }: { ui: Ui | null; act: Act; onAlt:
   if (ui.object) {
     const o = ui.object;
     return (
-      <Bar icon={<ImageIcon className={icon} />} title="그림">
+      <Bar icon={<ImageIcon className={icon} />} title={t('ctx.image')}>
         <ToggleGroup variant="outline" size="sm" spacing={0} value={[o.placement]} onValueChange={(v) => v[0] && act((e) => e.setPlacement(v[0] as Placement))}>
-          {PLACEMENTS.map(([k, label]) => (
+          {PLACEMENTS.map((k) => (
             <ToggleGroupItem key={k} value={k} {...keep}>
-              {label}
+              {t(`placement.${k}`)}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
         <Sep />
         <Button variant="ghost" size="sm" {...keep} onClick={onAlt}>
-          대체 텍스트{o.alt ? `: ${o.alt.slice(0, 12)}` : ''}
+          {o.alt ? t('ctx.altValue', { alt: o.alt.slice(0, 12) }) : t('ctx.alt')}
         </Button>
-        <span className="text-xs text-muted-foreground">모서리 손잡이로 크기를, 떠 있는 그림은 끌어서 자리를 바꾼다</span>
+        <span className="text-xs text-muted-foreground">{t('ctx.imageHint')}</span>
       </Bar>
     );
   }
   if (ui.table.inTable) {
-    const t = ui.table;
+    const tb = ui.table;
     return (
-      <Bar icon={<Table className={icon} />} title="표">
+      <Bar icon={<Table className={icon} />} title={t('ctx.table')}>
         <Button variant="ghost" size="sm" {...keep} onClick={() => act((e) => e.tableAddRow(true))}>
-          <ArrowDownToLine /> 행
+          <ArrowDownToLine /> {t('ctx.row')}
         </Button>
         <Button variant="ghost" size="sm" {...keep} onClick={() => act((e) => e.tableAddCol(true))}>
-          <ArrowRightToLine /> 열
+          <ArrowRightToLine /> {t('ctx.col')}
         </Button>
         <Button variant="ghost" size="sm" {...keep} onClick={() => act((e) => e.tableDelete('row'))}>
-          <Trash2 /> 행
+          <Trash2 /> {t('ctx.row')}
         </Button>
         <Button variant="ghost" size="sm" {...keep} onClick={() => act((e) => e.tableDelete('col'))}>
-          <Trash2 /> 열
+          <Trash2 /> {t('ctx.col')}
         </Button>
         <Sep />
-        <Button variant="ghost" size="sm" disabled={!t.range} {...keep} onClick={() => act((e) => e.tableMerge())}>
-          <Combine /> 합치기
+        <Button variant="ghost" size="sm" disabled={!tb.range} {...keep} onClick={() => act((e) => e.tableMerge())}>
+          <Combine /> {t('ctx.merge')}
         </Button>
-        <Button variant="ghost" size="sm" disabled={!t.merged} {...keep} onClick={() => act((e) => e.tableUnmerge())}>
-          <Split /> 나누기
+        <Button variant="ghost" size="sm" disabled={!tb.merged} {...keep} onClick={() => act((e) => e.tableUnmerge())}>
+          <Split /> {t('ctx.unmerge')}
         </Button>
         <Button variant="ghost" size="sm" {...keep} onClick={() => act((e) => e.tableCellFill('#eef2f6'))}>
-          <PaintBucket /> 배경
+          <PaintBucket /> {t('ctx.fill')}
         </Button>
-        <Button variant="ghost" size="icon-sm" aria-label="셀 배경 지우기" {...keep} onClick={() => act((e) => e.tableCellFill(undefined))}>
+        <Button variant="ghost" size="icon-sm" aria-label={t('ctx.clearFill')} {...keep} onClick={() => act((e) => e.tableCellFill(undefined))}>
           <X />
         </Button>
         <Sep />
-        <Flag pressed={t.header} onClick={() => act((e) => e.tableSetRowFlag('header', !t.header))}>
-          제목 행 반복
+        <Flag pressed={tb.header} onClick={() => act((e) => e.tableSetRowFlag('header', !tb.header))}>
+          {t('ctx.headerRow')}
         </Flag>
-        <Flag pressed={t.cantSplit} onClick={() => act((e) => e.tableSetRowFlag('cantSplit', !t.cantSplit))}>
-          행 나누지 않기
+        <Flag pressed={tb.cantSplit} onClick={() => act((e) => e.tableSetRowFlag('cantSplit', !tb.cantSplit))}>
+          {t('ctx.cantSplit')}
         </Flag>
         <Button variant="ghost" size="sm" className="ml-auto text-destructive" {...keep} onClick={() => act((e) => e.deleteTable())}>
-          <Trash2 /> 표 지우기
+          <Trash2 /> {t('table.delete')}
         </Button>
       </Bar>
     );

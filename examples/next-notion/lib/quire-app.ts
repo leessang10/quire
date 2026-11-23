@@ -227,11 +227,14 @@ export function pageFormOf(p: SectionProps): PageForm {
   };
 }
 
-/** 값 확인: 오류 문장 또는 null */
-export function checkPageForm(f: PageForm): string | null {
+/** 값 확인: 오류 문장 또는 null (문장은 앱이 번역해 줄 수 있다) */
+export function checkPageForm(
+  f: PageForm,
+  msg = { negative: '크기와 여백은 0 이상의 숫자여야 합니다.', tooSmall: '여백을 뺀 본문이 가로·세로 20mm보다 커야 합니다.' },
+): string | null {
   const vals = [f.width, f.height, ...f.margin];
-  if (vals.some((v) => !Number.isFinite(v) || v < 0)) return '크기와 여백은 0 이상의 숫자여야 합니다.';
-  if (f.width - f.margin[1] - f.margin[3] < 20 || f.height - f.margin[0] - f.margin[2] < 20) return '여백을 뺀 본문이 가로·세로 20mm보다 커야 합니다.';
+  if (vals.some((v) => !Number.isFinite(v) || v < 0)) return msg.negative;
+  if (f.width - f.margin[1] - f.margin[3] < 20 || f.height - f.margin[0] - f.margin[2] < 20) return msg.tooSmall;
   return null;
 }
 
@@ -292,10 +295,11 @@ export async function saveAny(h: QuireHandle, kind: SaveFormat, title = document
   return data.length;
 }
 
-export function documentTitle(h: QuireHandle): string {
+/** 문서 제목 (파일 이름): 본문 첫 문단, 비면 untitled */
+export function documentTitle(h: QuireHandle, untitled = '제목 없는 문서'): string {
   // 본문 첫 문단 (캐럿이 표 셀·머리말에 있어도 본문을 본다)
   const first = h.editor.document.body.paragraphs()[0]?.text.replace(/￼/g, '').trim() ?? '';
-  return (first || '제목 없는 문서').replace(/[\\/:*?"<>|]/g, '').slice(0, 60) || 'quire';
+  return (first || untitled).replace(/[\\/:*?"<>|]/g, '').slice(0, 60) || 'quire';
 }
 
 function download(data: Uint8Array, name: string, type: string): void {

@@ -8,7 +8,7 @@
 
 <table>
 <tr>
-<td width="33%"><a href="next-shadcn"><img src="next-shadcn/screenshots/overview.webp" alt="Google Docs식"></a><br><b>Google Docs식</b> · 메뉴 막대 + 한 줄 도구 막대</td>
+<td width="33%"><a href="next-shadcn"><img src="next-shadcn/screenshots/overview.webp" alt="Google Docs식"></a><br><b>Google Docs식</b> · 메뉴 막대 + 한 줄 도구 막대, 한국어·English</td>
 <td width="33%"><a href="next-word"><img src="next-word/screenshots/overview.webp" alt="Word식"></a><br><b>Word식</b> · 리본, 인쇄 모양</td>
 <td width="33%"><a href="next-notion"><img src="next-notion/screenshots/overview.webp" alt="Notion식"></a><br><b>Notion식</b> · 연속 보기, <code>/</code> 메뉴, 떠 있는 서식 막대</td>
 </tr>
@@ -40,7 +40,7 @@
 | 예제 | 스택 | UI | 포트 |
 |---|---|---|---|
 | [react-full](react-full) | React 19 + Vite + Tailwind 4 | 직접 만든 Tailwind 컴포넌트 (Google Docs식) | 5306 |
-| [next-shadcn](next-shadcn) | Next.js 16 App Router + Tailwind 4 + [shadcn/ui](https://ui.shadcn.com) (Base UI) | shadcn 컴포넌트만 (Menubar, DropdownMenu, Dialog, Select, Toggle, Popover, Tabs, ContextMenu, Tooltip, sonner …) | 5307 |
+| [next-shadcn](next-shadcn) | Next.js 16 App Router + Tailwind 4 + [shadcn/ui](https://ui.shadcn.com) (Base UI) | shadcn 컴포넌트만 (Menubar, DropdownMenu, Dialog, Select, Toggle, Popover, Tabs, ContextMenu, Tooltip, sonner …) (화면 한국어·English) | 5307 |
 | [next-word](next-word) | Next.js 16 + Tailwind 4 + shadcn/ui | Word식: 리본(Tabs + 그룹), 파란 제목 줄, 인쇄 모양 | 5308 |
 | [next-notion](next-notion) | Next.js 16 + Tailwind 4 + shadcn/ui | Notion식: 페이지 목록, 연속 보기, `/` 메뉴, 떠 있는 서식 막대, 어두운 종이 | 5309 |
 
