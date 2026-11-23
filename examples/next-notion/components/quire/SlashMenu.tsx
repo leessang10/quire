@@ -8,6 +8,7 @@ import { Footprints, Heading1, Heading2, Heading3, ImagePlus, List, ListOrdered,
 import type { QuireController } from '@quire/react';
 import type { Editor } from '@quire/editor';
 import { cn } from '@/lib/utils';
+import { useT, type T } from '@/lib/i18n';
 
 export interface SlashCommand {
   id: string;
@@ -18,20 +19,22 @@ export interface SlashCommand {
   run: (e: Editor) => void;
 }
 
-export function slashCommands(onImage: () => void): SlashCommand[] {
+/** 명령 목록. 이름·설명은 지금 언어로, 찾는 낱말(keywords)은 두 언어 모두라 어느 언어로 쳐도 걸린다 */
+export function slashCommands(onImage: () => void, t: T): SlashCommand[] {
   const i = 'size-4';
+  const named = (id: string) => ({ label: t(`block.${id}` as Parameters<T>[0]), hint: t(`block.${id}.hint` as Parameters<T>[0]) });
   return [
-    { id: 'text', label: '텍스트', hint: '그냥 글', keywords: 'text body 본문 텍스트', icon: <Type className={i} />, run: (e) => e.setParagraphStyle('body') },
-    { id: 'h1', label: '제목 1', hint: '큰 제목', keywords: 'h1 heading 제목 큰', icon: <Heading1 className={i} />, run: (e) => e.setParagraphStyle('h1') },
-    { id: 'h2', label: '제목 2', hint: '중간 제목', keywords: 'h2 heading 제목', icon: <Heading2 className={i} />, run: (e) => e.setParagraphStyle('h2') },
-    { id: 'h3', label: '제목 3', hint: '작은 제목', keywords: 'h3 heading 제목 작은', icon: <Heading3 className={i} />, run: (e) => e.setParagraphStyle('h3') },
-    { id: 'bullet', label: '글머리 기호 목록', hint: '간단한 목록', keywords: 'bullet list 글머리 목록', icon: <List className={i} />, run: (e) => e.toggleList('bullet') },
-    { id: 'number', label: '번호 매기기 목록', hint: '번호가 붙는 목록', keywords: 'number list 번호 목록', icon: <ListOrdered className={i} />, run: (e) => e.toggleList('number') },
-    { id: 'quote', label: '인용', hint: '인용한 글', keywords: 'quote 인용', icon: <Quote className={i} />, run: (e) => e.setParagraphStyle('quote') },
-    { id: 'table', label: '표', hint: '3 × 3 표', keywords: 'table 표', icon: <Table className={i} />, run: (e) => e.insertTable(3, 3) },
-    { id: 'image', label: '이미지', hint: '파일에서 올리기', keywords: 'image 그림 이미지 사진', icon: <ImagePlus className={i} />, run: () => onImage() },
-    { id: 'footnote', label: '각주', hint: '쪽 아래 주석', keywords: 'footnote 각주 주석', icon: <Footprints className={i} />, run: (e) => e.insertFootnote() },
-    { id: 'pagebreak', label: '쪽 나누기', hint: '인쇄할 때 새 쪽', keywords: 'page break 쪽 나누기', icon: <SeparatorHorizontal className={i} />, run: (e) => e.insertPageBreak() },
+    { id: 'text', ...named('text'), keywords: 'text body plain 본문 텍스트', icon: <Type className={i} />, run: (e) => e.setParagraphStyle('body') },
+    { id: 'h1', ...named('h1'), keywords: 'h1 heading title 제목 큰', icon: <Heading1 className={i} />, run: (e) => e.setParagraphStyle('h1') },
+    { id: 'h2', ...named('h2'), keywords: 'h2 heading 제목', icon: <Heading2 className={i} />, run: (e) => e.setParagraphStyle('h2') },
+    { id: 'h3', ...named('h3'), keywords: 'h3 heading 제목 작은', icon: <Heading3 className={i} />, run: (e) => e.setParagraphStyle('h3') },
+    { id: 'bullet', ...named('bullet'), keywords: 'bullet list 글머리 목록', icon: <List className={i} />, run: (e) => e.toggleList('bullet') },
+    { id: 'number', ...named('number'), keywords: 'number numbered list 번호 목록', icon: <ListOrdered className={i} />, run: (e) => e.toggleList('number') },
+    { id: 'quote', ...named('quote'), keywords: 'quote 인용', icon: <Quote className={i} />, run: (e) => e.setParagraphStyle('quote') },
+    { id: 'table', ...named('table'), keywords: 'table 표', icon: <Table className={i} />, run: (e) => e.insertTable(3, 3) },
+    { id: 'image', ...named('image'), keywords: 'image picture photo 그림 이미지 사진', icon: <ImagePlus className={i} />, run: () => onImage() },
+    { id: 'footnote', ...named('footnote'), keywords: 'footnote note 각주 주석', icon: <Footprints className={i} />, run: (e) => e.insertFootnote() },
+    { id: 'pagebreak', ...named('pagebreak'), keywords: 'page break 쪽 나누기', icon: <SeparatorHorizontal className={i} />, run: (e) => e.insertPageBreak() },
   ];
 }
 
@@ -57,6 +60,7 @@ function slashAt(e: Editor): { start: number; query: string } | null {
 }
 
 export function SlashMenu({ ctl, version, commands }: { ctl: QuireController; version: number; commands: SlashCommand[] }) {
+  const t = useT();
   const [slash, setSlash] = useState<Slash | null>(null);
   const [active, setActive] = useState(0);
   const closedAt = useRef<number | null>(null);
@@ -116,10 +120,10 @@ export function SlashMenu({ ctl, version, commands }: { ctl: QuireController; ve
   }, [slash]);
   if (!slash) return null;
   return (
-    <div role="listbox" aria-label="명령" className="fixed z-50 w-72 overflow-hidden rounded-lg border bg-popover p-1 shadow-xl" style={{ left: slash.x, top: Math.min(slash.y, innerHeight - 340) }}>
-      <div className="px-2 pb-1 pt-1.5 text-xs text-muted-foreground">{slash.query ? `"${slash.query}" 찾기` : '기본 블록'}</div>
+    <div role="listbox" aria-label={t('slash.label')} className="fixed z-50 w-72 overflow-hidden rounded-lg border bg-popover p-1 shadow-xl" style={{ left: slash.x, top: Math.min(slash.y, innerHeight - 340) }}>
+      <div className="px-2 pb-1 pt-1.5 text-xs text-muted-foreground">{slash.query ? t('slash.searching', { query: slash.query }) : t('slash.basic')}</div>
       <div className="max-h-72 overflow-y-auto">
-        {items.length === 0 && <div className="px-2 py-3 text-sm text-muted-foreground">맞는 명령이 없습니다</div>}
+        {items.length === 0 && <div className="px-2 py-3 text-sm text-muted-foreground">{t('slash.none')}</div>}
         {items.map((c, i) => (
           <button
             key={c.id}

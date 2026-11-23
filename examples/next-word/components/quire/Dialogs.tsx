@@ -11,7 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { PAPERS, SHORTCUTS, applyPageForm, checkPageForm, pageFormOf, paperSize, type PageForm } from '@/lib/quire-app';
+import { PAPERS, applyPageForm, checkPageForm, pageFormOf, paperSize, type PageForm } from '@/lib/quire-app';
+import { useT } from '@/lib/i18n';
+import type { AppMessageKey } from '@/lib/messages';
 
 function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
@@ -45,6 +47,7 @@ export function PageSetupDialog({ editor, open, onClose }: { editor: Editor | nu
   const [f, setF] = useState<PageForm | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const info = open && editor ? editor.sectionInfo() : null;
+  const t = useT();
   useEffect(() => {
     if (open && editor) {
       setF(pageFormOf(editor.sectionInfo().props));
@@ -63,7 +66,7 @@ export function PageSetupDialog({ editor, open, onClose }: { editor: Editor | nu
   };
   const ok = () => {
     if (!f) return;
-    const e = checkPageForm(f);
+    const e = checkPageForm(f, { negative: t('page.errNegative'), tooSmall: t('page.errTooSmall') });
     if (e) return setErr(e);
     if (editor) applyPageForm(editor, f);
     onClose();
@@ -73,71 +76,71 @@ export function PageSetupDialog({ editor, open, onClose }: { editor: Editor | nu
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>쪽 설정</DialogTitle>
-          <DialogDescription>{info && info.count > 1 ? `구역 ${info.index + 1}/${info.count}에 적용합니다.` : '문서 전체(구역 하나)에 적용합니다.'}</DialogDescription>
+          <DialogTitle>{t('page.title')}</DialogTitle>
+          <DialogDescription>{info && info.count > 1 ? t('page.section', { index: info.index + 1, count: info.count }) : t('page.whole')}</DialogDescription>
         </DialogHeader>
         {f && (
           <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="용지">
-                <Choice label="용지" value={f.paper} onChange={(paper) => set({ paper })} items={[...PAPERS.map((p) => ({ value: p, label: p })), { value: 'custom', label: '사용자 지정' }]} />
+              <Field label={t('page.paper')}>
+                <Choice label={t('page.paper')} value={f.paper} onChange={(paper) => set({ paper })} items={[...PAPERS.map((p) => ({ value: p, label: p })), { value: 'custom', label: t('page.custom') }]} />
               </Field>
-              <Field label="방향">
+              <Field label={t('page.orientation')}>
                 <ToggleGroup variant="outline" spacing={0} className="w-full" value={[f.orientation]} onValueChange={(v) => v[0] && set({ orientation: v[0] as PageForm['orientation'] })}>
                   <ToggleGroupItem value="portrait" className="flex-1">
-                    세로
+                    {t('page.portrait')}
                   </ToggleGroupItem>
                   <ToggleGroupItem value="landscape" className="flex-1">
-                    가로
+                    {t('page.landscape')}
                   </ToggleGroupItem>
                 </ToggleGroup>
               </Field>
-              <Field label="너비 (mm)">
+              <Field label={t('page.width')}>
                 <Input type="number" disabled={f.paper !== 'custom'} value={f.width} onChange={(e) => set({ width: Number(e.target.value) })} />
               </Field>
-              <Field label="높이 (mm)">
+              <Field label={t('page.height')}>
                 <Input type="number" disabled={f.paper !== 'custom'} value={f.height} onChange={(e) => set({ height: Number(e.target.value) })} />
               </Field>
             </div>
             <Separator />
             <div className="grid grid-cols-4 gap-2">
-              {(['위', '오른쪽', '아래', '왼쪽'] as const).map((label, i) => (
-                <Field key={label} label={`${label} 여백`}>
+              {(['page.marginTop', 'page.marginRight', 'page.marginBottom', 'page.marginLeft'] as const).map((key, i) => (
+                <Field key={key} label={t(key)}>
                   <Input type="number" value={f.margin[i]} onChange={(e) => set({ margin: f.margin.map((v, k) => (k === i ? Number(e.target.value) : v)) as PageForm['margin'] })} />
                 </Field>
               ))}
             </div>
             <Separator />
             <div className="grid grid-cols-3 gap-3">
-              <Field label="단 수">
-                <Choice label="단 수" value={String(f.columns)} onChange={(v) => set({ columns: Number(v) })} items={[1, 2, 3, 4].map((n) => ({ value: String(n), label: `${n}단` }))} />
+              <Field label={t('page.columns')}>
+                <Choice label={t('page.columns')} value={String(f.columns)} onChange={(v) => set({ columns: Number(v) })} items={[1, 2, 3, 4].map((n) => ({ value: String(n), label: t('page.columnsN', { count: n }) }))} />
               </Field>
-              <Field label="단 사이 (mm)">
+              <Field label={t('page.columnGap')}>
                 <Input type="number" disabled={f.columns < 2} value={f.columnGap} onChange={(e) => set({ columnGap: Number(e.target.value) })} />
               </Field>
               <div className="flex items-end gap-2 pb-2">
                 <Switch id="sep" disabled={f.columns < 2} checked={f.separator} onCheckedChange={(v) => set({ separator: v })} />
-                <Label htmlFor="sep">구분선</Label>
+                <Label htmlFor="sep">{t('page.separator')}</Label>
               </div>
-              <Field label="구역 시작">
+              <Field label={t('page.start')}>
                 <Choice
-                  label="구역 시작"
+                  label={t('page.start')}
                   value={f.start}
                   onChange={(start) => set({ start })}
                   items={[
-                    { value: 'nextPage', label: '다음 쪽' },
-                    { value: 'continuous', label: '이어서' },
-                    { value: 'oddPage', label: '홀수 쪽' },
-                    { value: 'evenPage', label: '짝수 쪽' },
+                    { value: 'nextPage', label: t('section.nextPage') },
+                    { value: 'continuous', label: t('section.continuous') },
+                    { value: 'oddPage', label: t('section.oddPage') },
+                    { value: 'evenPage', label: t('section.evenPage') },
                   ]}
                 />
               </Field>
-              <Field label="쪽 번호 시작">
-                <Input placeholder="이어서" value={f.pageNumberStart} onChange={(e) => set({ pageNumberStart: e.target.value })} />
+              <Field label={t('page.numberStart')}>
+                <Input placeholder={t('page.numberContinue')} value={f.pageNumberStart} onChange={(e) => set({ pageNumberStart: e.target.value })} />
               </Field>
-              <Field label="쪽 번호 모양">
+              <Field label={t('page.numberFormat')}>
                 <Choice
-                  label="쪽 번호 모양"
+                  label={t('page.numberFormat')}
                   value={f.pageNumberFormat}
                   onChange={(pageNumberFormat) => set({ pageNumberFormat })}
                   items={[
@@ -161,13 +164,13 @@ export function PageSetupDialog({ editor, open, onClose }: { editor: Editor | nu
                 onClose();
               }}
             >
-              구역 나눔 지우기
+              {t('page.removeSection')}
             </Button>
           )}
           <Button variant="outline" onClick={onClose}>
-            취소
+            {t('dialog.cancel')}
           </Button>
-          <Button onClick={ok}>적용</Button>
+          <Button onClick={ok}>{t('dialog.apply')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -179,6 +182,7 @@ export function PageSetupDialog({ editor, open, onClose }: { editor: Editor | nu
 export function PromptDialog(props: { open: boolean; title: string; description?: string; label: string; initial: string; placeholder?: string; okLabel?: string; removeLabel?: string; validate?: (v: string) => string | null; onSubmit: (v: string | null) => void; onClose: () => void }) {
   const [v, setV] = useState(props.initial);
   const [err, setErr] = useState<string | null>(null);
+  const t = useT();
   useEffect(() => {
     if (props.open) {
       setV(props.initial);
@@ -228,9 +232,9 @@ export function PromptDialog(props: { open: boolean; title: string; description?
             </Button>
           )}
           <Button variant="outline" onClick={props.onClose}>
-            취소
+            {t('dialog.cancel')}
           </Button>
-          <Button onClick={submit}>{props.okLabel ?? '확인'}</Button>
+          <Button onClick={submit}>{props.okLabel ?? t('dialog.ok')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -240,6 +244,7 @@ export function PromptDialog(props: { open: boolean; title: string; description?
 // ── 알림형 ────────────────────────────────────────────
 
 export function InfoDialog({ open, title, description, children, onClose, wide }: { open: boolean; title: string; description?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
+  const t = useT();
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className={wide ? 'sm:max-w-lg' : 'sm:max-w-sm'}>
@@ -249,7 +254,7 @@ export function InfoDialog({ open, title, description, children, onClose, wide }
         </DialogHeader>
         <div className="text-sm">{children}</div>
         <DialogFooter>
-          <Button onClick={onClose}>닫기</Button>
+          <Button onClick={onClose}>{t('dialog.close')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -257,13 +262,14 @@ export function InfoDialog({ open, title, description, children, onClose, wide }
 }
 
 export function WordCountBody({ count, pages }: { count: WordCount | null; pages: number }) {
+  const t = useT();
   const rows: Array<[string, number]> = count
     ? [
-        ['쪽', pages],
-        ['글자 (공백 포함)', count.chars],
-        ['글자 (공백 제외)', count.charsNoSpace],
-        ['어절', count.words],
-        ['문단', count.paragraphs],
+        [t('count.pages'), pages],
+        [t('count.chars'), count.chars],
+        [t('count.charsNoSpace'), count.charsNoSpace],
+        [t('count.words'), count.words],
+        [t('count.paragraphs'), count.paragraphs],
       ]
     : [];
   return (
@@ -278,10 +284,29 @@ export function WordCountBody({ count, pages }: { count: WordCount | null; pages
   );
 }
 
+/** 단축키 표: 키는 그대로, 설명은 번역 (Alt+클릭 줄만 키도 번역) */
+const SHORTCUT_ROWS: Array<[string, AppMessageKey]> = [
+  ['Ctrl+B / I / U', 'shortcut.format'],
+  ['Ctrl+Z / Ctrl+Y', 'shortcut.undo'],
+  ['Ctrl+F / Ctrl+H', 'shortcut.find'],
+  ['Ctrl+Enter', 'shortcut.pageBreak'],
+  ['Ctrl+Shift+Enter', 'shortcut.columnBreak'],
+  ['Ctrl+Alt+Enter', 'shortcut.sectionBreak'],
+  ['Ctrl+Shift+8 / 7', 'shortcut.lists'],
+  ['Tab / Shift+Tab', 'shortcut.tab'],
+  ['Alt+Shift+↑ / ↓', 'shortcut.move'],
+  ['', 'shortcut.multiCursor'],
+  ['Ctrl+Alt+M', 'shortcut.comment'],
+  ['Ctrl+Alt+K / J', 'shortcut.highlight'],
+  ['Ctrl+S', 'shortcut.save'],
+  ['Ctrl+P', 'shortcut.print'],
+];
+
 export function ShortcutsBody() {
+  const t = useT();
   return (
     <div className="grid gap-1.5">
-      {SHORTCUTS.map(([k, v]) => (
+      {SHORTCUT_ROWS.map(([keys, label]) => [keys || t('shortcut.multiCursorKeys'), t(label)] as const).map(([k, v]) => (
         <div key={k} className="flex items-center justify-between gap-4 border-b py-1.5 last:border-0">
           <span>{v}</span>
           <span className="flex flex-wrap justify-end gap-1">

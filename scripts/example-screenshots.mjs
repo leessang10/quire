@@ -119,7 +119,8 @@ const NOTION_SHOTS = [
 ];
 
 /** Google Docs식 예제: 전체 기능 장면에 영어 화면을 더한다 (마지막에: 고른 언어를 브라우저가 기억한다) */
-const SHADCN_SHOTS = [...FULL_SHOTS, { name: 'english', path: '/?lang=en', about: '영어 화면 (앱 메시지 + 편집기 setLocale)', run: async () => {} }];
+const ENGLISH = { name: 'english', path: '/?lang=en', about: '영어 화면 (앱 메시지 + 편집기 setLocale)', run: async () => {} };
+const SHADCN_SHOTS = [...FULL_SHOTS, ENGLISH];
 
 const BASIC = [{ name: 'screenshot', about: '첫 화면', run: async () => {} }];
 
@@ -131,8 +132,8 @@ const EXAMPLES = [
   { id: 'svelte', args: (p) => vite('svelte', p), shots: BASIC },
   { id: 'react-full', args: (p) => vite('react-full', p), shots: FULL_SHOTS },
   { id: 'next-shadcn', args: (p) => next('next-shadcn', p), shots: SHADCN_SHOTS },
-  { id: 'next-word', args: (p) => next('next-word', p), shots: WORD_SHOTS },
-  { id: 'next-notion', args: (p) => next('next-notion', p), shots: NOTION_SHOTS },
+  { id: 'next-word', args: (p) => next('next-word', p), shots: [...WORD_SHOTS, ENGLISH] },
+  { id: 'next-notion', args: (p) => next('next-notion', p), shots: [...NOTION_SHOTS, ENGLISH] },
 ];
 
 async function main() {

@@ -31,6 +31,8 @@ import { cn } from '@/lib/utils';
 import { fonts } from '@/lib/quire-demo';
 import { DemoSpellChecker, OPEN_ACCEPT, SAMPLES, SAVE_FORMATS, documentTitle, openAny, openPdf, sampleDocument, saveAny, tourDoc, type SaveFormat } from '@/lib/quire-app';
 import { useAct, useUi } from '@/lib/use-ui';
+import { I18nProvider, LOCALES, initialLocale, useI18n, type Locale, type T } from '@/lib/i18n';
+import type { AppMessageKey } from '@/lib/messages';
 import { ContextBar } from './ContextBar';
 import { FindCard, ReviewPanel } from './Panels';
 import { InfoDialog, PromptDialog, ShortcutsBody, WordCountBody } from './Dialogs';
@@ -40,13 +42,28 @@ import { SlashMenu, slashCommands } from './SlashMenu';
 type DialogKind = 'link' | 'alt' | 'count' | 'keys' | 'about' | 'report' | null;
 
 /** 새 페이지: 비어 있는 제목 1과 본문 한 줄 */
-function newPage(): QuireDoc {
-  return { format: 'quire', version: 1, settings: {}, styles: {}, stories: { body: [{ p: { style: 'h1' }, c: [{ t: '제목 없음' }] }, { p: {}, c: [] }] }, annotations: [] } as unknown as QuireDoc;
+function newPage(title: string): QuireDoc {
+  return { format: 'quire', version: 1, settings: {}, styles: {}, stories: { body: [{ p: { style: 'h1' }, c: [{ t: title }] }, { p: {}, c: [] }] }, annotations: [] } as unknown as QuireDoc;
 }
 
-const PAGES: Array<{ id: string; label: string }> = [{ id: 'tour', label: 'Quire 기능 둘러보기' }, ...SAMPLES.map((s) => ({ id: s.id, label: s.label }))];
+/** 사이드바의 페이지: 기능 둘러보기와 예제 문서 (이름은 메시지 키) */
+const PAGES: Array<{ id: string; label: AppMessageKey }> = [{ id: 'tour', label: 'notion.tourPage' }, ...SAMPLES.map((s) => ({ id: s.id, label: `sample.${s.id}` as AppMessageKey }))];
 
+/** 저장 형식 이름 (Quire·HWPX만 언어에 따라 다르다) */
+const formatLabel = (t: T, f: { kind: string; label: string }) => (f.kind === 'quire' ? t('format.quireDoc') : f.kind === 'hwpx' ? t('format.hwpxDoc') : f.label);
+
+/** 바깥: 화면 언어를 정하고 메시지를 내려 준다 */
 export default function QuireApp() {
+  const [locale, setLocale] = useState<Locale>(initialLocale);
+  return (
+    <I18nProvider locale={locale} onChange={setLocale}>
+      <App />
+    </I18nProvider>
+  );
+}
+
+function App() {
+  const { t, locale, setLocale } = useI18n();
   const [count, setCount] = useState<WordCount | null>(null);
   const [find, setFind] = useState<{ replace: boolean; key: number } | null>(null);
   const [comments, setComments] = useState(false);
@@ -62,6 +79,7 @@ export default function QuireApp() {
     // Notion식: 장식 없는 테마, 쪽 경계 없이 이어서
     theme: 'minimal',
     pageView: 'continuous',
+    locale,
     // 강조 낱말: 밝고 어두운 화면 모두에서 읽히는 반투명 노랑
     plugins: [wordCountPlugin((c) => setCount(c)), highlightWordsPlugin(['Quire'], 'rgba(255, 196, 0, 0.32)')],
     onFindRequest: (replace) => setFind({ replace, key: Date.now() }),
@@ -76,7 +94,12 @@ export default function QuireApp() {
   const editor = (ctl.handle?.editor as Editor | undefined) ?? null;
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
-  const title = ctl.handle ? documentTitle(ctl.handle) : 'Quire';
+  const title = ctl.handle ? documentTitle(ctl.handle, t('notion.untitled')) : 'Quire';
+
+  // 앱 언어를 바꾸면 편집기 화면 글(캔버스 표시·접근성 이름)도 같이
+  useEffect(() => {
+    editor?.setLocale(locale);
+  }, [editor, locale]);
   const dark = ui?.appearance.colorScheme === 'dark';
 
   const load: typeof ctl.load = useCallback(
@@ -88,11 +111,15 @@ export default function QuireApp() {
     [ctl],
   );
 
+  // 새 페이지 제목: 언어가 바뀌어도 openPage(첫 화면 효과)는 그대로 두려고 ref로
+  const untitled = useRef('');
+  untitled.current = t('notion.untitled');
+
   const openPage = useCallback(
     (id: string) => {
       setPage(id);
       if (id === 'tour') void tourDoc().then(({ doc, assets }) => load(doc, assets));
-      else if (id.startsWith('new-')) void load(newPage());
+      else if (id.startsWith('new-')) void load(newPage(untitled.current));
       else void sampleDocument(id).then((d) => load(d));
     },
     [load],
@@ -113,21 +140,22 @@ export default function QuireApp() {
     save: (kind: SaveFormat) => {
       const h = ctl.handle;
       if (!h) return;
-      toast.promise(saveAny(h, kind), {
-        loading: '내보내는 중…',
-        success: (n) => `${SAVE_FORMATS.find((f) => f.kind === kind)?.label}로 내보냈습니다 (${(n / 1024).toFixed(1)} KB)`,
-        error: (e) => `내보내지 못했습니다: ${String(e)}`,
+      const format = SAVE_FORMATS.find((f) => f.kind === kind);
+      toast.promise(saveAny(h, kind, documentTitle(h, t('notion.untitled'))), {
+        loading: t('notion.exporting'),
+        success: (n) => t('notion.exported', { format: format ? formatLabel(t, format) : kind, size: (n / 1024).toFixed(1) }),
+        error: (e) => t('notion.exportFailed', { error: String(e) }),
       });
     },
     link: () => setDialog('link'),
     image: () => imageInput.current?.click(),
     comment: () => {
-      if (!ui?.hasSelection) return void toast('먼저 댓글을 달 글을 고르세요');
+      if (!ui?.hasSelection) return void toast(t('toast.needSelection'));
       setComments(true);
       setComposing(true);
     },
   };
-  const commands = useMemo(() => slashCommands(() => imageInput.current?.click()), []);
+  const commands = useMemo(() => slashCommands(() => imageInput.current?.click(), t), [t]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -150,11 +178,11 @@ export default function QuireApp() {
       <aside className="flex w-60 shrink-0 flex-col border-r bg-muted/40">
         <div className="flex items-center gap-2 px-3 py-3">
           <span className="flex size-6 items-center justify-center rounded-md bg-foreground text-xs font-bold text-background">Q</span>
-          <span className="truncate text-sm font-medium">Quire 워크스페이스</span>
+          <span className="truncate text-sm font-medium">{t('notion.workspace')}</span>
         </div>
         <div className="px-2">
           <button type="button" onClick={() => setFind({ replace: false, key: Date.now() })} className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted">
-            <Search className="size-4" /> 찾기
+            <Search className="size-4" /> {t('notion.search')}
           </button>
           <button
             type="button"
@@ -165,12 +193,12 @@ export default function QuireApp() {
             }}
             className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
           >
-            <Plus className="size-4" /> 새 페이지
+            <Plus className="size-4" /> {t('notion.newPage')}
           </button>
         </div>
-        <div className="px-4 pb-1 pt-4 text-xs font-medium text-muted-foreground">페이지</div>
+        <div className="px-4 pb-1 pt-4 text-xs font-medium text-muted-foreground">{t('notion.pages')}</div>
         <ScrollArea className="min-h-0 flex-1 px-2">
-          {[...PAGES, ...extra.map((id, i) => ({ id, label: i === 0 ? '제목 없음' : `제목 없음 ${i + 1}` }))].map((p) => (
+          {[...PAGES.map((p) => ({ id: p.id, label: t(p.label) })), ...extra.map((id, i) => ({ id, label: i === 0 ? t('notion.untitled') : t('notion.untitledN', { n: i + 1 }) }))].map((p) => (
             <button
               key={p.id}
               type="button"
@@ -184,15 +212,16 @@ export default function QuireApp() {
         </ScrollArea>
         <div className="border-t p-2">
           <button type="button" onClick={() => act((e) => e.setColorScheme(dark ? 'light' : 'dark'))} className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted">
-            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />} {dark ? '밝게' : '어둡게'}
+            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />} {dark ? t('notion.light') : t('notion.dark')}
           </button>
-          {/* 편집기 화면 언어 (18): 캔버스 표시·접근성 이름만. 앱 UI는 앱이 번역한다 */}
+          {/* 화면 언어: 앱과 편집기를 같이 (편집기는 App의 effect가 setLocale) */}
           <button
             type="button"
-            onClick={() => act((e) => e.setLocale(ui?.locale === 'en' ? 'ko' : 'en'))}
+            onClick={() => setLocale(locale === 'en' ? 'ko' : 'en')}
             className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
           >
-            <Languages className="size-4" /> 편집기 언어: {ui?.locale === 'en' ? 'English' : '한국어'}
+            <Languages className="size-4" /> {t('app.language')}
+            <span className="ml-auto text-xs">{LOCALES.find((l) => l.id === locale)?.label}</span>
           </button>
         </div>
       </aside>
@@ -204,61 +233,61 @@ export default function QuireApp() {
           <ChevronRight className="size-3.5 text-muted-foreground" />
           <span className="truncate">{title}</span>
           <div className="ml-auto flex items-center gap-1">
-            {ui && ui.suggesting && <span className="mr-2 text-xs text-emerald-600">제안 모드</span>}
+            {ui && ui.suggesting && <span className="mr-2 text-xs text-emerald-600">{t('notion.suggesting')}</span>}
             <Tooltip>
-              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="댓글" aria-pressed={comments} onClick={() => setComments(!comments)} />}>
+              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t('notion.comments')} aria-pressed={comments} onClick={() => setComments(!comments)} />}>
                 <MessageSquare />
               </TooltipTrigger>
-              <TooltipContent>댓글·제안</TooltipContent>
+              <TooltipContent>{t('notion.commentsTip')}</TooltipContent>
             </Tooltip>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="더 보기" />}>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t('notion.more')} />}>
                 <MoreHorizontal />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-60" finalFocus={false}>
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel>{count ? `${count.words.toLocaleString()}단어 · ${count.chars.toLocaleString()}자` : '문서'}</DropdownMenuLabel>
+                  <DropdownMenuLabel>{count ? t('notion.counts', { words: count.words, chars: count.chars }) : t('notion.document')}</DropdownMenuLabel>
                   <DropdownMenuCheckboxItem checked={ui?.appearance.pageView === 'print'} onCheckedChange={() => act((e) => e.setPageView(ui?.appearance.pageView === 'print' ? 'continuous' : 'print'))}>
-                    인쇄 모양으로 보기
+                    {t('notion.printView')}
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem checked={!!ui?.suggesting} onCheckedChange={() => act((e) => e.setSuggesting(!ui?.suggesting))}>
-                    제안 모드
+                    {t('notion.suggesting')}
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem checked={!!ui?.spell} onCheckedChange={() => act((e) => e.setSpellChecker(ui?.spell ? null : spell))}>
-                    맞춤법 검사
+                    {t('notion.spell')}
                   </DropdownMenuCheckboxItem>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
                   <DropdownMenuItem onClick={actions.open}>
-                    <FolderOpen /> 가져오기…
+                    <FolderOpen /> {t('notion.import')}
                   </DropdownMenuItem>
                   <DropdownMenuSub>
                     <DropdownMenuSubTrigger>
-                      <Download /> 내보내기
+                      <Download /> {t('notion.export')}
                     </DropdownMenuSubTrigger>
                     <DropdownMenuSubContent className="w-52">
                       {SAVE_FORMATS.map((f) => (
                         <DropdownMenuItem key={f.kind} onClick={() => actions.save(f.kind)}>
-                          {f.label}
+                          {formatLabel(t, f)}
                           <span className="ml-auto text-xs text-muted-foreground">{f.ext}</span>
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
                   <DropdownMenuItem onClick={() => ctl.handle && void openPdf(ctl.handle)}>
-                    <Printer /> 인쇄 (PDF)
+                    <Printer /> {t('file.print')}
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
                   <DropdownMenuItem onClick={() => setDialog('count')}>
-                    <Type /> 단어 수
+                    <Type /> {t('notion.wordCount')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setDialog('keys')}>
-                    <ScrollText /> 단축키
+                    <ScrollText /> {t('help.shortcuts')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setDialog('about')}>이 예제에 대해</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setDialog('about')}>{t('help.about')}</DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -275,22 +304,22 @@ export default function QuireApp() {
               {s && (
                 <>
                   <ContextMenuGroup>
-                    <ContextMenuLabel className="text-destructive">{s.message ?? '맞춤법'}</ContextMenuLabel>
+                    <ContextMenuLabel className="text-destructive">{s.message ?? t('menu.spelling')}</ContextMenuLabel>
                     {s.suggestions.map((g) => (
                       <ContextMenuItem key={g} className="font-semibold" onClick={() => act(() => s.apply(g))}>
                         {g}
                       </ContextMenuItem>
                     ))}
-                    <ContextMenuItem onClick={() => act(() => s.ignore())}>무시</ContextMenuItem>
+                    <ContextMenuItem onClick={() => act(() => s.ignore())}>{t('notion.ignore')}</ContextMenuItem>
                   </ContextMenuGroup>
                   <ContextMenuSeparator />
                 </>
               )}
               <ContextMenuGroup>
                 <ContextMenuItem disabled={!ui?.hasSelection} onClick={actions.comment}>
-                  댓글
+                  {t('notion.comment')}
                 </ContextMenuItem>
-                <ContextMenuItem onClick={actions.link}>링크…</ContextMenuItem>
+                <ContextMenuItem onClick={actions.link}>{t('insert.link')}</ContextMenuItem>
               </ContextMenuGroup>
               {ctx.items.length > 0 && (
                 <>
@@ -325,13 +354,13 @@ export default function QuireApp() {
           try {
             const dropped = await openAny(ctl.handle, f);
             ctl.run('wordCount.report');
-            toast.success(`${f.name}을(를) 가져왔습니다`);
+            toast.success(t('notion.imported', { name: f.name }));
             if (Object.keys(dropped).length) {
               setReport({ name: f.name, dropped });
               setDialog('report');
             }
           } catch (err) {
-            toast.error(`가져오지 못했습니다: ${err instanceof Error ? err.message : String(err)}`);
+            toast.error(t('notion.importFailed', { error: err instanceof Error ? err.message : String(err) }));
           }
         }}
       />
@@ -349,42 +378,36 @@ export default function QuireApp() {
 
       <PromptDialog
         open={dialog === 'link'}
-        title="링크"
-        label="주소"
+        title={t('link.title')}
+        label={t('link.label')}
         placeholder="https://"
         initial={ui?.marks.link ?? ''}
-        okLabel="링크"
-        removeLabel={ui?.marks.link ? '링크 지우기' : undefined}
-        validate={(v) => (!ui?.hasSelection && !ui?.marks.link ? '먼저 링크를 걸 글을 고르세요.' : v && !safeLink(v) ? '걸 수 없는 주소입니다.' : null)}
+        okLabel={t('link.ok')}
+        removeLabel={ui?.marks.link ? t('link.remove') : undefined}
+        validate={(v) => (!ui?.hasSelection && !ui?.marks.link ? t('link.needSelection') : v && !safeLink(v) ? t('link.invalid') : null)}
         onSubmit={(v) => act((e) => e.setMark('link', v ? safeLink(v)! : undefined))}
         onClose={() => setDialog(null)}
       />
-      <PromptDialog open={dialog === 'alt'} title="대체 텍스트" label="설명" initial={ui?.object?.alt ?? ''} onSubmit={(v) => act((e) => e.setObjectAttr('alt', v || undefined))} onClose={() => setDialog(null)} />
-      <InfoDialog open={dialog === 'count'} title="단어 수" onClose={() => setDialog(null)}>
+      <PromptDialog open={dialog === 'alt'} title={t('alt.title')} label={t('alt.label')} initial={ui?.object?.alt ?? ''} onSubmit={(v) => act((e) => e.setObjectAttr('alt', v || undefined))} onClose={() => setDialog(null)} />
+      <InfoDialog open={dialog === 'count'} title={t('notion.wordCount')} onClose={() => setDialog(null)}>
         <WordCountBody count={count} pages={ui?.pages ?? 0} />
       </InfoDialog>
-      <InfoDialog open={dialog === 'keys'} title="단축키" wide onClose={() => setDialog(null)}>
-        <p className="mb-2 text-muted-foreground">
-          <kbd>/</kbd>를 치면 명령 메뉴, 글을 고르면 서식 막대가 뜹니다.
-        </p>
+      <InfoDialog open={dialog === 'keys'} title={t('help.shortcuts')} wide onClose={() => setDialog(null)}>
+        <p className="mb-2 text-muted-foreground">{t('notion.slashHint')}</p>
         <ShortcutsBody />
       </InfoDialog>
-      <InfoDialog open={dialog === 'report'} title="가져오며 버린 요소" description={`${report?.name ?? ''}에서 Quire가 담지 못하는 요소를 버렸습니다.`} onClose={() => setDialog(null)}>
+      <InfoDialog open={dialog === 'report'} title={t('report.title')} description={t('report.description', { name: report?.name ?? '' })} onClose={() => setDialog(null)}>
         <ul className="list-disc pl-5">
           {Object.entries(report?.dropped ?? {}).map(([k, n]) => (
-            <li key={k}>
-              {k}: {n}개
-            </li>
+            <li key={k}>{t('report.item', { what: k, count: n })}</li>
           ))}
         </ul>
       </InfoDialog>
-      <InfoDialog open={dialog === 'about'} title="이 예제에 대해" wide onClose={() => setDialog(null)}>
+      <InfoDialog open={dialog === 'about'} title={t('help.about')} wide onClose={() => setDialog(null)}>
         <div className="space-y-2 leading-6 text-muted-foreground">
-          <p className="text-foreground">Quire 편집기를 Notion식 화면으로 꾸민 예제입니다 (Next.js + Tailwind + shadcn/ui).</p>
-          <p>
-            편집기는 <code>theme: &apos;minimal&apos;</code>, <code>pageView: &apos;continuous&apos;</code>로 쪽 경계 없이 그립니다. 쪽 나눔은 그대로라 PDF·인쇄는 쪽으로 나옵니다. <code>/</code> 메뉴는 편집기의{' '}
-            <code>replaceRange</code>로 &quot;/찾을 말&quot;을 지우고 명령을 실행합니다.
-          </p>
+          <p className="text-foreground">{t('notion.about.lead')}</p>
+          <p>{t('notion.about.body')}</p>
+          <p>{t('about.i18n')}</p>
         </div>
       </InfoDialog>
     </div>
