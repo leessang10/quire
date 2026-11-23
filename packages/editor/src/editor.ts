@@ -60,7 +60,7 @@ import { EditContextInput, editContextSupported } from './edit-context';
 import { MemoryAssets, type AssetStore } from './assets';
 import { Formatter, NOTE_INDENT, defaultPageSetup, hasKeys, type TableView } from './formatter';
 import { summarizeLayout, type LayoutSummary } from './reference';
-import { defaultThemeColors, ensureThemeStyles, readThemeColors, sameColors, type ColorScheme, type PageView, type ThemeColors, type ThemeName } from './theme';
+import { defaultThemeColors, ensureThemeStyles, readThemeColors, sameColors, type ColorScheme, type PageView, type ThemeColors, type ThemeName, THEME_CLASSES } from './theme';
 import { dateText, layoutHF, pageHF, type PageHF } from './headers';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, pasteFragment, pendingImages, tableBlock, type Fragment } from './clipboard';
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
@@ -513,6 +513,7 @@ export class Editor {
     const host = opts.host;
     host.replaceChildren();
     const scroller = document.createElement('div');
+    scroller.className = THEME_CLASSES.scroller;
     Object.assign(scroller.style, {
       position: 'relative', width: '100%', height: '100%', overflow: 'auto',
       background: this.colors.desk, cursor: 'text', outline: 'none',
@@ -521,6 +522,7 @@ export class Editor {
     this.scroller = scroller;
 
     const canvas = document.createElement('canvas');
+    canvas.className = THEME_CLASSES.canvas;
     Object.assign(canvas.style, { position: 'sticky', top: '0', left: '0', display: 'block' });
     canvas.setAttribute('aria-hidden', 'true');
     scroller.appendChild(canvas);
@@ -535,7 +537,7 @@ export class Editor {
     scroller.appendChild(this.spacer);
 
     const caret = document.createElement('div');
-    caret.className = 'quire-caret';
+    caret.className = THEME_CLASSES.caret;
     Object.assign(caret.style, {
       position: 'absolute', width: '2px', background: this.colors.text, pointerEvents: 'none', display: 'none',
     });
@@ -608,7 +610,7 @@ export class Editor {
 
     // 화면 테마 (17): 기본 테마 스타일시트, 호스트 속성, 바뀜 감지
     ensureThemeStyles(host.ownerDocument);
-    host.classList.add('quire');
+    host.classList.add(THEME_CLASSES.host);
     this.themeName = opts.theme ?? 'classic';
     this.scheme = opts.colorScheme ?? 'light';
     this.pageViewMode = opts.pageView ?? 'print';

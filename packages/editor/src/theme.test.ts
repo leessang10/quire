@@ -3,7 +3,8 @@
  * (변수를 읽는 길은 브라우저에서 본다: getComputedStyle)
  */
 import { describe, expect, it } from 'vitest';
-import { THEME_CSS, THEME_TOKENS, defaultThemeColors, parseShadow } from './theme';
+import { readFileSync } from 'node:fs';
+import { THEME_ATTRIBUTES, THEME_CLASSES, THEME_CSS, THEME_TOKENS, THEME_VARIABLES, defaultThemeColors, parseShadow, themeDeclarations } from './theme';
 
 const id = (v: string) => v;
 
@@ -29,5 +30,55 @@ describe('theme (17)', () => {
     expect(base).toContain('--quire-page-shadow');
     // 테마는 문서 모양(글꼴·크기·여백)을 열지 않는다 (17 §2)
     expect(THEME_CSS).not.toMatch(/font-size|margin|line-height/);
+  });
+});
+
+/** 기본 테마의 변수 → 값 (`:where(.quire)` 블록) */
+function baseDeclarations(): Map<string, string> {
+  const base = /:where\(\.quire\) \{([^}]*)\}/.exec(THEME_CSS)![1]!;
+  const out = new Map<string, string>();
+  for (const d of base.split(';')) {
+    const m = /(--quire-[a-z-]+)\s*:\s*(.+)/.exec(d.trim());
+    if (m) out.set(m[1]!, m[2]!.trim());
+  }
+  return out;
+}
+
+describe('공개 이름 (17 §10.1, T-3)', () => {
+  it('변수 이름이 고정 목록 그대로다 (바꾸면 판 올림과 옛 이름 읽기: §9 O-45)', () => {
+    expect([...THEME_VARIABLES]).toEqual([
+      '--quire-desk', '--quire-page', '--quire-page-shadow', '--quire-page-border', '--quire-text', '--quire-caret', '--quire-preedit',
+      '--quire-accent', '--quire-selection', '--quire-selection-inactive', '--quire-mark', '--quire-field', '--quire-grip', '--quire-grip-active',
+      '--quire-drop-line', '--quire-drag-source', '--quire-table-border', '--quire-placeholder', '--quire-placeholder-text',
+    ]);
+    expect(Object.values(THEME_CLASSES)).toEqual(['quire', 'quire-scroller', 'quire-canvas', 'quire-caret']);
+    expect(Object.values(THEME_ATTRIBUTES)).toEqual(['data-quire-theme', 'data-quire-scheme', 'data-quire-page-view']);
+  });
+
+  it('편집기가 읽고 정의하는 변수는 모두 공개 목록에 있다', () => {
+    const pub = new Set<string>(THEME_VARIABLES);
+    for (const [name] of Object.values(THEME_TOKENS)) expect(pub.has(name), name).toBe(true);
+    for (const m of THEME_CSS.matchAll(/(--quire-[a-z-]+)\s*:/g)) expect(pub.has(m[1]!), m[1]).toBe(true);
+    expect([...baseDeclarations().keys()].sort()).toEqual([...THEME_VARIABLES].sort());
+  });
+
+  it('tokens.scss의 맵이 공개 목록·기본값과 같다', () => {
+    const scss = readFileSync('packages/editor/tokens.scss', 'utf8');
+    const map = /\$quire-tokens: \(\n([\s\S]*?)\n\);/.exec(scss)![1]!;
+    const entries = map.split('\n').map((l) => /^\s*([a-z-]+): (.*),$/.exec(l)!).map((m) => [`--quire-${m[1]}`, m[2]!.replace(/^\((.*)\)$/, '$1')]);
+    expect(entries.map(([k]) => k)).toEqual([...THEME_VARIABLES]);
+    const base = baseDeclarations();
+    for (const [k, v] of entries) expect(v, k).toBe(base.get(k!));
+  });
+
+  it('설계 문서 표가 공개 목록과 같다', () => {
+    const doc = readFileSync('docs/design/17-themes.md', 'utf8');
+    const sec = doc.slice(doc.indexOf('### 10.1'));
+    const rows = [...sec.matchAll(/^\| `(--quire-[a-z-]+)` \|/gm)].map((m) => m[1]);
+    expect(rows).toEqual([...THEME_VARIABLES]);
+  });
+
+  it('themeDeclarations', () => {
+    expect(themeDeclarations({ '--quire-accent': '#e11d48', '--quire-page': '', '--quire-text': undefined })).toBe('--quire-accent: #e11d48;');
   });
 });

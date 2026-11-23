@@ -14,6 +14,8 @@ import { build } from 'vite';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, '.build');
 const VERSION = '0.1.0';
+/** dist 밖에 함께 싣는 파일 (패키지 → 파일, exports에도 연다) */
+const EXTRA = { editor: ['tokens.scss'] };
 /** 의존 순서 (앞이 먼저) */
 const PACKAGES = ['model', 'layout', 'shaping', 'editor', 'sync', 'convert', 'pdf', 'sdk', 'react'];
 
@@ -77,14 +79,15 @@ for (const p of PACKAGES) {
     license: 'UNLICENSED',
     type: 'module',
     sideEffects: false,
-    exports: { '.': { types: './dist/types/index.d.ts', import: './dist/index.js' } },
+    exports: { '.': { types: './dist/types/index.d.ts', import: './dist/index.js' }, ...(EXTRA[p] ? Object.fromEntries(EXTRA[p].map((f) => [`./${f}`, `./${f}`])) : {}) },
     module: './dist/index.js',
     types: './dist/types/index.d.ts',
-    files: ['dist'],
+    files: ['dist', ...(EXTRA[p] ?? [])],
     dependencies: deps,
     ...(Object.keys(peers).length ? { peerDependencies: peers } : {}),
   };
   writeFileSync(join(dest, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`);
+  for (const f of EXTRA[p] ?? []) cpSync(join(root, 'packages', p, f), join(dest, f));
   const readme = join(root, 'packages', p, 'README.md');
   if (existsSync(readme)) cpSync(readme, join(dest, 'README.md'));
 }
