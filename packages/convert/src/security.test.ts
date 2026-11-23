@@ -76,10 +76,10 @@ describe('links (16 §6)', () => {
     const html = `<p><a href="javascript:alert(1)">가</a> <a href="https://ok.example.com/">나</a> <a href=" JAVA&#9;SCRIPT:x">다</a></p>`;
     const h = await importHtml(html);
     expect(linksOf(h.doc)).toEqual(['https://ok.example.com/']);
-    expect(h.report.dropped['위험한 링크']).toBe(2);
+    expect(h.report.dropped.unsafeLink).toBe(2);
     const m = await importMarkdown('[가](javascript:alert(1)) [나](https://ok.example.com/) <vbscript:x>\n');
     expect(linksOf(m.doc)).toEqual(['https://ok.example.com/']);
-    expect(m.report.dropped['위험한 링크']).toBeGreaterThanOrEqual(1);
+    expect(m.report.dropped.unsafeLink).toBeGreaterThanOrEqual(1);
     // DOCX·HWPX: 다른 도구가 위험한 링크를 넣은 파일 (우리 내보내기는 쓰지 않으므로 바이트를 고친다)
     const { q, read } = await fixture();
     const marked = withLinks(q, ['https://evil.example.invalid/']);
@@ -90,7 +90,7 @@ describe('links (16 §6)', () => {
       for (let i = 0; i < entries.length; i++) if (!/\.(xml|rels|hpf|txt)$|mimetype/.test(entries[i]!.name)) patched[i]!.data = entries[i]!.data;
       const r = await imp(await writeZip(patched));
       expect(linksOf(r.doc).some((l) => /javascript/i.test(l))).toBe(false);
-      expect(r.report.dropped['위험한 링크']).toBe(1);
+      expect(r.report.dropped.unsafeLink).toBe(1);
     }
   });
 });

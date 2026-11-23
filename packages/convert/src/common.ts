@@ -2,12 +2,14 @@
  * 변환 공통 (15 §6.2): 모든 변환은 정본 JSON(QuireDoc)을 거친다. 가져오기 결과, 버린 요소 보고, 자산(이미지 바이트),
  * 포맷이 쓰는 덧붙인 스타일(제목 4–6, 코드), 이미지 크기 읽기.
  */
+import type { DropCounts, DropKind } from '@quire/editor';
 import { DEFAULT_STYLES, safeLink, type Style } from '@quire/model';
 import { assetIdOf, quireFromText, type QuireDoc, type QuireParagraph, type QuireTable } from '@quire/sync';
 
 /** 가져오며 버린 것: 무엇 → 개수 (15 §6.1 "가져올 때 모르는 요소는 버리고 버린 요소 수를 알린다") */
 export interface ImportReport {
-  dropped: Record<string, number>;
+  /** 종류 → 개수. 화면 이름은 편집기 메시지 `drop.<종류>` (`dropMessageKey`) */
+  dropped: DropCounts;
 }
 
 export interface ImportedAsset {
@@ -26,8 +28,8 @@ export interface ImportResult {
 export type AssetReader = (id: string) => Promise<ImportedAsset | null>;
 
 export class Report implements ImportReport {
-  readonly dropped: Record<string, number> = {};
-  drop = (what: string): void => {
+  readonly dropped: DropCounts = {};
+  drop = (what: DropKind): void => {
     this.dropped[what] = (this.dropped[what] ?? 0) + 1;
   };
 }
@@ -71,7 +73,7 @@ export function withSafeLinks(q: QuireDoc): QuireDoc {
 /** 가져오기 끝: 위험한 링크를 빼고 보고한다 */
 export function finishImport(q: QuireDoc, report: Report): void {
   const n = stripUnsafeLinks(q);
-  if (n) report.dropped['위험한 링크'] = (report.dropped['위험한 링크'] ?? 0) + n;
+  if (n) report.dropped.unsafeLink = (report.dropped.unsafeLink ?? 0) + n;
 }
 
 /** 기본 스타일에 없는 것: 가져온 문서가 쓰면 정본 styles에 넣는다 (크기 1/1000pt) */

@@ -7,7 +7,7 @@
  *   <public>/quire/harfbuzz-subset.wasm  PDF 글꼴 부분화
  */
 import type { QuireDoc, QuireHandle, QuirePlugin } from '@quire/sdk';
-import { highlightWordsPlugin, wordCountPlugin, type FontSource, type WordCount } from '@quire/editor';
+import { DEFAULT_LOCALE, Messages, dropMessageKey, highlightWordsPlugin, wordCountPlugin, type DropKind, type FontSource, type MessageKey, type WordCount } from '@quire/editor';
 
 export const ASSET_BASE = '/quire';
 
@@ -54,8 +54,8 @@ const MIME: Record<SaveKind, string> = {
   pdf: 'application/pdf',
 };
 
-/** 파일을 열어 문서를 바꾼다 (버린 요소를 돌려준다) */
-export async function openFile(h: { load: QuireHandle['load'] }, file: File): Promise<Record<string, number>> {
+/** 파일을 열어 문서를 바꾼다. 버린 요소를 편집기 언어의 이름으로 돌려준다 (이름 → 개수) */
+export async function openFile(h: { load: QuireHandle['load']; editor?: { t: (key: MessageKey) => string } }, file: File): Promise<Record<string, number>> {
   const c = await import('@quire/convert');
   const name = file.name.toLowerCase();
   const r = name.endsWith('.hwpx')
@@ -66,7 +66,8 @@ export async function openFile(h: { load: QuireHandle['load'] }, file: File): Pr
         ? await c.importMarkdown(await file.text())
         : await c.importHtml(await file.text());
   await h.load(r.doc, r.assets);
-  return r.report.dropped;
+  const t = h.editor?.t ?? ((k: MessageKey) => new Messages(DEFAULT_LOCALE).t(k));
+  return Object.fromEntries(Object.entries(r.report.dropped).map(([k, n]) => [t(dropMessageKey(k as DropKind)), n ?? 0]));
 }
 
 /** 지금 문서를 그 형식의 바이트·글로 */

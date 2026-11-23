@@ -503,7 +503,7 @@ interface QuirePlugin {
 
 ### 구현
 
-- **패키지 `@quire/convert`** (DOM 없음). 모든 변환은 정본(QuireDoc)을 거친다: 내보내기는 `quireFromDocument` → 포맷, 가져오기는 포맷 → 정본 → `documentFromQuire`. 가져오기 결과는 `{doc, assets, report}`이다: 새 자산(ID → 바이트, ID는 `.quire`와 같은 SHA-256 앞 32자)과 버린 요소 보고(`report.dropped`: 무엇 → 개수).
+- **패키지 `@quire/convert`** (DOM 없음). 모든 변환은 정본(QuireDoc)을 거친다: 내보내기는 `quireFromDocument` → 포맷, 가져오기는 포맷 → 정본 → `documentFromQuire`. 가져오기 결과는 `{doc, assets, report}`이다: 새 자산(ID → 바이트, ID는 `.quire`와 같은 SHA-256 앞 32자)과 버린 요소 보고(`report.dropped`: 종류 `DropKind` → 개수, 화면 이름은 18 §9 L-5).
 - **HTML 내보내기** (`exportHtml`): 문서 하나(`<!doctype html>`, `lang="ko"`, 제목, 작은 기본 CSS).
   - 제목 1–6 → `h1`–`h6`, 인용 → `blockquote`, 연속 코드 문단 → `pre` 하나, 그 밖의 스타일은 `data-style`.
   - 문단: 정렬·들여쓰기(`margin-left/right`, `text-indent`)·간격(`margin-top/bottom`)·줄 간격(`line-height`, 배수 또는 pt).

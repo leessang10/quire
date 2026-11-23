@@ -54,7 +54,7 @@ describe('HTML (15 §6.1)', () => {
       <section class="footnotes"><ol><li id="fn1"><p>각주 <b>본문</b> <a href="#fnref1">↩</a></p></li></ol></section>
       </body></html>`;
     const r = await importHtml(html);
-    expect(r.report.dropped).toEqual({ '이미지 (외부 주소)': 1, 가로줄: 1, 동영상: 1 });
+    expect(r.report.dropped).toEqual({ remoteImage: 1, horizontalRule: 1, video: 1 });
     const body = r.doc.stories.body;
     expect(bodyText(r.doc)).toEqual(['소제목', '가운데 글꼴 바깥 그림', 'if (a) {', '  b();', '}', '[표]']);
     expect((body[0] as QuireParagraph).p.style).toBe('h4');
@@ -120,7 +120,7 @@ describe('Markdown (15 §6.5)', () => {
       '',
     ].join('\n');
     const r = await importMarkdown(md);
-    expect(r.report.dropped).toEqual({ 가로줄: 1, '이미지 (외부 주소)': 1, '참조 없는 각주': 1 });
+    expect(r.report.dropped).toEqual({ horizontalRule: 1, remoteImage: 1, orphanFootnote: 1 });
     const q = r.doc;
     expect(bodyText(q)).toEqual([
       'Title',

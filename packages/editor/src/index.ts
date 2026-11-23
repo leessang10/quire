@@ -22,6 +22,8 @@ export { THEME_CSS, THEME_TOKENS, ensureThemeStyles } from './theme';
 export type { ColorScheme, PageView, ThemeColors, ThemeName } from './theme';
 export { BUILTIN_MESSAGES, DEFAULT_LOCALE, Messages, formatMessage } from './i18n';
 export type { MessageKey, MessageParams, MessageTable, Translate } from './i18n';
+export { DROP_KINDS, dropMessageKey, isDropKind } from './import-report';
+export type { DropCounts, DropKind } from './import-report';
 export type { FontMetrics, LinePaint, NoteSlot, ObjectPaint, PaintColors, PaintOverlay, PaintRegion, PainterEnv, StoryOverlay } from './painter';
 export { eventKey, normalizeKey } from './plugins';
 export type { Exporter, MenuItem, PluginContext, PluginEvent, QuirePlugin, Rect, StoryPos } from './plugins';

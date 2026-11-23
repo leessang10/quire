@@ -92,7 +92,7 @@ describe('DOCX export/import (15 §6.3)', () => {
       { name: 'word/endnotes.xml', data: enc(endnotes) },
     ]);
     const r = await importDocx(pkg);
-    expect(r.report.dropped).toEqual({ 'VML 그림·개체': 1 });
+    expect(r.report.dropped).toEqual({ vml: 1 });
     const body = r.doc.stories.body as QuireParagraph[];
     const texts = body.map((b) => ('c' in b ? b.c.map((x) => x.t ?? (x.img?.kind === 'field' ? `{${x.img.field}}` : x.img ? '¤' : '')).join('') : '[표]'));
     expect(texts).toEqual(['문서 제목', '제목 하나', '강한 보통링크 쪽 {page} 끝¤', '둘째 줄', '스타일 목록', '[표]', 'VML 뒤']);
