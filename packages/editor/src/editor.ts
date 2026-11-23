@@ -3879,7 +3879,10 @@ export class Editor {
     this.commitTable(this.document.addRow(a.table, after).ops, before);
   }
 
-  /** 편집 중인 셀의 열 오른쪽(right)·왼쪽에 열 (너비는 그 열과 같게) */
+  /**
+   * 편집 중인 셀의 열 오른쪽(right)·왼쪽에 열 (너비는 그 열과 같게). 그러면 본문 폭을 넘는 표는 모든 열을 같은 비율로 줄여
+   * 본문 폭에 맞춘다 (Word·Google Docs처럼 표가 용지 밖으로 나가지 않게). 원래 본문보다 넓던 표는 그 폭을 지킨다. 실행 취소 한 단계
+   */
   tableAddCol(right = true): void {
     const a = this.cell;
     const loc = a && this.locateTable(a.table);
@@ -3888,8 +3891,22 @@ export class Editor {
     const cols = loc.view.grid.cols;
     const after = right ? cols[pos.x + pos.cell.span[1] - 1]! : pos.x > 0 ? cols[pos.x - 1]! : null;
     const before: Selection = { ...this.sel };
-    const w = this.document.table(a.table)!.widths[cols[pos.x]!];
-    this.commitTable(this.document.addCol(a.table, after, w).ops, before);
+    const widths = this.document.table(a.table)!.widths;
+    const w = widths[cols[pos.x]!];
+    const added = this.document.addCol(a.table, after, w);
+    const ops = [...added.ops];
+    const newW = this.document.table(a.table)!.widths[added.id] ?? 0;
+    const old = cols.reduce((s, c) => s + (widths[c] ?? 0), 0);
+    // 본문 폭 (px → 1/1000 pt): 표가 놓인 본문 문단의 폭 (구역·다단 반영)
+    const limit = Math.round((loc.para.width || this.setup.width - this.setup.margin * 2) * (72 / 96) * 1000);
+    if (old + newW > limit) {
+      const k = Math.max(old, limit) / (old + newW);
+      for (const c of [...cols, added.id]) {
+        const cw = c === added.id ? newW : (widths[c] ?? 0);
+        ops.push(...this.document.setColWidth(a.table, c, cw * k));
+      }
+    }
+    this.commitTable(ops, before);
   }
 
   /** 편집 중인 셀(또는 셀 범위)의 행·열을 지운다. 다 지우면 표를 지운다 */

@@ -3,7 +3,7 @@
  * 리본 (Word식): 탭(홈·삽입·레이아웃·검토·보기) 아래 그룹마다 큰 단추·작은 단추, 그룹 이름은 아래에.
  * 화면 조각은 shadcn (Tabs, Button, Toggle, Select, Popover, DropdownMenu, Tooltip, Separator)
  */
-import { useState, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import {
   AlignCenter,
   AlignJustify,
@@ -12,6 +12,7 @@ import {
   Baseline,
   Bold,
   ChevronDown,
+  ChevronUp,
   Columns2,
   Eraser,
   FileText,
@@ -141,8 +142,26 @@ export interface RibbonActions {
 export function Ribbon({ ui, act, a, editor, panels, file }: { ui: Ui | null; act: Act; a: RibbonActions; editor: Editor | null; panels: { outline: boolean; review: boolean }; file: ReactNode }) {
   const [tab, setTab] = useState<string>('home');
   const { t, locale, setLocale } = useI18n();
+  // 리본 접기 (Word의 "리본 축소", Ctrl+F1): 접으면 탭 이름만 남고, 탭을 누르면 다시 펼친다
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'F1' || !(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      setCollapsed((c) => !c);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className="gap-0 border-b bg-background">
+    <Tabs
+      value={tab}
+      onValueChange={(v) => {
+        setTab(String(v));
+        setCollapsed(false);
+      }}
+      className="gap-0 border-b bg-background"
+    >
       <div className="flex items-center gap-1 px-2 pt-1">
         {file}
         <TabsList variant="line" className="h-8">
@@ -160,8 +179,13 @@ export function Ribbon({ ui, act, a, editor, panels, file }: { ui: Ui | null; ac
             </TabsTrigger>
           ))}
         </TabsList>
+        <Tip label={collapsed ? t('word.ribbonPin') : t('word.ribbonCollapse')} shortcut="Ctrl+F1">
+          <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label={collapsed ? t('word.ribbonPin') : t('word.ribbonCollapse')} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)} {...keep}>
+            {collapsed ? <ChevronDown /> : <ChevronUp />}
+          </Button>
+        </Tip>
       </div>
-      <div className="mx-2 mb-1.5 mt-1 overflow-x-auto rounded-lg border bg-muted/30 py-1">
+      <div hidden={collapsed} className="mx-2 mb-1.5 mt-1 overflow-x-auto rounded-lg border bg-muted/30 py-1">
         <TabsContent value="home" className="flex">
           <HomeTab ui={ui} act={act} a={a} />
         </TabsContent>
@@ -366,12 +390,12 @@ function HomeTab({ ui, act, a }: { ui: Ui | null; act: Act; a: RibbonActions }) 
             {...keep}
             onClick={() => act((e) => e.setParagraphStyle(s.id))}
             className={cn(
-              'flex h-[58px] w-[74px] flex-col items-start justify-center rounded-md border bg-background px-2 text-left hover:border-primary/50',
+              'flex h-[58px] w-[82px] flex-col items-start justify-center overflow-hidden rounded-md border bg-background px-2 text-left hover:border-primary/50',
               p?.style === s.id && 'border-primary ring-2 ring-primary/20',
             )}
           >
-            <span className={cn('truncate text-sm leading-tight', s.id === 'h1' && 'text-base font-bold', s.id === 'h2' && 'font-bold', s.id === 'h3' && 'font-semibold', s.id === 'quote' && 'italic text-muted-foreground')}>가나다AaBb</span>
-            <span className="text-[11px] text-muted-foreground">{t(`style.${s.id}` as AppMessageKey)}</span>
+            <span className={cn('max-w-full truncate text-sm leading-tight', s.id === 'h1' && 'text-base font-bold', s.id === 'h2' && 'font-bold', s.id === 'h3' && 'font-semibold', s.id === 'quote' && 'italic text-muted-foreground')}>가나Aa</span>
+            <span className="max-w-full truncate text-[11px] text-muted-foreground">{t(`style.${s.id}` as AppMessageKey)}</span>
           </button>
         ))}
       </Group>

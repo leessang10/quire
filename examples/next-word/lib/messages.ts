@@ -435,6 +435,10 @@ export const ko = {
   'word.breakChar': '글자 단위 줄 바꿈',
   'word.insertTable': '표 삽입',
   'word.tableSize': '{cols} × {rows} 표',
+
+  // 이 예제만의 문구
+  'word.ribbonCollapse': '리본 축소',
+  'word.ribbonPin': '리본 펼치기',
 };
 
 export type AppMessageKey = keyof typeof ko;
@@ -858,4 +862,7 @@ export const en: Record<AppMessageKey, string> = {
   'word.breakChar': 'Break by Character',
   'word.insertTable': 'Insert Table',
   'word.tableSize': '{cols} × {rows} Table',
+
+  'word.ribbonCollapse': 'Collapse the ribbon',
+  'word.ribbonPin': 'Expand the ribbon',
 };

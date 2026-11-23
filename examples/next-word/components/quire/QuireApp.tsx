@@ -82,6 +82,12 @@ function App() {
   const imageInput = useRef<HTMLInputElement>(null);
   const title = ctl.handle ? documentTitle(ctl.handle, t('app.untitled')) : 'Quire';
 
+  // 화면 색: 편집기의 색 모드를 앱(shadcn .dark)에도 — 리본·제목 줄·상태 줄까지 어둡게
+  const dark = ui?.appearance.colorScheme === 'dark';
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+  }, [dark]);
+
   // 앱 언어를 바꾸면 편집기 화면 글(캔버스 표시·접근성 이름)도 같이
   useEffect(() => {
     editor?.setLocale(locale);
