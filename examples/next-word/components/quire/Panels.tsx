@@ -1,7 +1,7 @@
 'use client';
 /** 옆 창(개요·댓글과 제안), 찾기 카드, 상태 줄 */
 import { useEffect, useRef, useState } from 'react';
-import { CaseSensitive, Check, ChevronDown, ChevronUp, MessageSquare, Regex, Undo2, WholeWord, X } from 'lucide-react';
+import { CaseSensitive, Check, ChevronDown, ChevronUp, MessageSquare, Minus, MoveHorizontal, Plus, Regex, Undo2, WholeWord, X } from 'lucide-react';
 import type { Editor, FindStatus, SuggestionView, ThreadView, WordCount } from '@quire/editor';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Toggle } from '@/components/ui/toggle';
 import { cn } from '@/lib/utils';
-import { outline, type Ui } from '@/lib/quire-app';
+import { outline, zoomPercent, zoomStep, type Ui } from '@/lib/quire-app';
+import type { Act } from '@/lib/use-ui';
 import { useT } from '@/lib/i18n';
 import type { AppMessageKey } from '@/lib/messages';
 
@@ -367,5 +368,48 @@ export function StatusBar({ ui, count, input }: { ui: Ui | null; count: WordCoun
       {ui?.spell && <Badge variant="outline">{t('status.spell')}</Badge>}
       <span className="ml-auto">{input}</span>
     </footer>
+  );
+}
+
+/** 슬라이더 0–100 ↔ 배율: 가운데(50)가 100%, 왼쪽 반은 25–100%, 오른쪽 반은 100–400% (Word의 확대 슬라이더처럼) */
+const sliderOf = (z: number) => (z <= 1 ? ((z - 0.25) / 0.75) * 50 : 50 + ((z - 1) / 3) * 50);
+const zoomOf = (v: number) => (v <= 50 ? 0.25 + (v / 50) * 0.75 : 1 + ((v - 50) / 50) * 3);
+
+/** 상태 줄의 확대·축소: − 슬라이더 + 배율(누르면 100%) 쪽 폭 맞춤 */
+export function ZoomBar({ ui, editor, act }: { ui: Ui | null; editor: Editor | null; act: Act }) {
+  const t = useT();
+  const z = ui?.zoom ?? 1;
+  const keep = (e: React.MouseEvent) => e.preventDefault();
+  const btn = 'rounded p-1 hover:bg-muted hover:text-foreground';
+  return (
+    <div className="flex items-center gap-1" role="group" aria-label={t('zoom.label')}>
+      <button type="button" aria-label={t('zoom.out')} title={t('zoom.out')} onMouseDown={keep} onClick={() => act((e) => e.setZoom(zoomStep(e.zoom, -1)))} className={btn}>
+        <Minus className="size-3.5" />
+      </button>
+      <input
+        type="range"
+        aria-label={t('zoom.label')}
+        aria-valuetext={zoomPercent(z)}
+        min={0}
+        max={100}
+        step={1}
+        value={Math.round(sliderOf(z))}
+        onChange={(ev) => {
+          const v = Number(ev.target.value);
+          // 가운데 근처는 100%에 붙인다
+          editor?.setZoom(Math.abs(v - 50) <= 2 ? 1 : zoomOf(v));
+        }}
+        className="h-1 w-24 cursor-pointer accent-primary"
+      />
+      <button type="button" aria-label={t('zoom.in')} title={t('zoom.in')} onMouseDown={keep} onClick={() => act((e) => e.setZoom(zoomStep(e.zoom, 1)))} className={btn}>
+        <Plus className="size-3.5" />
+      </button>
+      <button type="button" title={t('zoom.reset')} onMouseDown={keep} onClick={() => act((e) => e.setZoom(1))} className="w-10 rounded text-right tabular-nums hover:text-foreground">
+        {zoomPercent(z)}
+      </button>
+      <button type="button" aria-label={t('zoom.fitWidth')} title={t('zoom.fitWidth')} onMouseDown={keep} onClick={() => act((e) => e.setZoom(e.fitWidthZoom()))} className={btn}>
+        <MoveHorizontal className="size-3.5" />
+      </button>
+    </div>
   );
 }

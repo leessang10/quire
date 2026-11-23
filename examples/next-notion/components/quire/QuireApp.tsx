@@ -4,7 +4,7 @@
  * 글을 고르면 뜨는 서식 막대, `/` 명령 메뉴, 오른쪽 위 `···` 메뉴. 편집기는 미니멀 테마 + 연속 보기.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Download, FileText, FolderOpen, Languages, Moon, MoreHorizontal, MessageSquare, Plus, Printer, ScrollText, Search, Sparkles, Sun, Type } from 'lucide-react';
+import { ChevronRight, Download, FileText, FolderOpen, Languages, Minus, Moon, MoreHorizontal, MessageSquare, Plus, Printer, ScrollText, Search, Sparkles, Sun, Type } from 'lucide-react';
 import { toast } from 'sonner';
 import { QuireEditor, useEditorState, useQuire } from '@quire/react';
 import { highlightWordsPlugin, wordCountPlugin, type Editor, type MenuItem as PluginMenuItem, type SpellMenu, type WordCount } from '@quire/editor';
@@ -29,7 +29,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { fonts } from '@/lib/quire-demo';
-import { DemoSpellChecker, OPEN_ACCEPT, SAMPLES, SAVE_FORMATS, documentTitle, openAny, openPdf, sampleDocument, saveAny, tourDoc, type SaveFormat } from '@/lib/quire-app';
+import { DemoSpellChecker, OPEN_ACCEPT, SAMPLES, SAVE_FORMATS, documentTitle, openAny, openPdf, sampleDocument, saveAny, tourDoc, zoomPercent, zoomStep, type SaveFormat } from '@/lib/quire-app';
 import { useAct, useUi } from '@/lib/use-ui';
 import { I18nProvider, LOCALES, initialLocale, useI18n, type Locale, type T } from '@/lib/i18n';
 import type { AppMessageKey } from '@/lib/messages';
@@ -259,6 +259,19 @@ function App() {
                   <DropdownMenuCheckboxItem checked={!!ui?.spell} onCheckedChange={() => act((e) => e.setSpellChecker(ui?.spell ? null : spell))}>
                     {t('notion.spell')}
                   </DropdownMenuCheckboxItem>
+                  {/* 확대·축소: 메뉴를 닫지 않고 여러 번 누를 수 있게 항목이 아닌 줄로 */}
+                  <div className="flex items-center gap-1 py-0.5 pr-1 pl-1.5 text-sm" role="group" aria-label={t('zoom.label')}>
+                    <span className="flex-1">{t('zoom.label')}</span>
+                    <Button variant="ghost" size="icon-xs" aria-label={t('zoom.out')} onClick={() => act((e) => e.setZoom(zoomStep(e.zoom, -1)))}>
+                      <Minus />
+                    </Button>
+                    <button type="button" title={t('zoom.reset')} className="w-11 rounded text-center text-xs tabular-nums text-muted-foreground hover:text-foreground" onClick={() => act((e) => e.setZoom(1))}>
+                      {zoomPercent(ui?.zoom ?? 1)}
+                    </button>
+                    <Button variant="ghost" size="icon-xs" aria-label={t('zoom.in')} onClick={() => act((e) => e.setZoom(zoomStep(e.zoom, 1)))}>
+                      <Plus />
+                    </Button>
+                  </div>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>

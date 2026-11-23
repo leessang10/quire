@@ -40,7 +40,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel
 import { Kbd } from '@/components/ui/kbd';
 import { cn } from '@/lib/utils';
 import type { Act } from '@/lib/use-ui';
-import { COLORS, FONTS, HIGHLIGHTS, LINE_SPACINGS, STYLES, type Ui } from '@/lib/quire-app';
+import { COLORS, FONTS, HIGHLIGHTS, LINE_SPACINGS, STYLES, zoomPercent, type Ui } from '@/lib/quire-app';
 import { useT } from '@/lib/i18n';
 import type { AppMessageKey } from '@/lib/messages';
 
@@ -81,6 +81,30 @@ function B(props: { label: string; shortcut?: string; disabled?: boolean; onClic
 
 const Sep = () => <Separator orientation="vertical" className="mx-1 h-5!" />;
 
+/** 확대 선택 (Google Docs처럼 도구 막대에): 쪽 폭에 맞춤과 자주 쓰는 배율. 지금 배율이 목록에 없으면 그 값도 보인다 */
+const ZOOMS = [0.5, 0.75, 0.9, 1, 1.25, 1.5, 2];
+function ZoomSelect({ ui, act }: { ui: Ui | null; act: Act }) {
+  const t = useT();
+  const z = ui?.zoom ?? 1;
+  const values = ZOOMS.some((v) => Math.abs(v - z) < 0.005) ? ZOOMS : [...ZOOMS, z].sort((a, b) => a - b);
+  const items = [{ value: 'fit', label: t('zoom.fitWidth') }, ...values.map((v) => ({ value: String(v), label: zoomPercent(v) }))];
+  const current = String(values.find((v) => Math.abs(v - z) < 0.005) ?? z);
+  return (
+    <Select items={items} value={current} onValueChange={(v) => v && act((e) => e.setZoom(v === 'fit' ? e.fitWidthZoom() : Number(v)))}>
+      <SelectTrigger size="sm" className="w-[4.5rem] border-0 bg-transparent shadow-none tabular-nums" aria-label={t('zoom.label')}>
+        <SelectValue>{zoomPercent(z)}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {items.map((it) => (
+          <SelectItem key={it.value} value={it.value}>
+            {it.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function Toolbar({ ui, act, onLink, onImage }: { ui: Ui | null; act: Act; onLink: () => void; onImage: () => void }) {
   const m = ui?.marks;
   const p = ui?.para;
@@ -96,6 +120,8 @@ export function Toolbar({ ui, act, onLink, onImage }: { ui: Ui | null; act: Act;
       <B label={t('edit.redo')} shortcut="Ctrl+Y" disabled={!ui?.canRedo} onClick={() => act((e) => e.redo())}>
         <Redo2 />
       </B>
+      <Sep />
+      <ZoomSelect ui={ui} act={act} />
       <Sep />
       <Select items={STYLES.map((s) => ({ value: s.id, label: styleName(s.id) }))} value={p?.style ?? null} onValueChange={(v) => v && act((e) => e.setParagraphStyle(String(v)))}>
         <SelectTrigger size="sm" className="w-24 border-0 bg-transparent shadow-none" aria-label={t('toolbar.style')}>

@@ -58,6 +58,8 @@ export interface Ui {
   locale: string;
   /** 편집 기호(¶, 나눔) 표시 */
   formatMarks: boolean;
+  /** 화면 확대 배율 (1 = 100%) */
+  zoom: number;
   spell: boolean;
   pages: number;
   threads: number;
@@ -116,6 +118,7 @@ export function readUi(e: Editor): Ui {
     appearance: { ...e.appearance },
     locale: e.locale,
     formatMarks: e.showMarks,
+    zoom: e.zoom,
     viewMode: (e.viewMode === 'preview' ? 'suggestions' : e.viewMode) as ViewMode,
     spell: !!e.spellSession,
     pages: e.stats.pages,
@@ -459,3 +462,15 @@ export const SHORTCUTS: Array<[string, string]> = [
   ['Ctrl+S', 'Quire 문서로 저장'],
   ['Ctrl+P', '인쇄 (PDF)'],
 ];
+
+/** 확대·축소 단추가 밟는 배율 (워드프로세서들이 쓰는 값) */
+export const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
+
+/** 다음 배율 단계 (dir 1: 크게, -1: 작게). 단계 사이 값이면 가까운 쪽 단계로 */
+export function zoomStep(z: number, dir: 1 | -1): number {
+  if (dir > 0) return ZOOM_STEPS.find((s) => s > z + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1]!;
+  return [...ZOOM_STEPS].reverse().find((s) => s < z - 0.001) ?? ZOOM_STEPS[0]!;
+}
+
+/** 배율 → "125%" */
+export const zoomPercent = (z: number): string => `${Math.round(z * 100)}%`;

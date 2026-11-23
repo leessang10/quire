@@ -104,6 +104,11 @@ export interface EditorOptions {
    * 표시는 화면 위 덧그림이라 레이아웃·문서·내보내기를 바꾸지 않는다
    */
   showMarks?: boolean;
+  /**
+   * 화면 확대 배율 (1 = 100%, ${ZOOM_MIN}–${ZOOM_MAX}). 그리기만 키운다: 레이아웃·쪽 나눔·문서·PDF는 그대로.
+   * Ctrl(⌘)+휠로도 바꾼다
+   */
+  zoom?: number;
   /** 화면 언어 (18, BCP 47: ko·en·en-GB). 기본 ko. 정확히 없으면 앞부분(en)으로, 빠진 키는 영어 → 한국어 순으로 */
   locale?: string;
   /** 언어별 메시지 덮어쓰기·추가 언어 (키 단위, 18 §5): { en: { 'break.page': 'Page break' } } */
@@ -466,6 +471,8 @@ export class Editor {
   private scheme: ColorScheme = 'light';
   private pageViewMode: PageView = 'print';
   private marksShown = false;
+  /** 화면 확대 배율. 레이아웃·히트 테스트는 문서 좌표 그대로이고, 화면과 오갈 때만 곱하고 나눈다 */
+  private zoomLevel = 1;
   /** 색을 풀어 쓰는 숨긴 요소 */
   private themeProbe: HTMLElement | null = null;
   private readonly painter = new PagePainter(this.painterEnv());
@@ -615,6 +622,16 @@ export class Editor {
     this.scheme = opts.colorScheme ?? 'light';
     this.pageViewMode = opts.pageView ?? 'print';
     this.marksShown = !!opts.showMarks;
+    this.zoomLevel = clampZoom(opts.zoom ?? 1);
+    // Ctrl(⌘)+휠: 포인터 아래 자리를 그대로 두고 확대·축소 (브라우저 확대 대신)
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const step = Math.exp(-Math.max(-100, Math.min(100, e.deltaY)) * 0.002);
+      this.setZoom(this.zoomLevel * step, { clientX: e.clientX, clientY: e.clientY });
+    };
+    scroller.addEventListener('wheel', onWheel, { passive: false });
+    this.disposers.push(() => scroller.removeEventListener('wheel', onWheel));
     const probe = document.createElement('span');
     probe.setAttribute('aria-hidden', 'true');
     Object.assign(probe.style, { position: 'absolute', width: '0', height: '0', overflow: 'hidden', visibility: 'hidden' });
@@ -894,6 +911,66 @@ export class Editor {
     this.opts.onChange?.(this);
   }
 
+  /** 화면 확대 배율 (1 = 100%) */
+  get zoom(): number {
+    return this.zoomLevel;
+  }
+
+  /**
+   * 화면 확대 배율을 바꾼다 (0.25–4로 자른다). 그리기만 바뀌고 레이아웃·문서는 그대로다.
+   * 고정점(뷰포트 좌표)의 문서 자리가 화면에서 그대로 있게 스크롤한다 (기본: 화면 가운데)
+   */
+  setZoom(zoom: number, at?: { clientX: number; clientY: number }): void {
+    const z = clampZoom(zoom);
+    if (Math.abs(z - this.zoomLevel) < 1e-4) return;
+    const sc = this.scroller;
+    const rect = sc.getBoundingClientRect();
+    const fx = at ? at.clientX - rect.left : sc.clientWidth / 2;
+    const fy = at ? at.clientY - rect.top : sc.clientHeight / 2;
+    // 고정점의 문서 자리 (쪽 왼쪽 기준 x: 쪽 가운데 맞춤이 배율에 따라 바뀐다)
+    const dx = this.viewLeft + fx / this.zoomLevel - this.pageLeft();
+    const dy = this.viewTop + fy / this.zoomLevel;
+    this.zoomLevel = z;
+    this.updateDerived(); // 스크롤 범위를 먼저 늘려야 아래 스크롤이 잘리지 않는다
+    sc.scrollTop = Math.max(0, dy * z - fy);
+    sc.scrollLeft = Math.max(0, (dx + this.pageLeft()) * z - fx);
+    this.render();
+    this.opts.onChange?.(this);
+  }
+
+  /** 쪽 폭(가장 넓은 구역)과 양옆 틈이 화면 폭에 꼭 맞는 배율 (쪽 폭에 맞춤) */
+  fitWidthZoom(): number {
+    return clampZoom(this.scroller.clientWidth / (this.fmt.maxPageWidth() + this.setup.gap * 2));
+  }
+
+  /** 화면 맨 위의 문서 y */
+  get viewportTop(): number {
+    return this.viewTop;
+  }
+
+  /** 문서 y → 스크롤 상자 안의 화면 y (댓글 카드를 범위 옆에 놓을 때) */
+  viewportY(docY: number): number {
+    return (docY - this.viewTop) * this.zoomLevel;
+  }
+
+  // 뷰포트를 문서 좌표로 (확대 배율로 나눈다)
+  private get viewTop(): number {
+    return this.scroller.scrollTop / this.zoomLevel;
+  }
+  private get viewLeft(): number {
+    return this.scroller.scrollLeft / this.zoomLevel;
+  }
+  private get viewW(): number {
+    return this.scroller.clientWidth / this.zoomLevel;
+  }
+  private get viewH(): number {
+    return this.scroller.clientHeight / this.zoomLevel;
+  }
+  /** 문서 y가 화면 맨 위에 오게 스크롤 */
+  private scrollToDocY(y: number): void {
+    this.scroller.scrollTop = Math.max(0, y * this.zoomLevel);
+  }
+
   /** 지금 테마·색 모드(auto면 auto)·쪽 보기 */
   get appearance(): { theme: ThemeName; colorScheme: ColorScheme; pageView: PageView } {
     return { theme: this.themeName, colorScheme: this.scheme, pageView: this.pageViewMode };
@@ -1087,7 +1164,7 @@ export class Editor {
     // 각주 높이·번호 자릿수가 바뀐 참조 문단을 다시 조판한다 (12 §6.2)
     for (const i of this.fmt.syncNotes()) body.touchParagraph(i);
     // 화면 아래 한 화면 분량까지만 즉시 배치하고 나머지는 백그라운드로
-    const syncUntil = this.scroller.scrollTop + this.scroller.clientHeight * 2;
+    const syncUntil = this.viewTop + this.viewH * 2;
     this.bodyLayout.update(body.paragraphs(), this.inBody ? pre : null, syncUntil, body.takeParagraphChanges());
     if (this.cell) this.attachActive();
     else if (this.hf) this.attachHF(pre);
@@ -1117,9 +1194,10 @@ export class Editor {
       for (const p of layout.paras) lines += p!.lines.length;
       s.lines = lines;
     }
-    const viewH = this.scroller.clientHeight;
-    this.spacer.style.height = `${Math.max(0, layout.totalHeight - viewH)}px`;
-    this.spacer.style.width = `${this.fmt.maxPageWidth() + this.setup.gap * 2}px`;
+    // 스크롤 범위는 화면 픽셀: 문서 높이 × 배율 (캔버스는 sticky라 한 화면은 캔버스가 차지한다)
+    const z = this.zoomLevel;
+    this.spacer.style.height = `${Math.max(0, layout.totalHeight * z - this.scroller.clientHeight)}px`;
+    this.spacer.style.width = `${(this.fmt.maxPageWidth() + this.setup.gap * 2) * z}px`;
   }
 
   /** 남은 쪽 조립을 짧은 조각으로 나눠 유휴 시간에 진행 (02 §7) */
@@ -1148,7 +1226,7 @@ export class Editor {
   private pageLeft(): number {
     // 쪽들은 기본 용지 폭의 가운데 축에 맞춘다 (구역마다 폭이 다르면 넓은 쪽이 왼쪽으로 나온다)
     const over = (this.fmt.maxPageWidth() - this.setup.width) / 2;
-    return Math.max(this.setup.gap + over, (this.scroller.clientWidth - this.setup.width) / 2);
+    return Math.max(this.setup.gap + over, (this.viewW - this.setup.width) / 2);
   }
 
   private render(): void {
@@ -1157,19 +1235,22 @@ export class Editor {
     const { scroller, canvas, ctx } = this;
     const layout = this.bodyLayout;
     const dpr = window.devicePixelRatio || 1;
-    const w = scroller.clientWidth;
-    const h = scroller.clientHeight;
+    let w = scroller.clientWidth;
+    let h = scroller.clientHeight;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
     }
-    const top = scroller.scrollTop;
-    const left = scroller.scrollLeft;
-    const px = this.pageLeft() - left;
+    // 확대: 그리기는 문서 좌표 그대로, 변환 행렬로 키운다. top·h·w는 문서 좌표의 뷰포트
+    const z = this.zoomLevel;
+    const top = this.viewTop;
+    const px = this.pageLeft() - this.viewLeft;
+    w = w / z;
+    h = h / z;
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(dpr * z, 0, 0, dpr * z, 0, 0);
     const C = this.colors;
     // 연속 보기 (17 §3.2): 책상도 종이 색, 쪽 그림자·테두리 없이 (레이아웃은 그대로, 그리기만)
     const continuous = this.pageViewMode === 'continuous';
@@ -1893,8 +1974,9 @@ export class Editor {
     this.setSelection(from, to);
     // 가장자리에 붙으면 찾기 막대에 가린다
     const r = this.layout.caretRect(this.headOffset());
-    const sc = this.scroller;
-    if (r.y < sc.scrollTop + sc.clientHeight / 4 || r.y + r.height > sc.scrollTop + (sc.clientHeight * 3) / 4) sc.scrollTop = Math.max(0, r.y - sc.clientHeight / 3);
+    const vt = this.viewTop;
+    const vh = this.viewH;
+    if (r.y < vt + vh / 4 || r.y + r.height > vt + (vh * 3) / 4) this.scrollToDocY(r.y - vh / 3);
     this.render();
     this.opts.onChange?.(this);
     return true;
@@ -2890,8 +2972,7 @@ export class Editor {
     const rc = this.remotes.find((r) => r.key === key);
     const r = rc ? this.remoteRect(rc) : null;
     if (!r) return false;
-    const sc = this.scroller;
-    if (r.y < sc.scrollTop + 40 || r.y + r.height > sc.scrollTop + sc.clientHeight - 40) sc.scrollTop = Math.max(0, r.y - sc.clientHeight / 3);
+    if (r.y < this.viewTop + 40 || r.y + r.height > this.viewTop + this.viewH - 40) this.scrollToDocY(r.y - this.viewH / 3);
     this.scheduleRender();
     return true;
   }
@@ -2917,7 +2998,7 @@ export class Editor {
       if (rc.story) {
         // 다른 스토리 (셀·머리말·각주): 그 스토리 레이아웃 자리, 화면 안일 때만
         r = this.remoteRect(rc);
-        if (!r || r.y + r.height < top || r.y > top + this.scroller.clientHeight) continue;
+        if (!r || r.y + r.height < top || r.y > top + this.viewH) continue;
       } else {
         const head = Math.min(rc.head, this.body.maxCaret);
         if (!visible.has(this.body.paragraphIndexAt(head))) continue;
@@ -2975,19 +3056,21 @@ export class Editor {
   private updateCaret(): void {
     const head = this.headOffset();
     const r = this.layout.caretRect(head);
-    const x = this.pageLeft() + r.x;
+    // 캐럿·입력 층은 스크롤 상자 안의 DOM이라 화면 픽셀 (문서 좌표 × 배율)
+    const z = this.zoomLevel;
+    const x = (this.pageLeft() + r.x) * z;
     const { anchor } = this.selection();
     const collapsed = anchor === head;
     const show = this.focused && (collapsed || this.preedit !== '');
     Object.assign(this.caretEl.style, {
       display: show ? 'block' : 'none',
       left: `${x}px`,
-      top: `${r.y + 3}px`,
-      height: `${r.height - 6}px`,
+      top: `${(r.y + 3) * z}px`,
+      height: `${Math.max(1, (r.height - 6) * z)}px`,
     });
     // 깜박임 재시작
     if (this.blink) this.blink.currentTime = 0;
-    this.input.place(x, r.y, r.height);
+    this.input.place(x, r.y * z, r.height * z);
     if (this.input.sync && !this.input.composing) {
       // 캐럿이 있는 문단을 입력 층에 (IME 재변환·문맥용, 03 §2)
       const paras = this.doc.paragraphs();
@@ -3133,12 +3216,10 @@ export class Editor {
 
   private scrollCaretIntoView(): void {
     const r = this.layout.caretRect(this.headOffset());
-    const s = this.scroller;
     const pad = r.height;
-    if (r.y - pad < s.scrollTop) s.scrollTop = Math.max(0, r.y - pad);
-    else if (r.y + r.height + pad > s.scrollTop + s.clientHeight) {
-      s.scrollTop = r.y + r.height + pad - s.clientHeight;
-    }
+    const vt = this.viewTop;
+    if (r.y - pad < vt) this.scrollToDocY(r.y - pad);
+    else if (r.y + r.height + pad > vt + this.viewH) this.scrollToDocY(r.y + r.height + pad - this.viewH);
   }
 
   // ── 선택 도우미 ───────────────────────────────────────
@@ -4500,10 +4581,10 @@ export class Editor {
           this.moveVertical(1, shift);
           break;
         case 'PageUp':
-          this.moveVertical(-Math.max(1, Math.floor(this.scroller.clientHeight / this.setup.lineHeight) - 1), shift);
+          this.moveVertical(-Math.max(1, Math.floor(this.viewH / this.setup.lineHeight) - 1), shift);
           break;
         case 'PageDown':
-          this.moveVertical(Math.max(1, Math.floor(this.scroller.clientHeight / this.setup.lineHeight) - 1), shift);
+          this.moveVertical(Math.max(1, Math.floor(this.viewH / this.setup.lineHeight) - 1), shift);
           break;
         case 'Home': {
           const ref = this.layout.lineAt(head);
@@ -4784,7 +4865,8 @@ export class Editor {
   private clientRectAt(offset: number): Rect {
     const r = this.layout.caretRect(offset);
     const sr = this.scroller.getBoundingClientRect();
-    return { x: sr.left + r.x + this.pageLeft() - this.scroller.scrollLeft, y: sr.top + r.y - this.scroller.scrollTop, width: 1, height: r.height };
+    const z = this.zoomLevel;
+    return { x: sr.left + (r.x + this.pageLeft() - this.viewLeft) * z, y: sr.top + (r.y - this.viewTop) * z, width: 1, height: r.height * z };
   }
 
   /** 플러그인이 받는 좁은 면 */
@@ -4876,8 +4958,8 @@ export class Editor {
   private docPoint(e: { clientX: number; clientY: number }): { x: number; y: number } {
     const rect = this.scroller.getBoundingClientRect();
     return {
-      x: e.clientX - rect.left + this.scroller.scrollLeft - this.pageLeft(),
-      y: e.clientY - rect.top + this.scroller.scrollTop,
+      x: (e.clientX - rect.left) / this.zoomLevel + this.viewLeft - this.pageLeft(),
+      y: (e.clientY - rect.top) / this.zoomLevel + this.viewTop,
     };
   }
 
@@ -5565,4 +5647,11 @@ function handlePoints(x: number, y: number, w: number, h: number): Array<[number
     [x, y], [x + w / 2, y], [x + w, y], [x + w, y + h / 2],
     [x + w, y + h], [x + w / 2, y + h], [x, y + h], [x, y + h / 2],
   ];
+}
+
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 4;
+/** 확대 배율을 범위로 자른다 (숫자가 아니면 1) */
+function clampZoom(z: number): number {
+  return Number.isFinite(z) && z > 0 ? Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)) : 1;
 }
