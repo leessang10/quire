@@ -5,7 +5,8 @@
  * - editor: 실제 편집기(조각 글꼴, 백그라운드 조판)를 열고 `layoutSummary()` — 사용자가 보는 쪽 나눔
  * - whole: 통째 글꼴로 Node 시험과 똑같이 처음부터 조판 (`composeReference`) — JS 엔진·플랫폼 차이만 본다
  *
- * 그리고 marks: 편집 기호를 켜고 연속 보기로 바꿔도 레이아웃 요약과 저장 문서(정본)가 그대로인가 — 화면 표시는 덧그림일 뿐 (17 §10)
+ * 그리고 marks: 편집 기호를 켜고 연속 보기로 바꿔도 레이아웃 요약과 저장 문서(정본)가 그대로인가, 어두운 화면에서도 PDF에 화면 색이
+ *   실리지 않는가 — 화면 설정은 덧그림일 뿐 (17 §10)
  *
  * 결과는 `window.goldenResult`. 쿼리 ?only=report 로 한 문서만.
  */
@@ -100,7 +101,13 @@ async function viaEditor(host: HTMLElement, raw: string): Promise<{ summary: Lay
     editor.setPageView('continuous');
     await sleep(200);
     const marked = editor.layoutSummary();
-    const marksDiff = firstDiff(marked, summary) ?? (JSON.stringify(quireFromDocument(editor.document)) === saved ? null : '저장 문서가 바뀜');
+    // 어두운 화면도 화면만: 인쇄·PDF(printSource)는 화면 테마 색을 싣지 않는다 (흰 종이에 밝은 글자가 가지 않게)
+    editor.setColorScheme('dark');
+    const printColors = editor.printSource().env.colors;
+    const marksDiff =
+      firstDiff(marked, summary) ??
+      (JSON.stringify(quireFromDocument(editor.document)) === saved ? null : '저장 문서가 바뀜') ??
+      (printColors ? `PDF에 화면 색이 실림 (글자 ${printColors.text})` : null);
     return { summary, marksDiff };
   } finally {
     editor.destroy();

@@ -1225,7 +1225,7 @@ export class Editor {
   } {
     const files = this.shapedFonts ? this.fontFiles : [];
     return {
-      env: this.painterEnv(),
+      env: this.painterEnv(false),
       fonts: {
         count: files.length,
         face: (slot, bold) => {
@@ -1248,10 +1248,13 @@ export class Editor {
     return this.assets.put(blob);
   }
 
-  /** 쪽 그리기기가 읽는 것들 (게터: 글꼴을 불러오면 셰이핑 글꼴이 바뀐다) */
-  private painterEnv(): PainterEnv {
+  /**
+   * 쪽 그리기기가 읽는 것들 (게터: 글꼴을 불러오면 셰이핑 글꼴이 바뀐다). screen이면 화면 테마 색(17)을 싣고,
+   * 인쇄·PDF(printSource)는 싣지 않아 늘 문서 그대로의 기본 색으로 그린다 — 어두운 화면의 밝은 글자색이 흰 종이에 가지 않게
+   */
+  private painterEnv(screen = true): PainterEnv {
     const self = this;
-    return {
+    const env: PainterEnv = {
       get fmt() {
         return self.fmt;
       },
@@ -1262,6 +1265,7 @@ export class Editor {
         return self.t;
       },
       get colors() {
+        if (!screen) return undefined;
         const c = self.colors;
         return { text: c.text, columnRule: c.mark, tableBorder: c.tableBorder, field: c.field, placeholder: c.placeholder, placeholderBorder: c.mark, placeholderText: c.placeholderText };
       },
@@ -1296,6 +1300,7 @@ export class Editor {
         },
       },
     };
+    return env;
   }
 
   /** 편집기 덧그리기 (15 §5.1): 선택, 주석·제안·장식, 조합 밑줄, 나눔 표시, 편집 중 표시, 개체 손잡이, 셀 범위 선택 */
