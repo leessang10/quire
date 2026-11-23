@@ -523,7 +523,7 @@ function parseBlocks(lines: string[], report: Report, notes: Map<string, string[
     if (RULE.test(line) && !(para && /^ {0,3}-+\s*$/.test(line))) {
       endPara();
       lastItem = null;
-      report.drop('가로줄');
+      report.drop('horizontalRule');
       continue;
     }
     // 세텍스트 제목 (=== / ---)
@@ -678,7 +678,7 @@ export async function importMarkdown(md: string, opts: MarkdownImportOptions = {
   }
   // 참조가 각주 안에서 처음 나온 각주도 (위 반복 중에 늘었을 수 있다)
   for (const [label, id] of noteIds) if (!stories[noteStoryId(id)]) stories[noteStoryId(id)] = toParas(parseBlocks(noteDefs.get(label)!, report, new Map()), `${id}.`);
-  for (const label of noteDefs.keys()) if (!noteIds.has(label)) report.drop('참조 없는 각주');
+  for (const label of noteDefs.keys()) if (!noteIds.has(label)) report.drop('orphanFootnote');
 
   // 이미지: data URL → 자산, 자산 ID 경로 → 그 자산, 상대 경로 → resolve, 나머지는 대체 텍스트
   let imgSeq = 0;
@@ -700,7 +700,7 @@ export async function importMarkdown(md: string, opts: MarkdownImportOptions = {
       continue;
     }
     // 담을 수 없는 이미지: 대체 텍스트로
-    report.drop('이미지 (외부 주소)');
+    report.drop('remoteImage');
     delete pd.run.img;
     pd.run.t = pd.alt || pd.src;
   }

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BUILTIN_MESSAGES, Messages, formatMessage } from './i18n';
 import { en } from './i18n/en';
 import { ko } from './i18n/ko';
+import { DROP_KINDS, dropMessageKey, isDropKind } from './import-report';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -30,6 +31,17 @@ describe('메시지 파일', () => {
   it('언어마다 자리표시 이름이 같다', () => {
     const names = (s: string) => [...s.matchAll(/\{(\w+)/g)].map((m) => m[1]).sort();
     for (const k of Object.keys(ko) as Array<keyof typeof ko>) expect(names(en[k]), k).toEqual(names(ko[k]));
+  });
+});
+
+describe('가져오기 보고 (L-5)', () => {
+  it('버린 요소 종류마다 메시지가 있고, drop.* 키는 모두 종류다', () => {
+    for (const k of DROP_KINDS) expect(ko[dropMessageKey(k)]).toBeTruthy();
+    const keys = Object.keys(ko).filter((k) => k.startsWith('drop.')).map((k) => k.slice(5));
+    expect(keys.sort()).toEqual([...DROP_KINDS].sort());
+    expect(isDropKind('shape')).toBe(true);
+    expect(isDropKind('도형')).toBe(false);
+    expect(new Messages('en').t(dropMessageKey('equation'))).toBe('Equation');
   });
 });
 
@@ -192,10 +204,6 @@ describe('편집기 소스 (L1)', () => {
   const ALLOWED = new Set([
     'editor.ts:가', // 글꼴 상자를 재는 글자
     'reference.ts:[표]', // 레이아웃 요약(시험 기준 파일)의 표 줄 표시
-    // 가져오기 보고(@quire/convert와 같은 문구)는 변환 패키지와 함께 옮긴다 (18 §7 L-5)
-    'clipboard.ts:위험한 링크',
-    'clipboard.ts:이미지 (외부 주소)',
-    ...['가로줄', '내장 문서', '동영상', '소리', 'SVG 그림', '캔버스', '내장 개체', '입력 양식', '수식'].map((w) => `clipboard.ts:${w}`),
   ]);
 
   it('literals는 주석·정규식을 건너뛰고 템플릿 안까지 본다', () => {

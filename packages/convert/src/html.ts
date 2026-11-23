@@ -233,7 +233,7 @@ export async function fragmentToQuire(frag: Fragment, report: Report): Promise<I
           if (img.kind === 'image') {
             const a = r.src ? fromDataUrl(r.src) : null;
             if (!a) {
-              report.drop('이미지 (읽을 수 없음)');
+              report.drop('unreadableImage');
               continue;
             }
             const { id, w, h } = await addAsset(assets, a, img.w, img.h);

@@ -1,7 +1,7 @@
 /**
  * HTML·Markdown·DOCX·HWPX 가져오기·내보내기 (15 §6, 5-5–5-7): 정본을 거친다. 변환 모듈은 처음 쓸 때 불러온다.
  */
-import type { Editor } from '@quire/editor';
+import { dropMessageKey, type DropCounts, type DropKind, type Editor } from '@quire/editor';
 import { documentFromQuire, quireFromDocument } from '@quire/sync';
 
 export type ConvertKind = 'html' | 'md' | 'docx' | 'hwpx';
@@ -48,18 +48,18 @@ export async function saveAs(editor: Editor, kind: ConvertKind): Promise<void> {
 }
 
 /** 가져와 편집기 문서로 바꾼다. 버린 요소를 돌려준다 */
-export async function importAs(editor: Editor, data: string | Uint8Array, kind: ConvertKind): Promise<Record<string, number>> {
+export async function importAs(editor: Editor, data: string | Uint8Array, kind: ConvertKind): Promise<DropCounts> {
   const c = await import('@quire/convert');
   const r =
     kind === 'html' ? await c.importHtml(data as string) : kind === 'md' ? await c.importMarkdown(data as string) : kind === 'hwpx' ? await c.importHwpx(data as Uint8Array) : await c.importDocx(data as Uint8Array);
   for (const [, a] of r.assets) await editor.putAsset(new Blob([a.bytes as BlobPart], { type: a.type }));
   editor.setDocument(documentFromQuire(r.doc).document);
   const dropped = Object.entries(r.report.dropped);
-  lastConvert = `${LABEL[kind]} 가져옴${dropped.length ? ` · 버림: ${dropped.map(([k, n]) => `${k} ${n}`).join(', ')}` : ''}`;
+  lastConvert = `${LABEL[kind]} 가져옴${dropped.length ? ` · 버림: ${dropped.map(([k, n]) => `${editor.t(dropMessageKey(k as DropKind))} ${n}`).join(', ')}` : ''}`;
   return r.report.dropped;
 }
 
-export function importText(editor: Editor, text: string, kind: 'html' | 'md'): Promise<Record<string, number>> {
+export function importText(editor: Editor, text: string, kind: 'html' | 'md'): Promise<DropCounts> {
   return importAs(editor, text, kind);
 }
 

@@ -315,7 +315,7 @@ export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
           ctx.offset += 2;
         } else {
           // 본문 밖(셀·머리말·각주)의 표는 담지 못한다: 칸 글만 문단으로
-          report.drop(ctx.story.includes('.r') ? '표 안의 표' : '본문 밖의 표');
+          report.drop(ctx.story.includes('.r') ? 'nestedTable' : 'tableOutsideBody');
           for (const tc of descendants(n, 'w:tc')) out.push(...readBlocks(kids(tc, 'w:p'), ctx));
         }
       } else if (n.name === 'w:sdt') out.push(...readBlocks(kids(kid(n, 'w:sdtContent')), ctx, onSection));
@@ -385,7 +385,7 @@ export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
       const id = listOf(kid(numPr, 'w:numId')?.attrs['w:val'] ?? '');
       if (id) attrs.list = { id, level: Number(kid(numPr, 'w:ilvl')?.attrs['w:val'] ?? 0) };
     }
-    if (kid(ppr, 'w:pPrChange')) report.drop('문단 서식 변경 추적 (받아들임)');
+    if (kid(ppr, 'w:pPrChange')) report.drop('paragraphFormatChange');
     clean(attrs);
     const pieces: QuireParagraph[] = [{ p: { ...attrs }, c: [] }];
     let cur = pieces[0]!;
@@ -471,7 +471,7 @@ export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
             break;
           case 'm:oMath':
           case 'm:oMathPara':
-            report.drop('수식');
+            report.drop('equation');
             break;
           default:
             break;
@@ -481,7 +481,7 @@ export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
 
     const run = (r: XNode, link: string | undefined): void => {
       const rpr = kid(r, 'w:rPr');
-      if (kid(rpr, 'w:rPrChange')) report.drop('글자 서식 변경 추적 (받아들임)');
+      if (kid(rpr, 'w:rPrChange')) report.drop('textFormatChange');
       const m: Record<string, unknown> = { ...charStyleMarks(kid(rpr, 'w:rStyle')?.attrs['w:val']) };
       marksOf(rpr, m);
       // 문서 기본값과 같은 글꼴·크기는 서식이 아니다
@@ -530,12 +530,12 @@ export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
             const choice = kid(c, 'mc:Choice');
             const d = choice && [...descendants(choice, 'w:drawing')].find((dd) => [...descendants(dd, 'pic:pic')].length);
             if (d) drawing(d, m);
-            else report.drop('도형·글상자');
+            else report.drop('shape');
             break;
           }
           case 'w:pict':
           case 'w:object':
-            report.drop('VML 그림·개체');
+            report.drop('vml');
             break;
           case 'w:footnoteReference':
           case 'w:endnoteReference': {
@@ -590,7 +590,7 @@ export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
       const blip = [...descendants(box, 'a:blip')][0];
       const rel = blip?.attrs['r:embed'] ? ctx.rels.get(blip.attrs['r:embed']) : undefined;
       if (!blip || !rel) {
-        report.drop('도형·글상자');
+        report.drop('shape');
         return;
       }
       const ext = kid(box, 'wp:extent');
@@ -702,7 +702,7 @@ export async function importDocx(bytes: Uint8Array): Promise<ImportResult> {
   for (const pi of pendingImages) {
     const img = pi.run.img!;
     if (!pi.data) {
-      report.drop('이미지 (파일 없음)');
+      report.drop('missingImage');
       delete pi.run.img;
       pi.run.t = pi.alt || '';
       continue;

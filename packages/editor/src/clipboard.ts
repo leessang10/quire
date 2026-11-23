@@ -12,6 +12,7 @@
  * 문단 속성 규칙 (Google Docs와 같다): 붙인 첫 문단·끝 문단이 조각(문단의 일부)이면 붙인 자리 문단의 속성을 따른다. 사이의 온전한
  * 문단은 자기 속성(스타일·정렬·목록)을 가져온다. 첫 문단이 온전하고 빈 자리(문단 첫머리)에 붙이면 그 문단 속성도 가져온다.
  */
+import type { DropKind } from './import-report';
 import {
   Document,
   cellKey,
@@ -414,7 +415,7 @@ function cssPt(v: string | undefined, signed = false): number | undefined {
 }
 
 /** 요소가 더하거나 지우는 글자 서식 */
-function marksOf(n: HNode, base: MarkSet, fonts = false, drop?: (what: string) => void): MarkSet {
+function marksOf(n: HNode, base: MarkSet, fonts = false, drop?: (what: DropKind) => void): MarkSet {
   const m: Record<string, unknown> = { ...base };
   const t = n.tag;
   if (t === 'b' || t === 'strong') m.bold = true;
@@ -426,7 +427,7 @@ function marksOf(n: HNode, base: MarkSet, fonts = false, drop?: (what: string) =
     // 위험한 링크는 글만 붙인다 (16 §6)
     const href = safeLink(n.attrs.href);
     if (href) m.link = href;
-    else drop?.('위험한 링크');
+    else drop?.('unsafeLink');
   }
   if (t === 'font' && n.attrs.color) m.color = cssColor(n.attrs.color);
   const st = styleOf(n);
@@ -467,13 +468,13 @@ export interface HtmlReadOptions {
    */
   document?: boolean;
   /** 담을 수 없어 버린 요소 (가져오기 보고) */
-  drop?: (what: string) => void;
+  drop?: (what: DropKind) => void;
 }
 
 /** 버리면 보고하는 요소 */
-const DROPPED: Record<string, string> = {
-  hr: '가로줄', iframe: '내장 문서', video: '동영상', audio: '소리', svg: 'SVG 그림', canvas: '캔버스', object: '내장 개체', embed: '내장 개체',
-  form: '입력 양식', input: '입력 양식', select: '입력 양식', button: '입력 양식', textarea: '입력 양식', math: '수식',
+const DROPPED: Record<string, DropKind> = {
+  hr: 'horizontalRule', iframe: 'embeddedDocument', video: 'video', audio: 'audio', svg: 'svg', canvas: 'canvas', object: 'embeddedObject', embed: 'embeddedObject',
+  form: 'formControl', input: 'formControl', select: 'formControl', button: 'formControl', textarea: 'formControl', math: 'equation',
 };
 
 /** 각주 칸: GFM(section.footnotes의 li#id), Word(div#ftnN, 참조 href="#_ftnN") */
@@ -501,7 +502,7 @@ export function htmlToFragment(html: string, opts: HtmlReadOptions = {}): Fragme
   let listSeq = 0;
   let tableSeq = 0;
   let noteSeq = 0;
-  const drop = (what: string) => opts.drop?.(what);
+  const drop = (what: DropKind) => opts.drop?.(what);
   const root = parseHtml(html);
   const noteBoxes = footnoteTargets(root);
   /** 각주 칸 → 각주 ID (참조를 처음 만날 때 정한다) */
@@ -597,7 +598,7 @@ export function htmlToFragment(html: string, opts: HtmlReadOptions = {}): Fragme
       if (/mso-list\s*:\s*ignore/i.test(n.attrs.style ?? '')) return; // Word의 가짜 번호
       if (st.display === 'none') return;
       if (DROPPED[t]) {
-        drop(DROPPED[t]);
+        drop(DROPPED[t]!);
         return;
       }
       if (isFootnoteBox(n)) return; // 각주 내용은 참조에서 읽는다
@@ -637,7 +638,7 @@ export function htmlToFragment(html: string, opts: HtmlReadOptions = {}): Fragme
         if (h) img.h = Math.round(h * 750);
         if (src.startsWith('data:image/')) cur!.c.push({ img, src });
         else {
-          drop('이미지 (외부 주소)');
+          drop('remoteImage');
           if (n.attrs.alt) text(n.attrs.alt, m);
         }
         return;

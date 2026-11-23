@@ -4,6 +4,7 @@
  * 쪽 번호 매기기), 표(셀 주소·병합·바탕), 그림(글자처럼·떠 있음), 각주·미주, 링크·메모(댓글), 변경 추적(제안), 형광펜을 읽는다.
  * 담지 못하는 것(도형, 수식, 글상자, OLE 등)은 버리고 보고한다.
  */
+import type { DropKind } from '@quire/editor';
 import { PAPER_SIZES, defaultListDef, noteStoryId, type CommentThread, type FloatAttrs, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quire/model';
 import { readZip, type QuireDoc, type QuireParagraph, type QuireRun, type QuireTable } from '@quire/sync';
 import { Report, finishImport, addAsset, addUsedStyles, emptyQuire, mimeOf, type ImportResult, type ImportedAsset } from './common';
@@ -14,9 +15,9 @@ const u10 = (v: string | undefined) => (v === undefined || v === '' ? 0 : Math.r
 const NUM_BACK: Record<string, ListDef['levels'][0]['format']> = Object.fromEntries(Object.entries(HWP_NUM).map(([k, v]) => [v, k as ListDef['levels'][0]['format']]));
 const PALETTE = ['#1a73e8', '#d93025', '#188038', '#e37400', '#9334e6', '#007b83'];
 /** 담지 못하는 그리기 개체 */
-const SHAPES: Record<string, string> = {
-  'hp:rect': '도형', 'hp:ellipse': '도형', 'hp:arc': '도형', 'hp:polygon': '도형', 'hp:curve': '도형', 'hp:line': '도형', 'hp:connectLine': '도형',
-  'hp:container': '묶음 개체', 'hp:equation': '수식', 'hp:ole': 'OLE 개체', 'hp:textart': '글맵시', 'hp:video': '동영상', 'hp:chart': '차트', 'hp:compose': '글자 겹치기', 'hp:dutmal': '덧말', 'hp:formObject': '양식 개체',
+const SHAPES: Record<string, DropKind> = {
+  'hp:rect': 'shape', 'hp:ellipse': 'shape', 'hp:arc': 'shape', 'hp:polygon': 'shape', 'hp:curve': 'shape', 'hp:line': 'shape', 'hp:connectLine': 'shape',
+  'hp:container': 'group', 'hp:equation': 'equation', 'hp:ole': 'ole', 'hp:textart': 'textArt', 'hp:video': 'video', 'hp:chart': 'chart', 'hp:compose': 'overlappingCharacters', 'hp:dutmal': 'ruby', 'hp:formObject': 'formControl',
 };
 
 interface ParaShape {
@@ -344,7 +345,7 @@ export async function importHwpx(bytes: Uint8Array): Promise<ImportResult> {
               out.push(cur);
               (cur as { tail?: boolean } & QuireParagraph).tail = true;
             } else {
-              report.drop(ctx.story.includes('.r') ? '표 안의 표' : '본문 밖의 표');
+              report.drop(ctx.story.includes('.r') ? 'nestedTable' : 'tableOutsideBody');
               for (const tc of descendants(c, 'hp:tc')) for (const b of readBlocks(kids(kid(tc, 'hp:subList')), ctx)) if (!('table' in b)) out.push(b);
             }
             break;
@@ -625,7 +626,7 @@ export async function importHwpx(bytes: Uint8Array): Promise<ImportResult> {
     const it = items.get(pi.ref);
     const data = it ? files.get(it.href.replace(/^\//, '')) : undefined;
     if (!data) {
-      report.drop('이미지 (파일 없음)');
+      report.drop('missingImage');
       delete pi.run.img;
       pi.run.t = pi.alt;
       continue;
