@@ -1,0 +1,48 @@
+// @quire/editor 화면 테마 변수 (설계 17 §7·§10.1). 자동 완성과 오타 검사용이고, 결과는 CSS 변수다.
+//
+//   @use 'pkg:@quire/editor/tokens.scss' as quire;
+//   .quire { @include quire.theme((accent: #e11d48, page: #fffdf7)); }
+//
+// $quire-tokens는 클래식 라이트 기본값이다 (편집기 기본 스타일시트와 같다, 시험이 맞춘다).
+// theme()은 넘긴 것만 쓴다: 기본값을 다시 쓰면 미니멀·모던·다크의 값을 덮기 때문이다.
+@use 'sass:map';
+
+$quire-tokens: (
+  desk: #e9e9ec,
+  page: #ffffff,
+  page-shadow: (0 1px 8px rgba(0, 0, 0, 0.12)),
+  page-border: none,
+  text: #1d1d1f,
+  caret: var(--quire-text),
+  preedit: var(--quire-text),
+  accent: #3884ff,
+  selection: rgba(56, 132, 255, 0.28),
+  selection-inactive: rgba(0, 0, 0, 0.12),
+  mark: #9a9aa2,
+  field: #e4e4ea,
+  grip: #a1a1a6,
+  grip-active: var(--quire-accent),
+  drop-line: var(--quire-accent),
+  drag-source: rgba(56, 132, 255, 0.10),
+  table-border: #8e8e93,
+  placeholder: #e9e9ec,
+  placeholder-text: #6e6e73,
+);
+
+/// 변수를 덮어쓴다. 키는 `--quire-`를 뺀 이름이고, 모르는 이름이면 컴파일 오류다
+@mixin theme($overrides) {
+  @each $name, $value in $overrides {
+    @if not map.has-key($quire-tokens, $name) {
+      @error 'Unknown Quire theme token "#{$name}". Known tokens: #{map.keys($quire-tokens)}';
+    }
+    --quire-#{$name}: #{$value};
+  }
+}
+
+/// 변수 이름 (`var(quire.token(accent))`)
+@function token($name) {
+  @if not map.has-key($quire-tokens, $name) {
+    @error 'Unknown Quire theme token "#{$name}".';
+  }
+  @return --quire-#{$name};
+}

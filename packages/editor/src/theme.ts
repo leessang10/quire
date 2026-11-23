@@ -11,6 +11,64 @@ export type ThemeName = 'classic' | 'minimal' | 'modern';
 export type ColorScheme = 'light' | 'dark' | 'auto';
 export type PageView = 'print' | 'continuous';
 
+/**
+ * 공개 CSS 변수 이름 (17 §10.1, T-3). 사용자 CSS가 직접 쓰는 약속이라 이름을 바꾸려면 판을 올리고,
+ * 한 판 동안 옛 이름도 읽어 경고한다 (§9 O-45). 이 목록에 없는 `--quire-*`는 내부용이다.
+ */
+export const THEME_VARIABLES = [
+  '--quire-desk',
+  '--quire-page',
+  '--quire-page-shadow',
+  '--quire-page-border',
+  '--quire-text',
+  '--quire-caret',
+  '--quire-preedit',
+  '--quire-accent',
+  '--quire-selection',
+  '--quire-selection-inactive',
+  '--quire-mark',
+  '--quire-field',
+  '--quire-grip',
+  '--quire-grip-active',
+  '--quire-drop-line',
+  '--quire-drag-source',
+  '--quire-table-border',
+  '--quire-placeholder',
+  '--quire-placeholder-text',
+] as const;
+
+export type ThemeVariable = (typeof THEME_VARIABLES)[number];
+
+/** 변수 → 값 (CSS 값 그대로: `#e11d48`, `var(--primary)`, `color-mix(…)`). 인라인 스타일이나 CSS-in-JS에 펼쳐 쓴다 */
+export type QuireThemeTokens = Partial<Record<ThemeVariable, string>>;
+
+/** 편집기가 만드는 요소의 클래스 (공개 API, 17 §10.1). 자리·크기는 편집기가 인라인으로 정하니 모양(커서, 스크롤 막대 등)만 덮어쓴다 */
+export const THEME_CLASSES = {
+  /** 편집기 호스트 (변수 정의 자리) */
+  host: 'quire',
+  /** 쪽을 담고 스크롤하는 상자 */
+  scroller: 'quire-scroller',
+  /** 쪽을 그리는 캔버스 */
+  canvas: 'quire-canvas',
+  /** 캐럿 */
+  caret: 'quire-caret',
+} as const;
+
+/** 호스트의 상태 속성 (공개 API, 17 §10.1) */
+export const THEME_ATTRIBUTES = {
+  theme: 'data-quire-theme',
+  scheme: 'data-quire-scheme',
+  pageView: 'data-quire-page-view',
+} as const;
+
+/** 변수 묶음을 CSS 선언 글로 (`host.style.cssText += themeDeclarations({...})`, 앱 스타일시트에 넣기) */
+export function themeDeclarations(tokens: QuireThemeTokens): string {
+  return Object.entries(tokens)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([k, v]) => `${k}: ${v};`)
+    .join(' ');
+}
+
 /** 캔버스·캐럿이 쓰는 색 (계산된 값) */
 export interface ThemeColors {
   desk: string;
@@ -38,7 +96,7 @@ export interface ThemeColors {
 }
 
 /** 변수 이름과 기본값 (클래식 라이트: 테마를 넣기 전 화면과 같은 색) */
-export const THEME_TOKENS: Record<Exclude<keyof ThemeColors, 'pageShadow' | 'pageBorder'>, [string, string]> = {
+export const THEME_TOKENS: Record<Exclude<keyof ThemeColors, 'pageShadow' | 'pageBorder'>, [ThemeVariable, string]> = {
   desk: ['--quire-desk', '#e9e9ec'],
   page: ['--quire-page', '#ffffff'],
   text: ['--quire-text', '#1d1d1f'],
@@ -57,8 +115,8 @@ export const THEME_TOKENS: Record<Exclude<keyof ThemeColors, 'pageShadow' | 'pag
   placeholderText: ['--quire-placeholder-text', '#6e6e73'],
   accent: ['--quire-accent', '#3884ff'],
 };
-export const PAGE_SHADOW_VAR = '--quire-page-shadow';
-export const PAGE_BORDER_VAR = '--quire-page-border';
+export const PAGE_SHADOW_VAR: ThemeVariable = '--quire-page-shadow';
+export const PAGE_BORDER_VAR: ThemeVariable = '--quire-page-border';
 
 /**
  * 기본 테마들 (변수 값만). 클래식 = 쪽 중심 워드프로세서, 미니멀 = 장식 없는 편집기, 모던 = 얇은 테두리와 약한 그림자.

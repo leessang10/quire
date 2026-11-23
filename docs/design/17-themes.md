@@ -1,6 +1,6 @@
 # 17. 테마와 스타일 변수
 
-- 상태: 7단계 진행 중 (T-1 토큰·바뀜 감지, T-2 테마 셋 × 라이트·다크, T-4 연속 보기 구현. 클래스·SCSS 공개(T-3)·집중 모드는 나중, §10)
+- 상태: 7단계 완료 (T-1 토큰·바뀜 감지, T-2 테마 셋 × 라이트·다크, T-3 공개 이름·`tokens.scss`, T-4 연속 보기. 집중 모드·고대비는 나중, §10)
 - 범위: 편집기 화면의 모양(크롬과 캔버스 그리기), 테마, 보기 모드, 사용자가 덮어쓸 수 있는 CSS 변수(공개 API).
 - 바탕: 04(렌더링·접근성), 08(통합·임베드), 10(서식·스타일), 12(조판, 기준 문서 세트).
 
@@ -239,7 +239,48 @@ editor.refreshTheme(); // 앱이 스타일시트를 바꾼 뒤
   - 골든 시험이 문서마다 편집 기호를 켜고 연속 보기로 바꿔 레이아웃 요약과 저장 문서(정본)가 그대로인지 본다 (`scripts/golden.mjs`의 "편집 기호" 열, CI).
   - 예제: Word식 홈 › 단락의 ¶, Google Docs식·react-full 보기 › 편집 기호 표시, Notion식 ··· 메뉴.
 - 주석 범위 색(댓글·고른 주석)은 변수로 열지 않았다 (나중).
-- 나중: 클래스 이름 고정과 `tokens.scss`(T-3), 집중 모드·떠 있는 서식 막대(T-4 일부: 예제 앱이 앱 쪽에서 만든다), 어두운 종이 예제(T-5), 고대비 모드, 협업 팔레트 변수.
+- 나중: 집중 모드·떠 있는 서식 막대(T-4 일부: 예제 앱이 앱 쪽에서 만든다), 어두운 종이 예제(T-5), 고대비 모드, 협업 팔레트 변수.
 - **스타일 예제** (Next.js + Tailwind + shadcn/ui): 같은 편집기를 Google Docs식(`examples/next-shadcn`)·Word식(`examples/next-word`: 리본, 클래식·인쇄 모양)·Notion식(`examples/next-notion`: 미니멀·연속 보기, `/` 메뉴, 떠 있는 서식 막대)으로 꾸민다. Notion식의 어두운 화면은 앱 CSS가 `.dark .quire { --quire-page; --quire-text … }`를 덮어써 문서 면까지 어둡게 한다 (T-5 "어두운 종이"를 예제로).
 - 앱 명령용 공개 API를 더했다: `replaceRange(from, to, text)`, `insertText(text)` (Notion식 `/` 메뉴가 "/찾을 말"을 지울 때).
 
+### 10.1 공개 이름 (T-3, 2026-11-23)
+
+§4의 표는 설계 때의 후보이고, **지금 공개 API는 이 절의 목록이다**. 사용자 CSS가 직접 쓰는 약속이라 이름을 바꾸려면 판을 올리고 한 판 동안 옛 이름도 읽는다 (§9 O-45). 시험(`theme.test.ts`)이 이 표, `THEME_VARIABLES`, 기본 스타일시트, `tokens.scss`가 같은지 본다. §4에 있지만 여기 없는 변수(`--quire-background`·`--quire-radius`·`--quire-remote-*`·`--quire-hf-dim` 등)는 아직 없다: 편집기가 도구 막대·대화상자를 그리지 않고(앱 몫), 협업 팔레트·편집 중 흐림은 고정값이다.
+
+| 변수 | 쓰임 | 클래식 라이트 기본값 |
+|---|---|---|
+| `--quire-desk` | 쪽 바깥 책상 (연속 보기에서는 종이 색으로 칠한다) | `#e9e9ec` |
+| `--quire-page` | 쪽 종이 | `#ffffff` |
+| `--quire-page-shadow` | 쪽 그림자, `box-shadow` 한 겹 (`none`이면 없음) | `0 1px 8px rgba(0, 0, 0, 0.12)` |
+| `--quire-page-border` | 쪽 테두리 색 (`none`이면 없음) | `none` |
+| `--quire-text` | 색이 지정되지 않은 문서 글자 (PDF는 따르지 않는다) | `#1d1d1f` |
+| `--quire-caret` | 캐럿 | `var(--quire-text)` |
+| `--quire-preedit` | 한글 조합 중 밑줄 | `var(--quire-text)` |
+| `--quire-accent` | 강조 (손잡이, 끌어 놓기 선의 기본) | `#3884ff` |
+| `--quire-selection` | 선택 (포커스 있음) | `rgba(56, 132, 255, 0.28)` |
+| `--quire-selection-inactive` | 선택 (포커스 없음) | `rgba(0, 0, 0, 0.12)` |
+| `--quire-mark` | 편집 기호: ¶, 쪽·단·구역 나눔 점선, 단 구분선 | `#9a9aa2` |
+| `--quire-field` | 머리말·꼬리말 필드 바탕 | `#e4e4ea` |
+| `--quire-grip` | 문단 손잡이 | `#a1a1a6` |
+| `--quire-grip-active` | 문단 손잡이 (누름) | `var(--quire-accent)` |
+| `--quire-drop-line` | 끌어 놓기 선 | `var(--quire-accent)` |
+| `--quire-drag-source` | 끌고 있는 문단 바탕 | `rgba(56, 132, 255, 0.10)` |
+| `--quire-table-border` | 테두리가 지정되지 않은 표의 선 | `#8e8e93` |
+| `--quire-placeholder` | 아직 조립하지 않은 쪽·그림 자리 바탕 | `#e9e9ec` |
+| `--quire-placeholder-text` | 자리표시 글자, 나눔 배지 글자 | `#6e6e73` |
+
+- **클래스** (`THEME_CLASSES`): `.quire` 호스트, `.quire-scroller` 스크롤 상자, `.quire-canvas` 쪽 캔버스, `.quire-caret` 캐럿. 자리·크기·책상 색은 편집기가 인라인으로 정하므로, 클래스로는 그 밖의 모양(스크롤 막대, 커서, 캐럿 모양 등)만 바꾼다. §6의 도구 막대·대화상자 클래스는 편집기가 그런 UI를 만들 때 쓴다 (지금은 없음).
+- **상태 속성** (`THEME_ATTRIBUTES`): 호스트의 `data-quire-theme`(classic·minimal·modern), `data-quire-scheme`(light·dark, `auto`는 계산된 값), `data-quire-page-view`(print·continuous).
+- **타입**: `ThemeVariable`(이름 합집합), `QuireThemeTokens`(변수 → 값, 일부만). `themeDeclarations(tokens)`는 CSS 선언 글을 만든다 (`host.style.cssText += …`).
+  ```ts
+  const brand: QuireThemeTokens = { '--quire-accent': '#e11d48', '--quire-page': '#fffdf7' };
+  host.style.cssText += themeDeclarations(brand);
+  ```
+- **SCSS** (`@quire/editor/tokens.scss`): `$quire-tokens` 맵(위 기본값), `theme($overrides)` 믹스인(넘긴 것만 쓴다: 기본값을 다시 쓰면 미니멀·모던·다크 값을 덮는다), `token($name)` 함수(변수 이름). 모르는 이름은 컴파일 오류다. Sass의 패키지 가져오기(`pkg:`, `NodePackageImporter`)로 읽는다.
+  ```scss
+  @use 'pkg:@quire/editor/tokens.scss' as quire;
+  .quire { @include quire.theme((accent: #e11d48, page-shadow: none)); }
+  .my-toolbar { border-color: var(quire.token(accent)); }
+  ```
+  sass 1.80으로 컴파일해 결과와 오타 오류를 확인했다 (저장소에는 sass 의존이 없어 CI는 맵·기본값 일치만 본다).
+- 배포 패키지는 `tokens.scss`를 함께 싣고 `exports["./tokens.scss"]`로 연다 (`scripts/build-packages.mjs`).
