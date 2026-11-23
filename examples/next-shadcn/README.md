@@ -9,7 +9,7 @@ Next.js 16 App Router에서 Quire 편집기의 기능을 모두 보여 주는 �
 |---|---|
 | ![메뉴](screenshots/menu.webp) Menubar: 서식 › 한글 조판 | ![표 도구](screenshots/table.webp) 표 안: 상황별 표 도구 줄 |
 | ![제안](screenshots/suggestions.webp) Tabs: 제안 수락·거부 | ![쪽 설정](screenshots/page-setup.webp) Dialog: 쪽 설정 |
-| ![소식지](screenshots/newsletter.webp) 예제 문서 소식지: 구역마다 다른 다단 | |
+| ![소식지](screenshots/newsletter.webp) 예제 문서 소식지: 구역마다 다른 다단 | ![영어 화면](screenshots/english.webp) 영어 화면 (보기 › 언어, `?lang=en`) |
 
 ## 실행
 
@@ -22,6 +22,23 @@ npm run dev        # http://localhost:5307
 ```
 
 기능은 [react-full](../react-full#담은-기능)과 같습니다: 메뉴 막대 8개, 도구 막대, 상황별 줄(표·그림·머리말/꼬리말·각주), 개요, 댓글·제안 창, 찾기·바꾸기, 쪽 설정, 오른쪽 클릭, 상태 줄, 저장 6형식.
+
+## 언어 (한국어 · English)
+
+화면 전체가 한국어·영어 두 벌입니다. 보기 › 언어에서 바꾸거나 `?lang=en`으로 열면 되고, 고른 언어는 브라우저에 기억합니다. 문서 내용은 바뀌지 않습니다.
+
+- **메시지 표** ([`lib/messages.ts`](lib/messages.ts)): 앱 문구의 `ko`·`en`. `en`은 `Record<AppMessageKey, string>`이라 빠진 키가 타입 오류다.
+- **편집기 메시지 장치에 덧붙이기** ([`lib/i18n.tsx`](lib/i18n.tsx)): `new Messages(locale, { ko, en })`(`@quire/editor`). 그래서 `t()`는 앱 키와 편집기 키(`attr.bold`, `section.nextPage`, `spell.addWord` 등)를 모두 알고, 자리표시·복수형(`{count, plural, one {# page} other {# pages}}`)도 같은 문법이다.
+- **편집기도 같이**: 언어가 바뀌면 `editor.setLocale(locale)` — 캔버스 표시(나눔 표시 등), 제안 요약, 접근성 이름. 처음엔 `useQuire({ locale })`.
+- 공통 코드([`lib/quire-app.ts`](lib/quire-app.ts))의 문구는 인자로 받는다: `documentTitle(h, t('app.untitled'))`, `checkPageForm(f, { negative, tooSmall })`.
+- 가져오기 보고의 요소 이름("가로줄" 등)은 변환 패키지 문구라 아직 한국어다 (설계 18 §9 L-5).
+
+```tsx
+const { t, locale, setLocale } = useI18n();
+<MenubarRadioGroup value={locale} onValueChange={(v) => setLocale(v as Locale)}>…
+<Item onSelect={a.newDoc}>{t('file.new')}</Item>
+<span>{t('status.pages', { count: ui.pages })}</span>   // "2쪽" / "2 pages"
+```
 
 ## 쓴 shadcn 컴포넌트
 
@@ -49,6 +66,7 @@ npm run dev        # http://localhost:5307
 | [`components/ui/`](components/ui) | shadcn 컴포넌트 (CLI로 받음) |
 | [`lib/quire-app.ts`](lib/quire-app.ts) | UI가 아닌 공통 코드 ([원본](../shared/quire-app.ts)) |
 | [`lib/use-ui.ts`](lib/use-ui.ts) | `useUi`, `useAct` |
+| [`lib/messages.ts`](lib/messages.ts), [`lib/i18n.tsx`](lib/i18n.tsx) | 앱 메시지 표(ko·en), `I18nProvider`·`useI18n`·`useT` |
 
 ## 핵심 코드
 

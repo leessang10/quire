@@ -16,8 +16,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 import { Toggle } from '@/components/ui/toggle';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { fonts } from '@/lib/quire-demo';
-import { DemoSpellChecker, OPEN_ACCEPT, SAMPLES, SAVE_FORMATS, documentTitle, emptyDoc, openAny, openPdf, sampleDocument, saveAny, tourDoc, type SaveFormat } from '@/lib/quire-app';
+import { DemoSpellChecker, OPEN_ACCEPT, SAVE_FORMATS, documentTitle, emptyDoc, openAny, openPdf, sampleDocument, saveAny, tourDoc, type SaveFormat } from '@/lib/quire-app';
 import { useAct, useUi } from '@/lib/use-ui';
+import { I18nProvider, initialLocale, useI18n, type Locale, type T } from '@/lib/i18n';
+import type { AppMessageKey } from '@/lib/messages';
 import { AppMenubar } from './AppMenubar';
 import { Toolbar } from './Toolbar';
 import { ContextBar } from './ContextBar';
@@ -26,7 +28,21 @@ import { InfoDialog, PageSetupDialog, PromptDialog, ShortcutsBody, WordCountBody
 
 type DialogKind = 'page' | 'link' | 'alt' | 'count' | 'keys' | 'about' | 'report' | null;
 
+/** 저장 형식 이름 (Quire·HWPX만 언어에 따라 다르다) */
+export const formatLabel = (t: T, f: { kind: string; label: string }) => (f.kind === 'quire' ? t('format.quireDoc') : f.kind === 'hwpx' ? t('format.hwpxDoc') : f.label);
+
+/** 바깥: 화면 언어를 정하고 메시지를 내려 준다 */
 export default function QuireApp() {
+  const [locale, setLocale] = useState<Locale>(initialLocale);
+  return (
+    <I18nProvider locale={locale} onChange={setLocale}>
+      <App />
+    </I18nProvider>
+  );
+}
+
+function App() {
+  const { t, locale } = useI18n();
   const [count, setCount] = useState<WordCount | null>(null);
   const [find, setFind] = useState<{ replace: boolean; key: number } | null>(null);
   const [panels, setPanels] = useState({ outline: true, review: true });
@@ -38,6 +54,7 @@ export default function QuireApp() {
   const spell = useMemo(() => new DemoSpellChecker(), []);
   const ctl = useQuire({
     fonts,
+    locale,
     plugins: [wordCountPlugin((c) => setCount(c)), highlightWordsPlugin(['Quire'])],
     onFindRequest: (replace) => setFind({ replace, key: Date.now() }),
     onContextMenu: (_e, s, items) => {
@@ -52,7 +69,12 @@ export default function QuireApp() {
   const editor = (ctl.handle?.editor as Editor | undefined) ?? null;
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
-  const title = ctl.handle ? documentTitle(ctl.handle) : 'Quire';
+  const title = ctl.handle ? documentTitle(ctl.handle, t('app.untitled')) : 'Quire';
+
+  // 앱 언어를 바꾸면 편집기 화면 글(캔버스 표시·접근성 이름)도 같이
+  useEffect(() => {
+    editor?.setLocale(locale);
+  }, [editor, locale]);
 
   // 문서를 바꾸면 글자 수 플러그인이 다시 세게 한다 (편집할 때만 세므로)
   const load: typeof ctl.load = useCallback(
@@ -70,21 +92,22 @@ export default function QuireApp() {
   }, [ctl, load]);
 
   const actions = {
-    newDoc: () => void load(emptyDoc()).then(() => toast('새 문서')),
-    tour: () => void tourDoc().then(({ doc, assets }) => load(doc, assets).then(() => toast('기능 둘러보기 문서를 열었습니다'))),
+    newDoc: () => void load(emptyDoc()).then(() => toast(t('toast.newDoc'))),
+    tour: () => void tourDoc().then(({ doc, assets }) => load(doc, assets).then(() => toast(t('toast.tour')))),
     sample: (id: string) =>
       void sampleDocument(id)
         .then((d) => load(d))
-        .then(() => toast(`예제 문서: ${SAMPLES.find((s) => s.id === id)?.label}`))
+        .then(() => toast(t('toast.sample', { name: t(`sample.${id}` as AppMessageKey) })))
         .catch((e: unknown) => toast.error(String(e))),
     open: () => fileInput.current?.click(),
     save: (kind: SaveFormat) => {
       const h = ctl.handle;
       if (!h) return;
-      toast.promise(saveAny(h, kind), {
-        loading: '저장하는 중…',
-        success: (n) => `${SAVE_FORMATS.find((f) => f.kind === kind)?.label}로 저장했습니다 (${(n / 1024).toFixed(1)} KB)`,
-        error: (e) => `저장하지 못했습니다: ${String(e)}`,
+      const format = SAVE_FORMATS.find((f) => f.kind === kind);
+      toast.promise(saveAny(h, kind, documentTitle(h, t('app.untitled'))), {
+        loading: t('toast.saving'),
+        success: (n) => t('toast.saved', { format: format ? formatLabel(t, format) : kind, size: (n / 1024).toFixed(1) }),
+        error: (e) => t('toast.saveFailed', { error: String(e) }),
       });
     },
     print: () => ctl.handle && void openPdf(ctl.handle),
@@ -92,7 +115,7 @@ export default function QuireApp() {
     link: () => setDialog('link'),
     image: () => imageInput.current?.click(),
     comment: () => {
-      if (!ui?.hasSelection) return void toast('먼저 댓글을 달 글을 고르세요');
+      if (!ui?.hasSelection) return void toast(t('toast.needSelection'));
       setPanels((p) => ({ ...p, review: true }));
       setComposing(true);
     },
@@ -141,40 +164,40 @@ export default function QuireApp() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h1 className="truncate text-base font-medium">{title}</h1>
-              <Badge variant="secondary">전체 기능 예제</Badge>
+              <Badge variant="secondary">{t('app.badge')}</Badge>
             </div>
             <AppMenubar ui={ui} act={act} a={actions} panels={panels} />
           </div>
           <div className="flex items-center gap-1">
-            {panelToggle('outline', '개요', <PanelLeft />)}
+            {panelToggle('outline', t('view.outline'), <PanelLeft />)}
             {panelToggle(
               'review',
-              '댓글·제안',
+              t('view.review'),
               <>
                 <PanelRight />
                 {ui && ui.threads + ui.suggestions > 0 && <Badge className="h-4 min-w-4 px-1 text-[10px]">{ui.threads + ui.suggestions}</Badge>}
               </>,
             )}
             <Tooltip>
-              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="댓글 달기" onClick={actions.comment} />}>
+              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t('menu.addComment')} onClick={actions.comment} />}>
                 <MessageSquarePlus />
               </TooltipTrigger>
-              <TooltipContent>댓글 달기 (Ctrl+Alt+M)</TooltipContent>
+              <TooltipContent>{t('menu.addCommentKey')}</TooltipContent>
             </Tooltip>
             <div className="ml-1 flex">
               <Button size="sm" className="rounded-r-none" onClick={() => actions.save('quire')}>
-                저장
+                {t('file.save')}
               </Button>
               <DropdownMenu>
-                <DropdownMenuTrigger render={<Button size="icon-sm" aria-label="다른 형식으로 저장" className="rounded-l-none border-l border-primary-foreground/20" />}>
+                <DropdownMenuTrigger render={<Button size="icon-sm" aria-label={t('file.saveAs')} className="rounded-l-none border-l border-primary-foreground/20" />}>
                   <ChevronDown />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52" finalFocus={false}>
                   <DropdownMenuGroup>
-                    <DropdownMenuLabel>내려받기</DropdownMenuLabel>
+                    <DropdownMenuLabel>{t('file.download')}</DropdownMenuLabel>
                     {SAVE_FORMATS.map((f) => (
                       <DropdownMenuItem key={f.kind} onClick={() => actions.save(f.kind)}>
-                        {f.label}
+                        {formatLabel(t, f)}
                         <span className="ml-auto text-xs text-muted-foreground">{f.ext}</span>
                       </DropdownMenuItem>
                     ))}
@@ -200,25 +223,25 @@ export default function QuireApp() {
             {s && (
               <>
                 <ContextMenuGroup>
-                  <ContextMenuLabel className="text-destructive">{s.message ?? (s.kind === 'spacing' ? '띄어쓰기' : s.kind === 'grammar' ? '문법' : '맞춤법')}</ContextMenuLabel>
+                  <ContextMenuLabel className="text-destructive">{s.message ?? t(s.kind === 'spacing' ? 'menu.spacing' : s.kind === 'grammar' ? 'menu.grammar' : 'menu.spelling')}</ContextMenuLabel>
                   {s.suggestions.map((g) => (
                     <ContextMenuItem key={g} className="font-semibold" onClick={() => act(() => s.apply(g))}>
                       {g}
                     </ContextMenuItem>
                   ))}
-                  {!s.suggestions.length && <ContextMenuItem disabled>고칠 말 없음</ContextMenuItem>}
-                  <ContextMenuItem onClick={() => act(() => s.ignore())}>모두 무시</ContextMenuItem>
-                  <ContextMenuItem onClick={() => act(() => s.addWord())}>사전에 더하기</ContextMenuItem>
+                  {!s.suggestions.length && <ContextMenuItem disabled>{t('spell.noSuggestions')}</ContextMenuItem>}
+                  <ContextMenuItem onClick={() => act(() => s.ignore())}>{t('menu.ignoreAll')}</ContextMenuItem>
+                  <ContextMenuItem onClick={() => act(() => s.addWord())}>{t('spell.addWord')}</ContextMenuItem>
                 </ContextMenuGroup>
                 <ContextMenuSeparator />
               </>
             )}
             <ContextMenuGroup>
               <ContextMenuItem disabled={!ui?.hasSelection} onClick={actions.comment}>
-                댓글 달기
+                {t('menu.addComment')}
               </ContextMenuItem>
-              <ContextMenuItem onClick={actions.link}>링크…</ContextMenuItem>
-              <ContextMenuItem onClick={() => actions.find(false)}>찾기</ContextMenuItem>
+              <ContextMenuItem onClick={actions.link}>{t('insert.link')}</ContextMenuItem>
+              <ContextMenuItem onClick={() => actions.find(false)}>{t('edit.find')}</ContextMenuItem>
             </ContextMenuGroup>
             {ctx.items.length > 0 && (
               <>
@@ -250,13 +273,13 @@ export default function QuireApp() {
           try {
             const dropped = await openAny(ctl.handle, f);
             ctl.run('wordCount.report');
-            toast.success(`${f.name}을(를) 열었습니다`);
+            toast.success(t('toast.opened', { name: f.name }));
             if (Object.keys(dropped).length) {
               setReport({ name: f.name, dropped });
               setDialog('report');
             }
           } catch (err) {
-            toast.error(`열지 못했습니다: ${err instanceof Error ? err.message : String(err)}`);
+            toast.error(t('toast.openFailed', { error: err instanceof Error ? err.message : String(err) }));
           }
         }}
       />
@@ -275,48 +298,45 @@ export default function QuireApp() {
       <PageSetupDialog editor={editor} open={dialog === 'page'} onClose={() => setDialog(null)} />
       <PromptDialog
         open={dialog === 'link'}
-        title="링크"
-        description="고른 글에 링크를 겁니다. http, https, mailto, tel 주소만 걸 수 있습니다."
-        label="주소"
+        title={t('link.title')}
+        description={t('link.description')}
+        label={t('link.label')}
         placeholder="https://"
         initial={ui?.marks.link ?? ''}
-        okLabel="걸기"
-        removeLabel={ui?.marks.link ? '링크 지우기' : undefined}
-        validate={(v) => (!ui?.hasSelection && !ui?.marks.link ? '먼저 링크를 걸 글을 고르세요.' : v && !safeLink(v) ? '걸 수 없는 주소입니다.' : null)}
+        okLabel={t('link.ok')}
+        removeLabel={ui?.marks.link ? t('link.remove') : undefined}
+        validate={(v) => (!ui?.hasSelection && !ui?.marks.link ? t('link.needSelection') : v && !safeLink(v) ? t('link.invalid') : null)}
         onSubmit={(v) => act((e) => e.setMark('link', v ? safeLink(v)! : undefined))}
         onClose={() => setDialog(null)}
       />
       <PromptDialog
         open={dialog === 'alt'}
-        title="그림 대체 텍스트"
-        description="화면 읽기 프로그램이 그림 대신 읽는 설명입니다."
-        label="설명"
+        title={t('alt.title')}
+        description={t('alt.description')}
+        label={t('alt.label')}
         initial={ui?.object?.alt ?? ''}
         onSubmit={(v) => act((e) => e.setObjectAttr('alt', v || undefined))}
         onClose={() => setDialog(null)}
       />
-      <InfoDialog open={dialog === 'count'} title="글자 수" description="글자 수 플러그인(wordCountPlugin)이 센 본문 값입니다." onClose={() => setDialog(null)}>
+      <InfoDialog open={dialog === 'count'} title={t('count.title')} description={t('count.description')} onClose={() => setDialog(null)}>
         <WordCountBody count={count} pages={ui?.pages ?? 0} />
       </InfoDialog>
-      <InfoDialog open={dialog === 'keys'} title="단축키" wide onClose={() => setDialog(null)}>
+      <InfoDialog open={dialog === 'keys'} title={t('help.shortcuts')} wide onClose={() => setDialog(null)}>
         <ShortcutsBody />
       </InfoDialog>
-      <InfoDialog open={dialog === 'report'} title="가져오며 버린 요소" description={`${report?.name ?? ''}에서 Quire가 담지 못하는 요소를 버렸습니다.`} onClose={() => setDialog(null)}>
+      <InfoDialog open={dialog === 'report'} title={t('report.title')} description={t('report.description', { name: report?.name ?? '' })} onClose={() => setDialog(null)}>
         <ul className="list-disc pl-5">
           {Object.entries(report?.dropped ?? {}).map(([k, n]) => (
-            <li key={k}>
-              {k}: {n}개
-            </li>
+            <li key={k}>{t('report.item', { what: k, count: n })}</li>
           ))}
         </ul>
       </InfoDialog>
-      <InfoDialog open={dialog === 'about'} title="이 예제에 대해" wide onClose={() => setDialog(null)}>
+      <InfoDialog open={dialog === 'about'} title={t('help.about')} wide onClose={() => setDialog(null)}>
         <div className="space-y-2 leading-6 text-muted-foreground">
-          <p className="text-foreground">Next.js App Router + Tailwind + shadcn/ui로 만든 Quire 전체 기능 예제입니다.</p>
-          <p>
-            편집기는 <code>@quire/react</code>의 <code>useQuire</code>·<code>QuireEditor</code>로 붙이고(브라우저에서만, <code>ssr: false</code>), 메뉴·도구 막대·대화상자는 모두 shadcn 컴포넌트입니다.
-          </p>
-          <p>실시간 협업·버전 이력은 동기화 서버가 필요해 넣지 않았습니다.</p>
+          <p className="text-foreground">{t('about.lead')}</p>
+          <p>{t('about.body')}</p>
+          <p>{t('about.i18n')}</p>
+          <p>{t('about.sync')}</p>
         </div>
       </InfoDialog>
     </div>

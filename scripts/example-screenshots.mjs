@@ -118,6 +118,9 @@ const NOTION_SHOTS = [
   { name: 'dark', about: '어두운 화면: 문서 면까지 (앱 CSS로 --quire-page 덮어쓰기)', run: async (page) => { await click(page, 'text:어둡게'); await sleep(800); } },
 ];
 
+/** Google Docs식 예제: 전체 기능 장면에 영어 화면을 더한다 (마지막에: 고른 언어를 브라우저가 기억한다) */
+const SHADCN_SHOTS = [...FULL_SHOTS, { name: 'english', path: '/?lang=en', about: '영어 화면 (앱 메시지 + 편집기 setLocale)', run: async () => {} }];
+
 const BASIC = [{ name: 'screenshot', about: '첫 화면', run: async () => {} }];
 
 const EXAMPLES = [
@@ -127,7 +130,7 @@ const EXAMPLES = [
   { id: 'vue', args: (p) => vite('vue', p), shots: BASIC },
   { id: 'svelte', args: (p) => vite('svelte', p), shots: BASIC },
   { id: 'react-full', args: (p) => vite('react-full', p), shots: FULL_SHOTS },
-  { id: 'next-shadcn', args: (p) => next('next-shadcn', p), shots: FULL_SHOTS },
+  { id: 'next-shadcn', args: (p) => next('next-shadcn', p), shots: SHADCN_SHOTS },
   { id: 'next-word', args: (p) => next('next-word', p), shots: WORD_SHOTS },
   { id: 'next-notion', args: (p) => next('next-notion', p), shots: NOTION_SHOTS },
 ];
@@ -153,7 +156,7 @@ async function main() {
           await page.send('Page.enable');
           await page.send('Runtime.enable');
           await page.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
-          await page.send('Page.navigate', { url: `http://localhost:${port}/` });
+          await page.send('Page.navigate', { url: `http://localhost:${port}${shot.path ?? '/'}` });
           await ready(page);
           await shot.run(page);
           const { data } = await page.send('Page.captureScreenshot', { format: 'webp', quality: 82 });
