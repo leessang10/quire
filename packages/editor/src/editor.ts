@@ -1428,10 +1428,11 @@ export class Editor {
             ctx.fillRect(X(a), y + ln.height - 5, X(b) - X(a), 1.5);
           }
         }
-        // 편집 기호 (12 §3.1): 문단 끝 ¶, 문단 뒤의 쪽·단·구역 나눔. 글 위에 반투명하게 덧그릴 뿐 자리를 차지하지 않는다
-        if (isBody && ln.index === para.lines.length - 1) {
+        // 편집 기호 (12 §3.1): 문단 끝 ¶ (본문·표 칸·머리말·꼬리말·각주 모두), 본문 문단 뒤의 쪽·단·구역 나눔.
+        // 글 위에 반투명하게 덧그릴 뿐 자리를 차지하지 않는다
+        if (ln.index === para.lines.length - 1) {
           if (this.marksShown) this.drawPilcrow(X(ln.end), y, ln.height);
-          const brk = this.breakAfter(l.index);
+          const brk = isBody ? this.breakAfter(l.index) : null;
           if (brk && this.breakVisible(l.index)) {
             const x0 = l.px + para.frameLeft;
             this.drawBreakMark(brk, x0, x0 + para.width, y + ln.height + 2);
