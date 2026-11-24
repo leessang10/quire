@@ -362,3 +362,9 @@
 - npm이 새 패키지를 **단계 게시(staged publishing)**로 받았다: 이름마다 `0.0.0-stage` 자리표시(빈 껍데기, `latest`)가 먼저 생기고, 실제 0.1.0이 뒤따라 공개됐다. 레지스트리 응답은 한동안 자리표시만 보였다(캐시). `@quiredoc/layout`은 0.1.0이 빠져 있어 한 번 더 돌려 올렸다 (이미 있는 판은 건너뛴다). 계정의 Staged Packages 화면에는 기다리는 것이 없었다.
 - 확인: 10개 모두 `latest` = 0.1.0 (MIT, fonts는 OFL-1.1). 빈 폴더에서 `npm install @quiredoc/sdk @quiredoc/react @quiredoc/convert @quiredoc/pdf @quiredoc/fonts`가 0건 취약점으로 설치되고, Node에서 Markdown 가져오기(버린 요소 보고 `horizontalRule`)·HWPX·Markdown 내보내기, `@quiredoc/editor/i18n/en`, `tokens.scss`, 글꼴 조각이 동작한다.
 - 남은 것: 패키지마다 Trusted Publisher(GitHub Actions, `leessang10/quire`, `release.yml`) 등록. 그 뒤 출시는 태그로.
+
+**Trusted Publisher 설정 (2026-11-24 결정: 완전 자동)**
+
+- 패키지마다 npm Settings → Trusted Publisher → GitHub Actions: 소유자 `leessang10`, 저장소 `quire`, 워크플로 `release.yml`, 환경 이름 비움. **Allowed actions에서 "Allow npm publish"를 켠다**: npm 기본값은 `npm stage publish`만 허용이라, 켜지 않으면 워크플로의 `npm publish`가 거절된다. 태그를 푸시하면 2FA 승인 없이 바로 공개된다 (사용자 선택. 대안은 워크플로가 `npm stage publish`(npm 12)만 하고 사람이 Staged Packages에서 승인하는 방식).
+- 등록하면 상태가 "Pending validation"이고, 정해진 기한(처음 등록에서는 약 2일, 2026-11-26 08:23 UTC) 안에 이 워크플로로 한 번 올려야 확인된다. 기한을 넘기면 다시 등록해야 할 수 있다. 다음 판(예: 0.1.1) 태그를 기한 안에 푸시하면 된다 (사용자가 직접).
+- 10개 패키지 모두에 같은 설정이 있어야 한다. 하나라도 빠지면 그 패키지에서 `release.mjs`가 멈추고, 고친 뒤 다시 돌리면 이미 올라간 것은 건너뛴다.
