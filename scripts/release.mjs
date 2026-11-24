@@ -1,6 +1,9 @@
 // 출시 (16 §10.8): 빌드한 @quiredoc/* 패키지(.build/packages)를 검사하고 npm에 의존 순서대로 올린다.
 //   node scripts/build-packages.mjs && node scripts/release.mjs             → 검사 + npm publish --dry-run (기본)
 //   node scripts/release.mjs --publish                                     → 실제로 올린다 (npm 로그인 또는 NODE_AUTH_TOKEN)
+//   node scripts/release.mjs --publish --otp=123456                        → 2단계 인증 코드를 미리 준다
+//
+// - 실제로 올릴 때는 npm을 이 터미널에 그대로 붙여 돌린다: 2단계 인증 코드나 브라우저 인증을 npm이 직접 묻는다.
 //
 // - 이미 올라간 판(이름@판)은 건너뛴다: 중간에 실패해도 다시 돌리면 남은 것만 올린다.
 // - 판이 -alpha.1 같은 시험판이면 dist-tag를 next로 (latest를 건드리지 않는다).
@@ -8,11 +11,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const built = join(root, '.build', 'packages');
 const publish = process.argv.includes('--publish');
+const otp = process.argv.find((a) => a.startsWith('--otp='))?.slice('--otp='.length);
 /** 의존 순서 (build-packages.mjs와 같다) + 글꼴 */
 const ORDER = ['model', 'layout', 'shaping', 'editor', 'sync', 'convert', 'pdf', 'sdk', 'react', 'fonts'];
 const VERSION = process.env.QUIRE_VERSION || JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
@@ -74,8 +78,19 @@ for (const { dir, name } of pkgs) {
     console.log(`  ${name}@${VERSION}: 이미 있음, 건너뜀`);
     continue;
   }
-  const args = ['publish', '--access', 'public', '--tag', tag, ...(publish ? [] : ['--dry-run'])];
-  npm(args, dir);
+  const args = ['publish', '--access', 'public', '--tag', tag, ...(publish ? (otp ? [`--otp=${otp}`] : []) : ['--dry-run'])];
+  if (publish) {
+    // 터미널에 붙여 돌린다: npm이 OTP·브라우저 인증을 직접 묻는다 (출력을 가로채면 묻지 못하고 EOTP로 끝난다)
+    console.log(`  ${name}@${VERSION}: 올리는 중…`);
+    const cli = process.env.NPM_CLI;
+    const res = cli
+      ? spawnSync(process.execPath, [cli, ...args], { cwd: dir, stdio: 'inherit' })
+      : spawnSync('npm', args, { cwd: dir, stdio: 'inherit', shell: true });
+    if (res.status !== 0) {
+      console.error(`${name}@${VERSION}를 올리지 못했다. 고친 뒤 다시 돌리면 이미 올라간 패키지는 건너뛴다.`);
+      process.exit(res.status ?? 1);
+    }
+  } else npm(args, dir);
   console.log(`  ${name}@${VERSION}: ${publish ? '올림' : 'dry-run 통과'}`);
 }
 console.log(publish ? `완료: npm의 ${tag} 태그로 올렸다` : '완료 (dry-run): 실제로 올리려면 --publish');
