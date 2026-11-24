@@ -1,12 +1,17 @@
-// 배포용 패키지 빌드 (16 §8, 6-6)
+// 배포용 패키지 빌드 (16 §8, 6-6; 19 패키지 구성)
 //   node scripts/build-packages.mjs            → .build/packages/<이름>/ (ESM + 타입 + package.json) 과 .build/packs/*.tgz
 //
 // 저장소의 패키지는 개발용으로 소스(src/index.ts)를 그대로 내보낸다. 이 스크립트는 저장소를 바꾸지 않고
-// 1) tsc로 타입 선언(.d.ts)을, 2) Vite 라이브러리 모드로 패키지마다 ESM 묶음(dist/index.js)을 만들고,
-// 3) 배포용 package.json(exports → dist, 내부 의존 버전 고정)을 써서 4) npm pack 한다.
+// 1) tsc로 타입 선언(.d.ts)을, 2) Vite 라이브러리 모드로 배포 단위마다 ESM 묶음을 만들고,
+// 3) 배포용 package.json을 써서 4) npm pack 한다.
+//
+// 배포 단위 (19 §3): 저장소 폴더와 배포 패키지가 1:1이 아니다.
+// - @quiredoc/core = model·layout·shaping·editor·sdk 다섯 폴더를 packages/core/src/index.ts 하나로 묶는다 (서로의 가져오기가 묶음 안으로).
+// - 모듈(react·collab·convert·pdf)은 core를 peerDependency로 두고, 다섯 폴더 이름(@quiredoc/model 등)으로 가져온 것을
+//   결과 JS·타입에서 @quiredoc/core로 바꾼다. collab의 소스 폴더는 packages/sync (저장소 안 이름 @quiredoc/sync).
 // 글꼴 조각(@quiredoc/fonts)은 scripts/build-fonts.mjs의 결과(조각 + manifest.json)를 담는다.
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { build } from 'vite';
@@ -24,12 +29,29 @@ const meta = (dir) => ({
   bugs: { url: `${REPO}/issues` },
   publishConfig: { access: 'public' },
 });
-/** dist 밖에 함께 싣는 파일 (패키지 → 파일, exports에도 연다) */
-const EXTRA = { editor: ['tokens.scss'] };
-/** index 밖의 진입점 (패키지 → 하위 경로 → 소스). 편집기가 필요할 때 import()로 받는 번역도 같은 파일을 쓴다 (18 §5 나눠 싣기) */
-const ENTRIES = { editor: { 'i18n/en': 'src/i18n/en.ts' } };
-/** 의존 순서 (앞이 먼저) */
-const PACKAGES = ['model', 'layout', 'shaping', 'editor', 'sync', 'convert', 'pdf', 'sdk', 'react'];
+
+/** core에 묶는 저장소 폴더 (의존 순서) */
+const CORE_PARTS = ['model', 'layout', 'shaping', 'editor', 'sdk'];
+const CORE_NAMES = new Set(CORE_PARTS.map((p) => `@quiredoc/${p}`));
+/**
+ * 배포 단위: name = npm 이름(@quiredoc/<name>), dir = 저장소 폴더(packages/<dir>).
+ * entries = index 밖의 진입점(하위 경로 → 소스), extra = 함께 싣는 파일(배포 경로 → 소스), 둘 다 exports에도 연다
+ */
+const UNITS = [
+  {
+    name: 'core',
+    dir: 'core',
+    entries: { 'i18n/en': 'packages/editor/src/i18n/en.ts' }, // 편집기가 필요할 때 import()로 받는 번역도 같은 파일 (18 §5)
+    entryTypes: { 'i18n/en': 'editor/i18n/en.d.ts' },
+    extra: { 'tokens.scss': 'packages/editor/tokens.scss' },
+  },
+  { name: 'collab', dir: 'sync' },
+  { name: 'convert', dir: 'convert' },
+  { name: 'pdf', dir: 'pdf' },
+  { name: 'react', dir: 'react' },
+];
+/** 타입 선언을 낼 저장소 폴더 */
+const TYPE_DIRS = [...new Set([...CORE_PARTS, ...UNITS.map((u) => u.dir)])];
 
 const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
 const npm = (args, cwd) => {
@@ -37,6 +59,9 @@ const npm = (args, cwd) => {
   const cli = process.env.NPM_CLI;
   return cli ? execFileSync(process.execPath, [cli, ...args], { cwd, stdio: 'pipe' }).toString() : execFileSync('npm', args, { cwd, stdio: 'pipe', shell: true }).toString();
 };
+/** 폴더 안의 파일 (재귀) */
+const walk = (dir) => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? walk(join(dir, f)) : [join(dir, f)]));
+const posix = (p) => p.split(sep).join('/');
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, 'packs'), { recursive: true });
@@ -45,25 +70,35 @@ mkdirSync(join(out, 'packs'), { recursive: true });
 const tsconfig = {
   extends: '../tsconfig.json',
   compilerOptions: { noEmit: false, declaration: true, emitDeclarationOnly: true, outDir: './types', rootDir: '../packages', noUnusedLocals: false, skipLibCheck: true },
-  include: PACKAGES.map((p) => `../packages/${p}/src`),
+  include: TYPE_DIRS.map((p) => `../packages/${p}/src`),
   exclude: ['../packages/**/*.test.ts', '../packages/**/*.test-util.ts'],
 };
 writeFileSync(join(out, 'tsconfig.types.json'), JSON.stringify(tsconfig, null, 2));
 console.log('타입 선언…');
 execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '-p', join(out, 'tsconfig.types.json')], { stdio: 'inherit' });
 
-const manifests = Object.fromEntries(PACKAGES.map((p) => [p, readJson(join(root, 'packages', p, 'package.json'))]));
-
-for (const p of PACKAGES) {
-  const src = manifests[p];
-  const dest = join(out, 'packages', p);
+for (const unit of UNITS) {
+  const { name, dir } = unit;
+  const isCore = name === 'core';
+  const src = readJson(join(root, 'packages', dir, 'package.json'));
+  const dest = join(out, 'packages', name);
   mkdirSync(join(dest, 'dist'), { recursive: true });
-  const deps = { ...(src.dependencies ?? {}) };
-  for (const k of Object.keys(deps)) if (k.startsWith('@quiredoc/')) deps[k] = VERSION;
+
+  // 의존: core는 다섯 폴더의 바깥 의존을 모은다 (다섯 폴더끼리는 묶음 안). 모듈은 다섯 폴더 → core(peer)
+  const deps = {};
   const peers = { ...(src.peerDependencies ?? {}) };
-  const external = [...Object.keys(deps), ...Object.keys(peers)];
+  for (const [k, v] of Object.entries(isCore ? Object.assign({}, ...CORE_PARTS.map((p) => readJson(join(root, 'packages', p, 'package.json')).dependencies ?? {})) : (src.dependencies ?? {}))) {
+    if (CORE_NAMES.has(k) || k === '@quiredoc/core') {
+      if (!isCore) peers['@quiredoc/core'] = `^${VERSION}`;
+    } else if (k.startsWith('@quiredoc/')) throw new Error(`${name}: 다른 모듈(${k})에 의존하면 안 된다 (19 §2)`);
+    else deps[k] = v;
+  }
+  const externalNames = [...Object.keys(deps), ...Object.keys(peers)];
+  const external = (id) =>
+    (!isCore && id.startsWith('@quiredoc/')) || externalNames.some((e) => id === e || id.startsWith(`${e}/`)) || id.startsWith('node:');
+
   // 2) ESM 묶음: 의존 패키지는 밖에 둔다 (harfbuzzjs/dist/*.wasm 같은 하위 경로도)
-  console.log(`${src.name}…`);
+  console.log(`@quiredoc/${name}${dir !== name ? ` (packages/${dir})` : ''}…`);
   await build({
     configFile: false,
     logLevel: 'warn',
@@ -75,42 +110,61 @@ for (const p of PACKAGES) {
       sourcemap: true,
       target: 'es2022',
       lib: {
-        entry: { index: join(root, 'packages', p, 'src/index.ts'), ...Object.fromEntries(Object.entries(ENTRIES[p] ?? {}).map(([k, f]) => [k, join(root, 'packages', p, f)])) },
+        entry: { index: join(root, 'packages', dir, 'src/index.ts'), ...Object.fromEntries(Object.entries(unit.entries ?? {}).map(([k, f]) => [k, join(root, f)])) },
         formats: ['es'],
-        fileName: (_format, name) => `${name}.js`,
+        fileName: (_format, entryName) => `${entryName}.js`,
       },
-      rollupOptions: { external: (id) => external.some((e) => id === e || id.startsWith(`${e}/`)) || id.startsWith('node:') },
+      rollupOptions: { external },
     },
   });
-  // loro-crdt → loro-crdt/base64: 기본 브라우저 빌드는 .wasm을 ES 모듈로 가져와 앱마다 번들러 설정이 필요하다 (WASM을 담은 base64 빌드). 외부 의존은 별칭보다 먼저 정해지므로 결과에서 바꾼다)
-  const js = join(dest, 'dist', 'index.js');
-  writeFileSync(js, readFileSync(js, 'utf8').replace(/from "loro-crdt"/g, 'from "loro-crdt/base64"'));
-  // 타입: types/<p>/src → dist/types
-  cpSync(join(out, 'types', p, 'src'), join(dest, 'dist', 'types'), { recursive: true });
+  for (const f of walk(join(dest, 'dist')).filter((f) => f.endsWith('.js'))) {
+    let s = readFileSync(f, 'utf8');
+    // loro-crdt → loro-crdt/base64: 기본 브라우저 빌드는 .wasm을 ES 모듈로 가져와 앱마다 번들러 설정이 필요하다 (WASM을 담은 base64 빌드). 외부 의존은 별칭보다 먼저 정해지므로 결과에서 바꾼다
+    s = s.replace(/from "loro-crdt"/g, 'from "loro-crdt/base64"');
+    // 모듈: 저장소 안 이름(@quiredoc/model 등) → @quiredoc/core
+    if (!isCore) s = s.replace(/(["'])@quiredoc\/(model|layout|shaping|editor|sdk)\1/g, '$1@quiredoc/core$1');
+    writeFileSync(f, s);
+  }
+
+  // 타입: types/<dir>/src → dist/types. core는 다섯 폴더를 dist/types/<폴더>/에 두고 서로의 '@quiredoc/<폴더>'를 상대 경로로 바꾼다
+  const typesDir = join(dest, 'dist', 'types');
+  cpSync(join(out, 'types', dir, 'src'), typesDir, { recursive: true });
+  if (isCore) for (const p of CORE_PARTS) cpSync(join(out, 'types', p, 'src'), join(typesDir, p), { recursive: true });
+  for (const f of walk(typesDir).filter((f) => f.endsWith('.d.ts'))) {
+    const s = readFileSync(f, 'utf8').replace(/(["'])@quiredoc\/(model|layout|shaping|editor|sdk)\1/g, (_m, q, p) => {
+      if (!isCore) return `${q}@quiredoc/core${q}`;
+      let rel = posix(relative(dirname(f), join(typesDir, p, 'index')));
+      if (!rel.startsWith('.')) rel = `./${rel}`;
+      return `${q}${rel}${q}`;
+    });
+    writeFileSync(f, s);
+  }
+
   // 3) 배포용 package.json
   const pkg = {
-    name: src.name,
+    name: `@quiredoc/${name}`,
     version: VERSION,
-    description: src.description ?? `Quire ${p}`,
+    description: src.description ?? `Quire ${name}`,
     ...(src.keywords ? { keywords: src.keywords } : {}),
     license: 'MIT',
-    ...meta(`packages/${p}`),
+    ...meta(`packages/${dir}`),
     type: 'module',
     sideEffects: false,
     exports: {
       '.': { types: './dist/types/index.d.ts', import: './dist/index.js' },
-      ...Object.fromEntries(Object.keys(ENTRIES[p] ?? {}).map((k) => [`./${k}`, { types: `./dist/types/${k}.d.ts`, import: `./dist/${k}.js` }])),
-      ...(EXTRA[p] ? Object.fromEntries(EXTRA[p].map((f) => [`./${f}`, `./${f}`])) : {}) },
+      ...Object.fromEntries(Object.keys(unit.entries ?? {}).map((k) => [`./${k}`, { types: `./dist/types/${unit.entryTypes?.[k] ?? `${k}.d.ts`}`, import: `./dist/${k}.js` }])),
+      ...Object.fromEntries(Object.keys(unit.extra ?? {}).map((f) => [`./${f}`, `./${f}`])),
+    },
     module: './dist/index.js',
     types: './dist/types/index.d.ts',
-    files: ['dist', 'LICENSE', ...(EXTRA[p] ?? [])],
+    files: ['dist', 'LICENSE', ...Object.keys(unit.extra ?? {})],
     dependencies: deps,
     ...(Object.keys(peers).length ? { peerDependencies: peers } : {}),
   };
   writeFileSync(join(dest, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`);
-  for (const f of EXTRA[p] ?? []) cpSync(join(root, 'packages', p, f), join(dest, f));
+  for (const [to, from] of Object.entries(unit.extra ?? {})) cpSync(join(root, from), join(dest, to));
   cpSync(join(root, 'LICENSE'), join(dest, 'LICENSE'));
-  const readme = join(root, 'packages', p, 'README.md');
+  const readme = join(root, 'packages', dir, 'README.md');
   if (existsSync(readme)) cpSync(readme, join(dest, 'README.md'));
 }
 
@@ -161,9 +215,9 @@ if (!existsSync(join(fontsSrc, 'pretendard/manifest.json'))) {
 }
 
 // 4) npm pack
-for (const p of [...PACKAGES, 'fonts']) {
-  const dir = join(out, 'packages', p);
-  const name = npm(['pack', '--pack-destination', join(out, 'packs')], dir).trim().split('\n').pop();
-  console.log(`  ${relative(root, join(out, 'packs', name))}`);
+for (const name of [...UNITS.map((u) => u.name), 'fonts']) {
+  const dir = join(out, 'packages', name);
+  const file = npm(['pack', '--pack-destination', join(out, 'packs')], dir).trim().split('\n').pop();
+  console.log(`  ${relative(root, join(out, 'packs', file))}`);
 }
 console.log(`완료: ${readdirSync(join(out, 'packs')).length}개 tarball`);

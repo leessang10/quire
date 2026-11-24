@@ -1,0 +1,29 @@
+{
+  "name": "@quiredoc/core",
+  "description": "Quire core: canvas-based document editor with its own typesetting engine — editor, layout, Korean shaping, document model, saving and loading (.quire, canonical JSON)",
+  "keywords": [
+    "editor",
+    "wysiwyg",
+    "word-processor",
+    "canvas",
+    "typesetting",
+    "korean",
+    "hangul",
+    "ime"
+  ],
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./i18n/en": "../editor/src/i18n/en.ts",
+    "./tokens.scss": "../editor/tokens.scss"
+  },
+  "dependencies": {
+    "@quiredoc/editor": "*",
+    "@quiredoc/layout": "*",
+    "@quiredoc/model": "*",
+    "@quiredoc/sdk": "*",
+    "@quiredoc/shaping": "*"
+  }
+}

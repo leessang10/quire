@@ -1,19 +1,22 @@
-# @quiredoc/sync
+# @quiredoc/collab
 
-Quire collaboration and storage: CRDT sync (Loro), presence, version history, .quire files.
+Real-time collaboration for the Quire editor: CRDT sync (Loro, runnable in a Worker), presence with theme-aware palette colors, per-user undo, version history and comparison, and the history section of `.quire` files.
 
-Part of [Quire](https://github.com/leessang10/quire), a web document editor with canvas rendering and its own typesetting engine (real page layout, precise Korean typesetting, full IME control, large documents, collaboration).
+Part of [Quire](https://github.com/leessang10/quire). Requires `@quiredoc/core` (peer dependency). Saving and loading documents without collaboration needs only `@quiredoc/core`; add this package when several people edit the same document.
 
 ## Install
 
 ```sh
-npm install @quiredoc/sync
+npm install @quiredoc/core @quiredoc/collab
 ```
 
 ## Usage
 
-Real-time collaboration (CRDT via Loro, runnable in a Worker), presence with theme-aware palette colors, per-user undo, version history, the canonical JSON document (`QuireDoc`) and the `.quire` file format.
+- `startSyncWorker` / `serveSyncWorker`: run sync in a Worker and connect the editor to it.
+- `packQuireWithHistory({ loro })`: save a `.quire` file with its collaboration history; `restoreHistory(opened)`: reuse that history after `openQuire` (from core) when it matches the document.
 
 ## License
 
 MIT
+
+<!-- 저장소 안에서 이 패키지의 소스 폴더는 packages/sync이고 개발용 이름은 @quiredoc/sync다 (19 §3). -->
