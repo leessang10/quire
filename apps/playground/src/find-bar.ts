@@ -2,7 +2,7 @@
  * 찾기 막대 (15 §3.1): Ctrl+F 찾기, Ctrl+H 바꾸기. 편집기 위 오른쪽에 뜬다.
  * Enter 다음, Shift+Enter 앞, Esc 닫기. 결과는 편집기가 칠한다.
  */
-import type { Editor, FindStatus } from '@quire/editor';
+import type { Editor, FindStatus } from '@quiredoc/editor';
 
 export class FindBar {
   readonly el: HTMLElement;

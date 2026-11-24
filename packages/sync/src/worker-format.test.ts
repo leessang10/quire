@@ -3,7 +3,7 @@
  * 경우를 무작위 차례로 만든다. 모두 받은 뒤: 모든 피어가 같고, 메인 Doc = Worker Loro (서식 포함).
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { History, MARK_KEYS, type MarkKey, type Op } from '@quire/model';
+import { History, MARK_KEYS, type MarkKey, type Op } from '@quiredoc/model';
 import { SyncClient } from './client';
 import { SyncCore } from './core';
 import type { ToMain, ToWorker } from './protocol';

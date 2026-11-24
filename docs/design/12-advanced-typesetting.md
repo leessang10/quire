@@ -265,7 +265,7 @@ interface SectionProps {
 
 ### 구현
 
-- **프레임 열** (`@quire/layout` `document.ts`):
+- **프레임 열** (`@quiredoc/layout` `document.ts`):
   - `Frame { page, column, x, top, width, height }`, `PageBox`, `FrameSource { frame(k), page(p), pageAt(y), height(n) }`.
   - `UniformFrames`: 2단계까지의 모양 (프레임 k = 쪽 k, 본문 영역 하나). 프레임을 캐시하고 원점(표 셀)이 바뀌면 비운다.
   - `PagedLayout(…, frames = new UniformFrames(setup))`. 배치 상태 `(쪽, y)`는 이제 `(프레임 번호, 프레임 안 y)`다 (`PlacedPara.pageBefore·pageAfter`, 떠 있는 개체 배제 영역의 "쪽"도 프레임 번호).
@@ -294,14 +294,14 @@ interface SectionProps {
 
 ### 구현
 
-- **모델** (`@quire/model` `sections.ts`, `doc.ts`):
+- **모델** (`@quiredoc/model` `sections.ts`, `doc.ts`):
   - `SectionProps`(용지·여백·시작 방식, 3-4·3-6용 키는 자리만), `DEFAULT_SECTION`(A4, 여백 72pt), `LAST_SECTION`('last': 마지막 구역의 구역 맵 키), `PAPER_SIZES`, `fullSection`.
   - 문단 속성 `section`(구역 끝 ¶). 구역 맵은 Doc에 (목록 정의처럼): `setSection`·`sectionDef`·`sectionDefs`, 연산 `section`(실행 취소), 변경 기록 `sectionDef`(키 하나씩).
   - `sectionBreaks()`(구역 나눔 문단 번호, 구역 판마다 캐시)·`sectionOf(i)`(차례·ID). 구역 판은 `section` 속성, 문단 수, 구역 나눔 열이 바뀔 때 오른다.
   - 구역 나눔이 생기거나 사라지면(속성 변경, ¶를 지워 합침) 바뀐 구간을 **그 구역 첫 문단**부터로 넓힌다: 앞 문단들의 줄 폭이 바뀐다. 구역 설정을 바꾸면 그 구역 문단이 바뀐 구간이다.
   - Enter로 새 ¶를 만들 때 `section`은 이어받지 않는다: 구역 나눔은 원래 ¶와 함께 뒤쪽에 남는다 (나눔이 둘이 되지 않는다).
-- **동기화·저장** (`@quire/sync`): Loro 맵 `sections`(키 `<ID>|<키>`, 키마다 LWW). 브리지·Worker·클라이언트의 정의 경로(`readDefs`·`applyRemoteDefs`·미루기)를 그대로 탄다. 판 바꾸기(epoch)도 구역 설정을 맞춘다. 정본 JSON의 `sections`는 문서 순서, 마지막이 기본 구역(`id: 'last'`). 구역이 없는 문서는 지금까지와 같은 바이트열(`s1` 기본 구역 하나).
-- **레이아웃** (`@quire/layout` `sections.ts`): `SectionFrames`(FrameSource). 구역 = 런 (첫 프레임, 그 쪽, 쪽 모양을 정하는 첫 쪽과 그 위 y).
+- **동기화·저장** (`@quiredoc/sync`): Loro 맵 `sections`(키 `<ID>|<키>`, 키마다 LWW). 브리지·Worker·클라이언트의 정의 경로(`readDefs`·`applyRemoteDefs`·미루기)를 그대로 탄다. 판 바꾸기(epoch)도 구역 설정을 맞춘다. 정본 JSON의 `sections`는 문서 순서, 마지막이 기본 구역(`id: 'last'`). 구역이 없는 문서는 지금까지와 같은 바이트열(`s1` 기본 구역 하나).
+- **레이아웃** (`@quiredoc/layout` `sections.ts`): `SectionFrames`(FrameSource). 구역 = 런 (첫 프레임, 그 쪽, 쪽 모양을 정하는 첫 쪽과 그 위 y).
   - 쪽 모양(용지·위아래 여백)은 그 쪽을 가진 구역, 줄 폭·x(좌우 여백)는 프레임의 구역. 쪽들은 기본 용지 폭의 가운데 축에 맞춘다 (가로 쪽은 왼쪽으로 나온다).
   - nextPage: 다음 쪽. evenPage·oddPage: 쪽 번호(1부터)가 맞지 않으면 빈 쪽 하나 (새 구역의 쪽, 프레임 없음). continuous: 용지가 같으면 같은 쪽 같은 y에서 새 프레임 (첫 쪽 위아래 여백은 앞 구역), 다르면 다음 쪽.
   - `FrameSource`에 선택 메서드: `enter(m, frame, y)`(구역 첫 문단이면 런을 정하고 첫 상태), `widthOf(m)`, `stable()`, `done()`. `PagedLayout`은 문단마다 구역 폭으로 줄을 나누고(`PlacedPara.width`, 폭이 바뀌면 다시 나눔), 수렴은 `stable()`일 때만.
@@ -327,7 +327,7 @@ interface SectionProps {
 
 ### 구현
 
-- **레이아웃** (`@quire/layout` `document.ts`):
+- **레이아웃** (`@quiredoc/layout` `document.ts`):
   - `ParaBox.keep { breakBefore, next, together }`, `PageSetup.widowControl`.
   - 줄 흐름을 `PlacedPara.flow()` 하나로 합쳤다: 배치(`placeAt`)와 줄 위치(`lines`)가 같은 흐름을 쓰고, 규칙의 결정은 숫자로만 남긴다 (첫 줄을 놓기 시작한 상태 `p0·y0`, 과부 줄로 넘긴 줄 `push`). 규칙이 없는 문단은 결과가 비트까지 그대로다 (지문 그대로).
   - 앞에서 쪽 나눔: 프레임 맨 위가 아니면 다음 프레임 맨 위로. 문단 나누지 않음: 다 들어가지 않으면 다음 프레임으로 (빈 프레임보다 크면 무시).
@@ -356,7 +356,7 @@ interface SectionProps {
 
 ### 구현
 
-- **모델** (`@quire/model`):
+- **모델** (`@quiredoc/model`):
   - 필드 = 인라인 개체 `{ kind: 'field', field: 'page' | 'pages' | 'sectionPages' | 'date' }` (개체 키 `field`를 더함: 동기화·정본·재기반이 개체 키 목록을 그대로 쓴다). 값은 저장하지 않는다.
   - 구역 설정에 `oddEven`을 더했다. `header`·`footer`·`titlePage`·`headerDistance`·`footerDistance`·`pageNumber`는 3-2에서 자리만 있던 키를 쓴다.
   - `hfStoryId(part, 구역, 종류)` = `hdr|…`·`ftr|…` (가벼운 스토리, 11 §13), `resolveHF`(앞 구역에서 종류마다 이어 쓰기), `hfKindOf`(첫 쪽·짝수 쪽), `formatPageNumber`(1·i·가).
@@ -389,9 +389,9 @@ interface SectionProps {
 
 ### 구현
 
-- **모델** (`@quire/model`): 참조 = 인라인 개체 `{ kind: 'note', id }`, 내용 = 가벼운 스토리 `fn|<id>` (`noteStoryId`). 번호는 저장하지 않고 `noteRefs(doc)`(본문 참조, 문서 순서)에서 정한다. 각주를 넣은 적이 없는 문서는 훑지 않는다 (`Doc.hasObjectKind`).
+- **모델** (`@quiredoc/model`): 참조 = 인라인 개체 `{ kind: 'note', id }`, 내용 = 가벼운 스토리 `fn|<id>` (`noteStoryId`). 번호는 저장하지 않고 `noteRefs(doc)`(본문 참조, 문서 순서)에서 정한다. 각주를 넣은 적이 없는 문서는 훑지 않는다 (`Doc.hasObjectKind`).
   - 문단을 훑지 않고 개체 속성 표에서 개체마다 화면 오프셋을 구하는 방법도 재 보았다. 문단 10만 개·각주 5천 개에서 입력 p95가 47 ms로 더 느려 버렸다.
-- **레이아웃** (`@quire/layout`):
+- **레이아웃** (`@quiredoc/layout`):
   - 배치 상태가 (프레임, y) → (프레임, y, 각주 상태)다. 각주 상태 = 지금 프레임의 각주 영역 높이(구분선 띠 포함)와 다음 프레임에 이어 쓸 각주(id, 줄 from). `PlacedPara.nsBefore·nsAfter`, `PagedLayout`의 대기 상태, 수렴 판단에 든다. 각주가 없으면 계산이 그대로라 지문이 바뀌지 않았다.
   - 문단 서식 `notes`: 참조 위치 → 각주 id와 각주 줄 높이들 (각주 영역 폭으로 조판, 줄 경계에서 나누려고 줄마다). 레이아웃 캐시 키에 든다.
   - 줄을 놓을 때: 줄 + (구분선) + 그 줄 참조들의 각주가 프레임에 들어가야 한다. 안 되면 줄을 다음 프레임으로. 각주가 빈 프레임의 절반보다 크고 줄과 그 각주 첫 줄이 들어가면 줄은 그 자리에 두고 각주를 줄 경계에서 나눠 나머지를 이어 쓴다 (그 프레임은 찬다).
@@ -486,7 +486,7 @@ interface SectionProps {
 
 ### 구현
 
-- **표 문단의 줄 = 행 조각** (`@quire/layout`): `PlacedLine`에 `row`·`part`·`repeat`을 더했다. 배치와 줄 위치가 같은 흐름(`tableFlow`)을 쓴다. 행마다 차례로:
+- **표 문단의 줄 = 행 조각** (`@quiredoc/layout`): `PlacedLine`에 `row`·`part`·`repeat`을 더했다. 배치와 줄 위치가 같은 흐름(`tableFlow`)을 쓴다. 행마다 차례로:
   - 남은 높이에 들어가면 통째로 놓는다.
   - 쪼갤 수 있는 행이면 셀 내용을 줄 단위로 나눠 조각들에 놓는다.
     - 쪼갤 수 있는 행: 행 나누지 않음이 아니고, 제목 행이 아니고, 여러 행 병합에 걸리지 않은 행이다.
@@ -554,7 +554,7 @@ interface SectionProps {
 
 ### 구현
 
-- **줄 나누기** (`@quire/layout` `paragraph.ts`): 한 줄씩(탐욕) 정하는 방식은 그대로이고, 끊을 수 있는 곳을 한 함수(`canBreakBetween`)로 모았다.
+- **줄 나누기** (`@quiredoc/layout` `paragraph.ts`): 한 줄씩(탐욕) 정하는 방식은 그대로이고, 끊을 수 있는 곳을 한 함수(`canBreakBetween`)로 모았다.
   - 끊을 수 있는 곳: 공백 뒤, 개체 앞뒤, 글자 단위(`char`)면 한글 음절·자모·한자·가나 사이. 영문·숫자 사이는 늘 끊지 않는다.
   - **금칙**: 줄 앞 금지 글자 앞, 줄 끝 금지 글자 뒤에서는 끊지 않는다. 넘치면 앞의 끊을 곳으로 밀어낸다 (어절 단위에도 적용).
     - 목록(`NO_LINE_START`·`NO_LINE_END`)은 §9.1 초안에 `・，．>`를 더한 것이다.

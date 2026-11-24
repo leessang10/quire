@@ -4,9 +4,9 @@
  * 쪽 번호 매기기), 표(셀 주소·병합·바탕), 그림(글자처럼·떠 있음), 각주·미주, 링크·메모(댓글), 변경 추적(제안), 형광펜을 읽는다.
  * 담지 못하는 것(도형, 수식, 글상자, OLE 등)은 버리고 보고한다.
  */
-import type { DropKind } from '@quire/editor';
-import { PAPER_SIZES, defaultListDef, noteStoryId, type CommentThread, type FloatAttrs, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quire/model';
-import { readZip, type QuireDoc, type QuireParagraph, type QuireRun, type QuireTable } from '@quire/sync';
+import type { DropKind } from '@quiredoc/editor';
+import { PAPER_SIZES, defaultListDef, noteStoryId, type CommentThread, type FloatAttrs, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quiredoc/model';
+import { readZip, type QuireDoc, type QuireParagraph, type QuireRun, type QuireTable } from '@quiredoc/sync';
 import { Report, finishImport, addAsset, addUsedStyles, emptyQuire, mimeOf, type ImportResult, type ImportedAsset } from './common';
 import { BASE_FONT, BASE_SIZE, HWP_NUM, HWP_STYLES, LINE_PERCENT } from './hwpx-write';
 import { descendants, kid, kids, parseXml, textOf, type XNode } from './xml';

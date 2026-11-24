@@ -3,8 +3,8 @@
  * 처음부터 조판한 결과
  */
 import { describe, expect, it } from 'vitest';
-import { Doc, Document, noteStoryId } from '@quire/model';
-import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quire/layout';
+import { Doc, Document, noteStoryId } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quiredoc/layout';
 import { Formatter, defaultPageSetup } from './formatter';
 
 const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };

@@ -3,7 +3,7 @@
  * 문단 글의 "|"는 앞에서 단 나눔, "#"은 앞에서 쪽 나눔.
  */
 import { describe, expect, it } from 'vitest';
-import { Doc } from '@quire/model';
+import { Doc } from '@quiredoc/model';
 import { LayoutCache, PagedLayout, SectionFrames, geomKey, type FormatSource, type Measurer, type PageSetup, type SectionGeom, type SectionSource } from './index';
 
 /** 모든 grapheme 폭 10 */

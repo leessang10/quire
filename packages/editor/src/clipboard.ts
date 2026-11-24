@@ -30,7 +30,7 @@ import {
   type ParaAttrs,
   type ParaKey,
   type ParagraphInfo,
-} from '@quire/model';
+} from '@quiredoc/model';
 
 export const FRAGMENT_MIME = 'application/x-quire-fragment';
 

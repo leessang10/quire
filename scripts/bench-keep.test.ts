@@ -4,8 +4,8 @@
  *   npx vitest run --config vitest.bench.config.ts scripts/bench-keep.test.ts
  */
 import { it } from 'vitest';
-import { Doc, Document } from '@quire/model';
-import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quire/layout';
+import { Doc, Document } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quiredoc/layout';
 import { Formatter, defaultPageSetup } from '../packages/editor/src/formatter';
 
 const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };

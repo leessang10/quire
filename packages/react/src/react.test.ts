@@ -6,7 +6,7 @@
 import { StrictMode, act, createElement, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { EditorState, QuireHandle } from '@quire/sdk';
+import type { EditorState, QuireHandle } from '@quiredoc/sdk';
 import { EMPTY_STATE, QuireEditor, createController, useEditorState, useQuire, type EditorStore, type QuireController } from './index';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

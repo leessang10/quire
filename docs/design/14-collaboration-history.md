@@ -248,7 +248,7 @@ interface Annotation {
 
 ### 구현
 
-- **모델** (`@quire/model` `annotations.ts`, `document.ts`):
+- **모델** (`@quiredoc/model` `annotations.ts`, `document.ts`):
   - `Document`가 주석 표를 가진다: `annotate`·`updateAnnotation`·`unannotate`. 연산은 `{ type: 'annotation', id, before, after }`이고 실행 취소 기록에 든다.
   - 위치는 그 스토리 Doc의 `Position`이다. 시작은 첫 글자의 `before`, 끝은 마지막 글자의 `after`이다. 그래서 범위 앞뒤에 입력한 글자는 밖에 있다 (§2.1의 댓글 규칙과 같은 결과).
   - **고아**: 범위 안 글자가 모두 지워져 범위가 접히거나, 원격에서 끝 없이 받은 주석이다. 화면에 그리지 않고 표에는 남는다. 실행 취소로 글자가 돌아오면 범위도 돌아온다.
@@ -257,7 +257,7 @@ interface Annotation {
     - 지운 원소가 되살아날 때: `onRevive`
     - 로컬 삭제로 기준 원소가 지워질 때: `onDelete`. 살아 있는 옆 글자로 다시 건다. 실행 취소 연산이라 되돌리면 위치도 돌아온다.
   - `annotationRanges()`: 모든 주석의 화면 범위(스토리별 시작 순)를 문서 판·주석 판마다 캐시한다.
-- **동기화** (`@quire/sync` `annotations.ts`):
+- **동기화** (`@quiredoc/sync` `annotations.ts`):
   - Loro 맵 `annotations`에 키 `<id>|type/story/start/end/data`를 둔다. 커서는 Loro 커서를 인코딩한 바이트열이다 (base64가 아니라 `Uint8Array` 그대로).
     - 시작은 첫 글자 `getCursor(u16, 0)`, 끝은 마지막 글자 `getCursor(lastU16, 1)`이다.
     - 지우기는 `type` 키 삭제로 표시한다.
@@ -326,7 +326,7 @@ interface Annotation {
 
 ### 구현
 
-- **모델** (`@quire/model` `comments.ts`, `document.ts`):
+- **모델** (`@quiredoc/model` `comments.ts`, `document.ts`):
   - 스레드·메시지는 평평한 키 표다. §3.1은 메시지를 Loro 리스트로 두자고 했지만, 주석(§2.2)처럼 키 하나에 값 하나인 맵으로 바꿨다.
     - 키: `<스레드>|anchor`·`|resolved`·`|deleted`, `<스레드>|m|<메시지>|author`·`|time`·`|text`·`|edited`·`|deleted`
     - 동시 답글은 메시지 ID가 달라 모두 남는다. 차례는 (시각, ID)이므로 모든 피어에서 같다.
@@ -335,7 +335,7 @@ interface Annotation {
   - 연산 `{ type: 'comment', key, before, after }`는 실행 취소 기록에 든다.
   - `addThread`(댓글 주석 + 기준 + 첫 메시지), `addMessage`, `editMessage`, `deleteMessage`, `resolveThread`, `deleteThread`(주석을 지우고 스레드는 지운 표시)
   - `threads()`는 키 표에서 스레드를 만들고 캐시한다. `thread(id)`는 색인으로 찾는다.
-- **동기화** (`@quire/sync` `comments.ts`):
+- **동기화** (`@quiredoc/sync` `comments.ts`):
   - Loro 맵 `comments`에 키를 그대로 둔다 (값은 JSON, 작성자는 객체).
   - 브리지: 로컬 키를 맵에 쓰고, 원격 맵 변경을 그대로 적용한다.
   - Worker: `LocalChange` `cmt`를 쓰고, ack에는 로컬로 바꾼 키의 적용 뒤 값이 실린다. 원격 항목에는 바뀐 키가 실린다. 그 키의 로컬 변경이 가는 중이면 원격 값을 미룬다.
@@ -387,7 +387,7 @@ interface Annotation {
 
 ### 구현
 
-- **모델** (`@quire/model` `suggestions.ts`, `document.ts`): 제안은 주석(`type: 'suggestion'`)이다. 데이터는 `{ kind, author, time, before? }`다.
+- **모델** (`@quiredoc/model` `suggestions.ts`, `document.ts`): 제안은 주석(`type: 'suggestion'`)이다. 데이터는 `{ kind, author, time, before? }`다.
   - **지우기**: Doc의 `deleteRange`에 갈고리(`deleteHook`)를 건다. 제안 모드인 Document가 모든 스토리에 건다.
     - 로컬 삭제는 지우지 않고 삭제 제안으로 표시한다. 범위 안의 내 삽입 제안 부분은 실제로 지운다.
     - 이미 삭제 제안인 글자는 그대로 둔다.
@@ -547,7 +547,7 @@ interface Annotation {
 
 ### 구현
 
-- **비교** (`@quire/sync` `compare.ts` `compareVersions(loro, from, to)`, 14 §5.3): A 시점 문서(`forkAt`)를 만들고, Loro `diff(A, B, false)`의 본문·스토리 텍스트 델타를 A 위에 비영속 제안으로 놓는다.
+- **비교** (`@quiredoc/sync` `compare.ts` `compareVersions(loro, from, to)`, 14 §5.3): A 시점 문서(`forkAt`)를 만들고, Loro `diff(A, B, false)`의 본문·스토리 텍스트 델타를 A 위에 비영속 제안으로 놓는다.
   - insert: 넣고 삽입 제안
   - delete: 지우지 않고 삭제 제안
   - retain + attributes:

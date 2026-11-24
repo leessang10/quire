@@ -1,6 +1,6 @@
 # React + Vite + Tailwind
 
-`@quire/react`의 `useQuire`·`QuireEditor`·`useEditorState`로 붙이는 React 기본 예제입니다. Tailwind의 preflight(전역 리셋)를 켠 채로 편집기가 깨지지 않는지도 봅니다.
+`@quiredoc/react`의 `useQuire`·`QuireEditor`·`useEditorState`로 붙이는 React 기본 예제입니다. Tailwind의 preflight(전역 리셋)를 켠 채로 편집기가 깨지지 않는지도 봅니다.
 
 ![React 예제](screenshots/screenshot.webp)
 
@@ -26,7 +26,7 @@ npm run dev                       # http://localhost:5302
 ## 핵심 코드
 
 ```tsx
-import { QuireEditor, useEditorState, useQuire } from '@quire/react';
+import { QuireEditor, useEditorState, useQuire } from '@quiredoc/react';
 
 export function App() {
   // 처음 렌더의 옵션으로 한 번만 만든다 (옵션 객체가 매번 새로 만들어져도 그대로)

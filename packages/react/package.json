@@ -1,5 +1,5 @@
 {
-  "name": "@quire/react",
+  "name": "@quiredoc/react",
   "description": "React bindings for the Quire editor: useQuire, QuireEditor, useEditorState",
   "keywords": [
     "react",
@@ -14,7 +14,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@quire/sdk": "*"
+    "@quiredoc/sdk": "*"
   },
   "peerDependencies": {
     "react": ">=18"

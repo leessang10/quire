@@ -7,8 +7,8 @@
  *   npx vitest run --config vitest.bench.config.ts scripts/bench-headers.test.ts
  */
 import { it } from 'vitest';
-import { DEFAULT_SECTION, Doc, Document, LAST_SECTION, hfStoryId, type SectionProps } from '@quire/model';
-import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quire/layout';
+import { DEFAULT_SECTION, Doc, Document, LAST_SECTION, hfStoryId, type SectionProps } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quiredoc/layout';
 import { Formatter, defaultPageSetup } from '../packages/editor/src/formatter';
 import { layoutHF, pageHF } from '../packages/editor/src/headers';
 

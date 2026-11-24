@@ -1,8 +1,8 @@
 'use client';
-// 예제 5: Next.js + styled-components — @quire/react
+// 예제 5: Next.js + styled-components — @quiredoc/react
 import { useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
-import { QuireEditor, useEditorState, useQuire } from '@quire/react';
+import { QuireEditor, useEditorState, useQuire } from '@quiredoc/react';
 import { ACCEPT, demoPlugins, fonts, openFile, sampleDoc, saveFile, type SaveKind } from '../lib/quire-demo';
 
 const Shell = styled.div`

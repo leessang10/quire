@@ -3,8 +3,8 @@
  * footnotes.xml, header·footer, comments.xml(+commentsExtended: 답글·해결), media, settings, core. 제안(삽입·삭제)은 w:ins·w:del.
  * 단위: 길이 1/1000pt → twip(× 1/50), EMU(× 12.7), 글자 크기 반 pt.
  */
-import { DEFAULT_STYLES, LAST_SECTION, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps, type Style } from '@quire/model';
-import { writeZip, type QuireDoc, type QuireParagraph, type QuireTable } from '@quire/sync';
+import { DEFAULT_STYLES, LAST_SECTION, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps, type Style } from '@quiredoc/model';
+import { writeZip, type QuireDoc, type QuireParagraph, type QuireTable } from '@quiredoc/sync';
 import { EXTRA_STYLES, mimeOf, tableGrid, withSafeLinks, type AssetReader } from './common';
 import { XML_HEAD, escXml, x } from './xml';
 

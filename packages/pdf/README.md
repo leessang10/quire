@@ -1,4 +1,4 @@
-# @quire/pdf
+# @quiredoc/pdf
 
 PDF export for Quire documents with embedded, subset fonts (browser or Node).
 
@@ -7,7 +7,7 @@ Part of [Quire](https://github.com/leessang10/quire), a web document editor with
 ## Install
 
 ```sh
-npm install @quire/pdf
+npm install @quiredoc/pdf
 ```
 
 ## Usage

@@ -4,7 +4,7 @@
  * 오는 경우를 만든다.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { Doc, History, type Op } from '@quire/model';
+import { Doc, History, type Op } from '@quiredoc/model';
 import { SyncClient } from './client';
 import { SyncCore } from './core';
 import type { ToMain, ToWorker } from './protocol';

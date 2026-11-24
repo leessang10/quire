@@ -2,8 +2,8 @@
  * 주요 요소 시험 틀 (15 §6.1): 표의 요소를 모두 담은 정본 문서와, 포맷이 담는 요소만 남겨 비교하는 투영. 포맷마다
  * "내보내기 → 가져오기" 왕복 뒤 투영이 같아야 한다 (DOCX·HWPX도 같은 틀에 열만 더한다).
  */
-import { MARK_KEYS, OBJ, defaultListDef, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps } from '@quire/model';
-import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quire/sync';
+import { MARK_KEYS, OBJ, defaultListDef, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps } from '@quiredoc/model';
+import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quiredoc/sync';
 import { emptyQuire, tableGrid } from './common';
 
 export type Format = 'markdown' | 'html' | 'docx' | 'hwpx';

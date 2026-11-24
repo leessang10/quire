@@ -3,7 +3,7 @@
  * 기준: 동시 편집 뒤에도 범위가 같은 글자들을 덮는다 (모든 피어에서 범위의 글자열이 같다).
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { Doc, Document, History, type Op } from '@quire/model';
+import { Doc, Document, History, type Op } from '@quiredoc/model';
 import { SyncBridge } from './index';
 import { SyncClient } from './client';
 import { SyncCore } from './core';

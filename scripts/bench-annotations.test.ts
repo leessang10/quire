@@ -6,10 +6,10 @@
  *   npx vitest run --config vitest.bench.config.ts scripts/bench-annotations.test.ts --silent=false
  */
 import { it } from 'vitest';
-import { Doc, Document } from '@quire/model';
-import { LayoutCache, PagedLayout, type Measurer } from '@quire/layout';
+import { Doc, Document } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, type Measurer } from '@quiredoc/layout';
 import { defaultPageSetup } from '../packages/editor/src/formatter';
-import { SyncClient, SyncCore, type ToMain, type ToWorker } from '@quire/sync';
+import { SyncClient, SyncCore, type ToMain, type ToWorker } from '@quiredoc/sync';
 
 const measurer: Measurer = { width: (g) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) };
 const NL = String.fromCharCode(10);

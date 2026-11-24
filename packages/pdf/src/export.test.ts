@@ -5,10 +5,10 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { Doc, Document } from '@quire/model';
-import { LayoutCache, PagedLayout, SectionFrames } from '@quire/layout';
-import { HbShaper, loadShapingFont, slotOf } from '@quire/shaping';
-import { DEFAULT_METRICS, Formatter, defaultPageSetup } from '@quire/editor';
+import { Doc, Document } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, SectionFrames } from '@quiredoc/layout';
+import { HbShaper, loadShapingFont, slotOf } from '@quiredoc/shaping';
+import { DEFAULT_METRICS, Formatter, defaultPageSetup } from '@quiredoc/editor';
 import { exportPdf, loadSubsetter, streamInflate, type PdfFontSource } from './index';
 
 const root = (p: string) => fileURLToPath(new URL(`../../../${p}`, import.meta.url));

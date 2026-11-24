@@ -27,7 +27,7 @@ import {
   writeTable,
   type PeerId,
 } from './shape';
-import type { TableRecord } from '@quire/model';
+import type { TableRecord } from '@quiredoc/model';
 import { PresenceStore } from './presence-store';
 import { COMMENTS, readCmt, readCmts, writeCmt } from './comments';
 import { ANNOTATIONS, annIdsInLoro, annIdsOf, readAnn, writeAnnKey, writeAnnRange, type AnnWire } from './annotations';

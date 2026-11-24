@@ -6,8 +6,8 @@
  * 그다음 본문 레이아웃을 바뀐 문단만 다시 조판 (화면 아래 두 화면까지 즉시, 나머지는 백그라운드).
  */
 import { it } from 'vitest';
-import { Doc, type Position } from '@quire/model';
-import { LayoutCache, PagedLayout, type Measurer, type PageSetup } from '@quire/layout';
+import { Doc, type Position } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, type Measurer, type PageSetup } from '@quiredoc/layout';
 
 const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };
 const SETUP: PageSetup = { width: 794, height: 1123, margin: 96, gap: 24, lineHeight: 27, paraSpacing: 8, fontSize: 16 };

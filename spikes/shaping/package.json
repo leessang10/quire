@@ -1,10 +1,10 @@
 {
-  "name": "@quire/spike-shaping",
+  "name": "@quiredoc/spike-shaping",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@quire/layout": "*",
+    "@quiredoc/layout": "*",
     "harfbuzzjs": "1.6.4"
   }
 }

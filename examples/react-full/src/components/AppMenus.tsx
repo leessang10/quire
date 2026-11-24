@@ -20,7 +20,7 @@ import {
   Table,
   Undo2,
 } from 'lucide-react';
-import type { Editor } from '@quire/editor';
+import type { Editor } from '@quiredoc/editor';
 import { SAMPLES, SAVE_FORMATS, zoomPercent, zoomStep, type SaveFormat, type Ui } from '../lib/quire-app';
 import { BarMenu, MenuBar, MenuItem, MenuLabel, MenuSeparator, SubMenu } from './ui';
 

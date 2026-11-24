@@ -3,8 +3,8 @@
  * y축을 뒤집는다. 글자는 글꼴 얼굴로 셰이핑해 글리프를 레이아웃 자리(코드포인트별 위치)에 TJ로 놓는다.
  * 글리프 → CID는 글꼴을 부분화한 뒤에 정해지므로, 글자 부분은 구조로 두었다가 serialize에서 쓴다.
  */
-import type { FontRef, PaintTarget, TextRun } from '@quire/editor';
-import { safeLink } from '@quire/model';
+import type { FontRef, PaintTarget, TextRun } from '@quiredoc/editor';
+import { safeLink } from '@quiredoc/model';
 import { shapeText, type PdfFace, type PdfFonts } from './fonts';
 import { num } from './writer';
 

@@ -8,10 +8,10 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { it } from 'vitest';
-import { Doc } from '@quire/model';
-import { PagedLayout, type Measurer, type PageSetup } from '@quire/layout';
+import { Doc } from '@quiredoc/model';
+import { PagedLayout, type Measurer, type PageSetup } from '@quiredoc/layout';
 import { HbMeasurer, loadFont, shape } from '../spikes/shaping/src/hb';
-import { HbShaper, loadShapingFont } from '@quire/shaping';
+import { HbShaper, loadShapingFont } from '@quiredoc/shaping';
 import { LOREM } from '../spikes/shaping/src/corpus';
 
 const FONT = 'C:/Windows/Fonts/malgun.ttf';
@@ -65,7 +65,7 @@ it.skipIf(!existsSync(FONT))('shaping cost', () => {
     out.push(
       `── ${n.toLocaleString()}문단 (${(chars / 1e6).toFixed(1)}M 글자) ──`,
       `  전체 조판: 고정 폭 ${base.ms.toFixed(0)} ms (${base.pages}쪽) · HarfBuzz 글자별 ${hbLayout.ms.toFixed(0)} ms (${hbLayout.pages}쪽, 셰이핑 ${m.shaped}회)`,
-      `  전체 조판 HbShaper (어절 셰이핑 + 캐시, @quire/shaping): ${shaped.ms.toFixed(0)} ms (${shaped.pages}쪽, 런 ${shaper.shapedRuns.toLocaleString()}개, 캐시 적중 ${shaper.cacheHits.toLocaleString()})`,
+      `  전체 조판 HbShaper (어절 셰이핑 + 캐시, @quiredoc/shaping): ${shaped.ms.toFixed(0)} ms (${shaped.pages}쪽, 런 ${shaper.shapedRuns.toLocaleString()}개, 캐시 적중 ${shaper.cacheHits.toLocaleString()})`,
       `  문단 통째 셰이핑 ${paraMs.toFixed(0)} ms (${((paraMs * 1000) / n).toFixed(1)} µs/문단, ${(chars / paraMs / 1000).toFixed(1)}M 글자/s)`,
       `  어절 + 캐시 ${wordMs.toFixed(0)} ms (어절 ${(hits + cache.size).toLocaleString()}개, 서로 다른 어절 ${cache.size.toLocaleString()}개, 적중 ${((100 * hits) / (hits + cache.size)).toFixed(1)}%)`,
     );

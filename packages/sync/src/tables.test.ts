@@ -3,7 +3,7 @@
  * G3 동시성 시나리오: 동시 행 추가, 추가 + 지우기, 동시 병합, 병합 + 행 지우기, 셀 입력 + 행 지우기.
  */
 import { describe, expect, it } from 'vitest';
-import { Doc, Document, History, cellStoryId, normalizeTable, type Op } from '@quire/model';
+import { Doc, Document, History, cellStoryId, normalizeTable, type Op } from '@quiredoc/model';
 import { SyncBridge } from './index';
 import { compactDocument, rebaseOnto } from './epoch';
 import { newLoro, readTable } from './shape';

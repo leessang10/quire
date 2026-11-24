@@ -2,8 +2,8 @@
  * 기준 문서 지문 (12 §13, 16 §5): 조판 결과를 쪽 수·쪽마다 첫 줄·레이아웃 지문으로 줄인다. DOM 없음.
  * Node 시험(reference.test.ts)과 브라우저 골든 비교(편집기 `layoutSummary()`)가 같은 함수를 쓴다.
  */
-import { LayoutCache, PagedLayout, SectionFrames, cpSlice, type Measurer } from '@quire/layout';
-import type { Document } from '@quire/model';
+import { LayoutCache, PagedLayout, SectionFrames, cpSlice, type Measurer } from '@quiredoc/layout';
+import type { Document } from '@quiredoc/model';
 import { Formatter, defaultPageSetup } from './formatter';
 import { hfText, pageHF } from './headers';
 

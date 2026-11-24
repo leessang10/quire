@@ -5,8 +5,8 @@
  * 편집기와 같은 경로: Formatter(서식·구역 → 쪽 모양) + SectionFrames. 문단 1만 5천 개(약 1,000쪽)와 10만 개, 구역 50·200개 (세로·가로·여백 다름·이어서).
  */
 import { it } from 'vitest';
-import { Doc, Document, LAST_SECTION, fullSection, type SectionProps } from '@quire/model';
-import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quire/layout';
+import { Doc, Document, LAST_SECTION, fullSection, type SectionProps } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quiredoc/layout';
 import { Formatter, defaultPageSetup } from '../packages/editor/src/formatter';
 
 const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };

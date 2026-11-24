@@ -4,8 +4,8 @@
  * 각주·미주, 구역(용지·여백·방향·다단·쪽 번호·머리말·꼬리말), 댓글(답글·해결), 변경 추적(삽입·삭제 → 제안)을 읽는다.
  * 담지 못하는 것(도형·글상자, 수식, 표 안의 표, 서식 변경 추적)은 버리고 보고한다.
  */
-import { PAPER_SIZES, defaultListDef, noteStoryId, type CommentThread, type FloatAttrs, type ListDef, type ListLevel, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quire/model';
-import { readZip, type QuireDoc, type QuireParagraph, type QuireRun, type QuireTable } from '@quire/sync';
+import { PAPER_SIZES, defaultListDef, noteStoryId, type CommentThread, type FloatAttrs, type ListDef, type ListLevel, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quiredoc/model';
+import { readZip, type QuireDoc, type QuireParagraph, type QuireRun, type QuireTable } from '@quiredoc/sync';
 import { Report, finishImport, addAsset, addUsedStyles, emptyQuire, mimeOf, type ImportResult, type ImportedAsset } from './common';
 import { NUM_FMT, STYLE_IDS } from './docx-write';
 import { descendants, kid, kids, parseXml, path, textOf, type XNode } from './xml';

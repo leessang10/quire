@@ -20,7 +20,7 @@
  * 대체 측정기로 잰 글자(엔진이 불러오지 않은 글꼴)는 기기마다 다를 수 있다.
  */
 import * as hb from 'harfbuzzjs';
-import type { Measurer } from '@quire/layout';
+import type { Measurer } from '@quiredoc/layout';
 
 /** 대체 측정기로 잰 글자의 글꼴 번호 */
 export const FALLBACK_FONT = 255;

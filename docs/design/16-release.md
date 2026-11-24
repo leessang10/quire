@@ -14,7 +14,7 @@
 | R3 | 기기가 달라도 쪽 나눔이 같다 (06 §4 위험) | 기준 문서 세트의 레이아웃 지문이 Node·Chromium·Firefox에서 같다 |
 | R4 | 남이 만든 파일과 링크에 안전하다 | 가져오기·열기가 악성·깨진 입력에서 멈추거나 터지지 않고, 위험한 링크·주소를 걸러 낸다 |
 | R5 | 남은 일을 정리한다 | 10–15 결과 절의 한계·남은 것과 열린 질문을 분류해 고칠 것은 고치고, 남길 것은 이유를 적는다 |
-| R6 | 패키지로 쓸 수 있다 | `@quire/*`가 빌드되어(ESM + 타입) 저장소 밖 예제 앱에서 설치해 쓸 수 있다 |
+| R6 | 패키지로 쓸 수 있다 | `@quiredoc/*`가 빌드되어(ESM + 타입) 저장소 밖 예제 앱에서 설치해 쓸 수 있다 |
 | R7 | 실제 환경에서 확인한다 | 이 기기에서 할 수 있는 IME·스크린리더·브라우저 확인(06 §2 V1–V3 일부)을 체크리스트로 남긴다 |
 
 ## 2. 단계 계획
@@ -70,7 +70,7 @@
 
 - 기준 문서 세트(12 §13, `fixtures/docs`)를 저장소 글꼴로 셰이핑·조판한 쪽 나눔과 줄 나눔의 지문.
 - Node 시험(`reference.test.ts`)이 지문을 기대값과 비교한다. 같은 지문을 브라우저에서 두 경로로 내어 같은지 본다:
-  실제 편집기(조각 글꼴, 백그라운드 조판)와 통째 글꼴로 Node와 똑같이 조판한 것. 지문 계산은 `@quire/editor` `reference.ts` 하나를 함께 쓴다.
+  실제 편집기(조각 글꼴, 백그라운드 조판)와 통째 글꼴로 Node와 똑같이 조판한 것. 지문 계산은 `@quiredoc/editor` `reference.ts` 하나를 함께 쓴다.
 - `apps/playground/golden.html` + `scripts/golden.mjs` (6-2의 헤드리스 도우미 `scripts/headless.mjs`). Firefox는 이 기기에 없다.
 
 ## 6. 6-4 보안·견고성
@@ -106,7 +106,7 @@
 - tsc로 선언(.d.ts)을 한 번에 내고, 패키지마다 Vite 라이브러리 모드로 ESM 하나(`dist/index.js`). 의존성은 모두 외부로 둔다.
 - 배포용 `package.json`을 새로 쓴다: `exports`의 `types`·`import`, 내부 의존성은 0.1.0으로 고정.
 - `loro-crdt` 가져오기를 `loro-crdt/base64`로 바꾼다: WASM을 base64로 품은 진입점이라 앱 번들러에 WASM 설정이 필요 없다. 별칭(alias)으로는 안 된다 — 외부 처리가 별칭보다 먼저라서 빌드 결과의 문자열을 바꾼다.
-- `@quire/fonts`: 플레이그라운드의 글꼴 조각·manifest·라이선스를 묶은 자산 패키지.
+- `@quiredoc/fonts`: 플레이그라운드의 글꼴 조각·manifest·라이선스를 묶은 자산 패키지.
 - `npm pack`으로 `.build/packs/*.tgz`.
 
 **예제** (`examples/`, 워크스페이스 밖, tarball만 설치)
@@ -115,10 +115,10 @@
 |---|---|---|---|---|
 | vanilla | HTML + JS (Vite 8) | 순수 CSS | `createEditor` | 5301 |
 | react-vite | React 19 + Vite 8 | Tailwind 4 (preflight) | `useQuire`·`QuireEditor`·`useEditorState`, StrictMode | 5302 |
-| next | Next.js 16 App Router (Turbopack) | styled-components (SSR 레지스트리) | @quire/react + `next/dynamic` `ssr: false` | 5303 |
+| next | Next.js 16 App Router (Turbopack) | styled-components (SSR 레지스트리) | @quiredoc/react + `next/dynamic` `ssr: false` | 5303 |
 | vue | Vue 3 + Vite 8 | SCSS | `createEditor` + 컴포저블 | 5304 |
-| svelte | SvelteKit 3 + Svelte 5 | scoped | `onMount`에서 동적 `import('@quire/sdk')` | 5305 |
-| node | Node 22 | — | `@quire/convert` + `pdfFromQuire` CLI | — |
+| svelte | SvelteKit 3 + Svelte 5 | scoped | `onMount`에서 동적 `import('@quiredoc/sdk')` | 5305 |
+| node | Node 22 | — | `@quiredoc/convert` + `pdfFromQuire` CLI | — |
 
 브라우저 다섯 개 모두: 서식 버튼 상태 반영, 실행 취소·다시 실행, 문단 스타일, 예제 플러그인(글자 수·강조 낱말), 열기(HWPX·DOCX·MD·HTML), 저장(HWPX·DOCX·MD·PDF)을 확인했다. Node: MD → PDF·HWPX·DOCX, HWPX → MD, DOCX → PDF.
 
@@ -127,7 +127,7 @@
 | 발견 | 고침 |
 |---|---|
 | SDK로 파일을 열 방법이 없었다 | `createEditor().load(doc, assets)`, React 컨트롤러 `load` |
-| PDF가 DOM에 묶여 있었다 (편집기 `printSource()`만) | `pdfFromQuire(q, {fonts, subsetter, asset})`: DOM 없이 조판해 PDF. `@quire/pdf`가 `@quire/sync`에 의존 |
+| PDF가 DOM에 묶여 있었다 (편집기 `printSource()`만) | `pdfFromQuire(q, {fonts, subsetter, asset})`: DOM 없이 조판해 PDF. `@quiredoc/pdf`가 `@quiredoc/sync`에 의존 |
 | 글자 수 플러그인이 `createEditor`가 값을 돌려주기 전에 콜백을 불렀다 (앱 쪽 TDZ 오류) | 첫 알림을 다음 틱으로 |
 | 같은 플러그인 객체를 편집기 둘이 쓰면(StrictMode 이중 마운트) 앞 편집기의 늦은 정리가 뒤 편집기 상태를 지웠다 | 상태를 붙일 때마다(`init`)·컨텍스트마다(WeakMap) 따로 |
 | Markdown 내보내기에서 이웃한 목록(글머리 → 번호)이 한 목록으로 붙었다 | 최상위 목록 ID가 바뀌면 빈 줄 |
@@ -145,7 +145,7 @@
 **한계·남은 것**
 
 - npm 레지스트리 배포는 하지 않았다 (이름·판 정책은 출시 때). 예제는 `file:` tarball로 설치한다.
-- Vue·Svelte용 공식 래퍼는 없다 (예제의 컴포저블·onMount 수준이면 충분해 보인다). 필요해지면 `@quire/vue` 등.
+- Vue·Svelte용 공식 래퍼는 없다 (예제의 컴포저블·onMount 수준이면 충분해 보인다). 필요해지면 `@quiredoc/vue` 등.
 - Node에서 PDF를 만들려면 앱이 글꼴 바이트를 manifest에서 모아 넘겨야 한다. 편의 함수(`fontsFromManifest`)는 6-5 후보.
 
 **전체 기능 예제 (6단계 뒤 더함)**: 기본 앱은 붙이는 법만 보여 주므로, Word·Google Docs식 화면으로 기능을 모두 보이는 앱 둘을 더했다 — `examples/react-full`(React + Vite + Tailwind, 직접 만든 컴포넌트)과 `examples/next-shadcn`(Next.js 16 + Tailwind + shadcn/ui Base UI판). 메뉴 막대·도구 막대·상황별 줄(표·그림·머리말·각주)·개요·댓글과 제안 창·찾기·쪽 설정·오른쪽 클릭·상태 줄. UI가 아닌 공통 코드는 `examples/shared/quire-app.ts`. 브라우저에서 확인: 예제 문서 6개가 기준 기대값과 같은 쪽 수로 열림, 저장 6형식과 `.quire` 왕복(글·댓글·제안 그대로), 표·머리말·각주·그림 도구 줄, 찾기, 2단 쪽 설정, 제안 모드, 댓글, 맞춤법. 두 앱 모두 프로덕션 빌드와 `npm audit` 0건.
@@ -203,7 +203,7 @@
 
 **구성**
 
-- `@quire/editor` `reference.ts`: `composeReference`(편집기와 같은 설정으로 처음부터 조판)와 `summarizeLayout`(쪽 수·용지·쪽마다 첫 줄·줄 위치 FNV-1a 지문·머리말·각주·표 행 조각). Node 시험의 코드를 옮겼다.
+- `@quiredoc/editor` `reference.ts`: `composeReference`(편집기와 같은 설정으로 처음부터 조판)와 `summarizeLayout`(쪽 수·용지·쪽마다 첫 줄·줄 위치 FNV-1a 지문·머리말·각주·표 행 조각). Node 시험의 코드를 옮겼다.
 - `Editor.layoutSummary()`: 실제 편집기 레이아웃의 같은 지문 (백그라운드 조판이 끝나기 전이면 null).
 - `golden.html`: 문서마다 편집기를 열고(조각 글꼴, 늦게 받는 조각이 다시 조판할 때까지 지문이 세 번 연속 같을 때까지 기다림) 지문을 내고, 통째 글꼴로도 조판해 둘 다 `*.expected.json`과 비교한다.
 - `scripts/golden.mjs` (`npm run golden`): 찾은 브라우저마다 헤드리스로 돌린다. 하나라도 다르면 종료 코드 1.
@@ -219,7 +219,7 @@
 
 ### 10.5 6-4 보안·견고성
 
-**링크** (`@quire/model` `safeLink`)
+**링크** (`@quiredoc/model` `safeLink`)
 
 - 허용: http, https, mailto, tel, 스킴 없는 주소(#, 상대 경로). 브라우저처럼 앞뒤 공백·제어 문자와 스킴 안의 탭·줄바꿈을 버리고 스킴을 읽는다 (`" java	script:"`도 막힘).
 - 문서 모델에는 받은 값을 그대로 둔다: 동기화 피어마다 같아야 하고, 편집기는 링크를 열지 않는다. 대신 경계에서 막는다:
@@ -329,11 +329,11 @@
 
 ### 10.8 출시 (2026-11-24)
 
-**정한 것** (사용자 결정): 라이선스 MIT (글꼴 패키지는 SIL OFL 1.1), npm 공개 레지스트리의 `@quire` 범위.
+**정한 것** (사용자 결정): 라이선스 MIT (글꼴 패키지는 SIL OFL 1.1), npm 공개 레지스트리의 `@quiredoc` 범위 (조직 `quiredoc`, 2026-11-24 만듦. `quire` 조직 이름은 이미 남의 것이라 쓰지 못했다). 패키지 이름은 `@quiredoc/editor`·`@quiredoc/sdk` 등.
 
 **판 정책**
 
-- 모든 `@quire/*` 패키지가 같은 판을 쓰고 함께 낸다 (lockstep). 판은 저장소 루트 `package.json`의 `version` 하나에서 온다 (`scripts/build-packages.mjs`가 읽고 내부 의존도 그 판으로 고정).
+- 모든 `@quiredoc/*` 패키지가 같은 판을 쓰고 함께 낸다 (lockstep). 판은 저장소 루트 `package.json`의 `version` 하나에서 온다 (`scripts/build-packages.mjs`가 읽고 내부 의존도 그 판으로 고정).
 - semver. 0.x 동안에는 깨지는 변경이 minor(0.1 → 0.2), 그 밖은 patch. 1.0부터 정석대로.
 - 공개 API로 보는 것: 패키지 `exports`의 이름과 타입, CSS 변수·클래스·상태 속성 (17 §10.1), 메시지 키 (18 §9.1), 정본 문서 형식(`QuireDoc.version`)과 `.quire` 파일, 가져오기 보고의 종류(`DropKind`). 이름을 바꾸면 한 판 동안 옛 이름도 받는다 (17 §9 O-45).
 - 시험판은 `0.2.0-beta.1`처럼 쓰고 npm `next` 태그로 낸다 (`latest`를 건드리지 않는다). GitHub Release는 prerelease.
@@ -343,12 +343,15 @@
 
 **절차**
 
-1. 처음 한 번 (사람이): npm에서 `@quire` 조직을 만들고(이미 남의 것이면 범위 이름을 바꿔야 한다), Automation 토큰을 만들어 GitHub 저장소 Secrets에 `NPM_TOKEN`으로 넣는다.
+1. 인증은 npm **Trusted Publishing**(GitHub Actions OIDC, 토큰 없음)을 쓴다. npm이 2FA를 건너뛰는 토큰을 줄이고 있어서다 (2026-11 npm 안내: 계정 변경 2026-08, 토큰으로 바로 올리기 2027-01).
+   - 신뢰하는 게시자는 패키지마다 npm 설정(Settings → Trusted Publisher → GitHub Actions: 소유자 `leessang10`, 저장소 `quire`, 워크플로 `release.yml`)에 등록한다.
+   - 패키지가 아직 없어 등록할 수 없으면 처음 한 번만 다음 중 하나로 올린다: (가) 쓰기 권한 granular 토큰을 저장소 Secrets의 `NPM_TOKEN`에 넣고 태그를 푸시한다(워크플로가 토큰이 있으면 토큰을 쓴다), (나) 이 기기에서 `npm login` 뒤 `node scripts/build-packages.mjs && node scripts/release.mjs --publish` (2FA 코드를 물으면 넣는다). 올린 뒤 10개 패키지에 신뢰하는 게시자를 등록하고 `NPM_TOKEN`은 지운다.
+   - 저장소가 비공개면 provenance는 붙지 않는다.
 2. `CHANGELOG.md`의 `[Unreleased]`를 `[X.Y.Z] - 날짜`로 옮기고, 루트 `package.json`의 `version`을 X.Y.Z로 → PR → 머지.
 3. main에서 `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. `.github/workflows/release.yml`: 태그와 판·CHANGELOG 절이 맞는지 → 타입 검사·빠른 시험·골든 → 패키지 빌드 → `scripts/release.mjs --publish`(검사 뒤 의존 순서대로 `npm publish`, 이미 있는 판은 건너뛰므로 실패 뒤 다시 돌려도 된다) → GitHub Release(CHANGELOG 절과 tgz).
 5. 손으로 미리 보기: `node scripts/build-packages.mjs && node scripts/release.mjs` (검사와 `npm publish --dry-run`). 워크플로를 `workflow_dispatch`로 돌리면 기본이 dry-run이다.
 
-**확인**: 이 기기에서 0.1.0으로 빌드해 `release.mjs`의 검사와 10개 패키지 `npm publish --dry-run`이 통과했다. npm에 `@quire/*` 패키지는 없다(404). 범위(조직)의 주인은 로그인 없이 알 수 없다.
+**확인**: 이 기기에서 0.1.0으로 빌드해 `release.mjs`의 검사와 10개 패키지 `npm publish --dry-run`이 통과했다. npm에 `@quiredoc/*` 패키지는 없다(404). 범위(조직)의 주인은 로그인 없이 알 수 없다.
 
 **한계**: 저장소가 비공개라 npm provenance(`--provenance`)를 쓰지 않는다. `repository` 링크도 남에게는 열리지 않는다. 저장소를 공개하면 워크플로에 `id-token: write`와 `--provenance`를 더한다.

@@ -6,9 +6,9 @@
  * JSX 없이 createElement로 쓴다 (빌드 설정 없이 쓰게).
  */
 import { createElement, useEffect, useRef, useSyncExternalStore, type CSSProperties, type ReactElement } from 'react';
-import { createEditor, type CreateEditorOptions, type EditorState, type QuireDoc, type QuireHandle, type Rect } from '@quire/sdk';
+import { createEditor, type CreateEditorOptions, type EditorState, type QuireDoc, type QuireHandle, type Rect } from '@quiredoc/sdk';
 
-export type { EditorState, QuireHandle } from '@quire/sdk';
+export type { EditorState, QuireHandle } from '@quiredoc/sdk';
 
 /** 붙기 전(또는 뗀 뒤)의 상태 */
 export const EMPTY_STATE: EditorState = Object.freeze({

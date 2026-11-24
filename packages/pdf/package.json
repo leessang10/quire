@@ -1,5 +1,5 @@
 {
-  "name": "@quire/pdf",
+  "name": "@quiredoc/pdf",
   "description": "PDF export for Quire documents with embedded, subset fonts (browser or Node)",
   "keywords": [
     "pdf",
@@ -14,11 +14,11 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@quire/editor": "*",
-    "@quire/layout": "*",
-    "@quire/model": "*",
-    "@quire/shaping": "*",
-    "@quire/sync": "*",
+    "@quiredoc/editor": "*",
+    "@quiredoc/layout": "*",
+    "@quiredoc/model": "*",
+    "@quiredoc/shaping": "*",
+    "@quiredoc/sync": "*",
     "harfbuzzjs": "1.6.4"
   }
 }

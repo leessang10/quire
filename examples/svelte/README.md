@@ -1,6 +1,6 @@
 # SvelteKit + scoped 스타일
 
-SvelteKit 3(Svelte 5)에서 공식 래퍼 없이 `@quire/sdk`를 쓰는 예제입니다. 서버 렌더링 중에는 에디터를 만들지 않고, `onMount`에서 패키지를 동적으로 불러옵니다.
+SvelteKit 3(Svelte 5)에서 공식 래퍼 없이 `@quiredoc/sdk`를 쓰는 예제입니다. 서버 렌더링 중에는 에디터를 만들지 않고, `onMount`에서 패키지를 동적으로 불러옵니다.
 
 ![SvelteKit 예제](screenshots/screenshot.webp)
 
@@ -28,7 +28,7 @@ npm run dev                       # http://localhost:5305
 ```svelte
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { EditorState, QuireHandle } from '@quire/sdk';
+  import type { EditorState, QuireHandle } from '@quiredoc/sdk';
 
   let host: HTMLElement;
   let handle = $state<QuireHandle | null>(null);
@@ -39,7 +39,7 @@ npm run dev                       # http://localhost:5305
     let h: QuireHandle | null = null;
     let off = () => {};
     // 에디터 패키지는 브라우저에서만 불러온다 (서버 묶음에 캔버스 코드를 넣지 않는다)
-    import('@quire/sdk').then(async ({ createEditor }) => {
+    import('@quiredoc/sdk').then(async ({ createEditor }) => {
       h = await createEditor({ host, doc: sampleDoc('SvelteKit'), fonts });
       if (!alive) return h.destroy();
       handle = h;

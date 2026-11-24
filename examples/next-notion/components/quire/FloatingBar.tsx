@@ -2,7 +2,7 @@
 /** 떠 있는 서식 막대 (Notion식): 글을 고르면 선택 위에 뜬다. 텍스트 유형, 굵게·기울임·밑줄·취소선, 링크, 색, 댓글 */
 import { useEffect, useState, type ReactNode } from 'react';
 import { Baseline, Bold, ChevronDown, Italic, Link2, MessageSquare, Strikethrough, Underline } from 'lucide-react';
-import type { QuireController } from '@quire/react';
+import type { QuireController } from '@quiredoc/react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Toggle } from '@/components/ui/toggle';

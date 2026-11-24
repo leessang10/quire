@@ -2,7 +2,7 @@
  * 결정성 지문 (02 R1): 저장소 글꼴로 고정 말뭉치를 조판해 줄 나눔·위치의 FNV-1a 지문을 낸다. Node 시험(determinism.test.ts)과
  * 브라우저가 같은 코드를 불러 같은 값이 나오는지 비교한다. 글꼴은 부르는 쪽이 읽어 준다 (Node: 파일, 브라우저: fetch).
  */
-import { LayoutCache, PLAIN_STYLE, PagedLayout, layoutParagraph, lineX, type FloatSpec, type ParaBox, type ParaFormat, type RunStyle } from '@quire/layout';
+import { LayoutCache, PLAIN_STYLE, PagedLayout, layoutParagraph, lineX, type FloatSpec, type ParaBox, type ParaFormat, type RunStyle } from '@quiredoc/layout';
 import { HbShaper, slotOf, type ShapingFont } from './shaper';
 
 export interface Fonts {

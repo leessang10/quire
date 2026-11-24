@@ -1,5 +1,5 @@
 {
-  "name": "@quire/shaping",
+  "name": "@quiredoc/shaping",
   "description": "Quire text shaping: HarfBuzz (WASM) shaping, font fallback and on-demand font chunk loading",
   "keywords": [
     "harfbuzz",
@@ -14,7 +14,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@quire/layout": "*",
+    "@quiredoc/layout": "*",
     "harfbuzzjs": "1.6.4"
   }
 }

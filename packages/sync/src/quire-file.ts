@@ -8,7 +8,7 @@
  *    다르면(외부 도구가 JSON만 고친 경우) crdt.bin을 버리고 document.json에서 새로 만든다.
  */
 import type { LoroDoc } from 'loro-crdt';
-import type { Doc, Document } from '@quire/model';
+import type { Doc, Document } from '@quiredoc/model';
 import { canonicalJson, documentFromQuire, migrateQuire, quireFromDoc, quireFromDocument, quireFromText, sha256Hex, stateHash, textFromQuire, type QuireDoc } from './canonical';
 import { documentFromLoro, newLoro } from './shape';
 import { readZip, writeZip, type ZipEntry } from './zip';

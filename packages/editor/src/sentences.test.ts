@@ -7,8 +7,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { HbShaper, loadShapingFont, slotOf } from '@quire/shaping';
-import { NO_LINE_END, NO_LINE_START, PLAIN_STYLE, cpSlice, layoutParagraph, type ParaBox, type ParaLayout } from '@quire/layout';
+import { HbShaper, loadShapingFont, slotOf } from '@quiredoc/shaping';
+import { NO_LINE_END, NO_LINE_START, PLAIN_STYLE, cpSlice, layoutParagraph, type ParaBox, type ParaLayout } from '@quiredoc/layout';
 
 const root = join(__dirname, '../../..');
 const font = (p: string, name: string) => loadShapingFont(readFileSync(join(root, p)), name);

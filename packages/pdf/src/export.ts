@@ -3,8 +3,8 @@
  * 순서: ① 미리 그려 쓰는 이미지 자산을 모은다 ② 이미지를 받아 XObject로 쓴다 ③ 쪽을 그린다 ④ 글꼴을 부분화해 쓴다
  * ⑤ 내용 스트림(글리프 → CID)과 쪽을 쓴다. DOM 없이 Node에서도 돈다.
  */
-import { OBJ, type ParagraphInfo } from '@quire/model';
-import { PagePainter, type FontRef, type PainterEnv, type PaintTarget, type TextRun } from '@quire/editor';
+import { OBJ, type ParagraphInfo } from '@quiredoc/model';
+import { PagePainter, type FontRef, type PainterEnv, type PaintTarget, type TextRun } from '@quiredoc/editor';
 import { PdfFonts, type PdfFontSource } from './fonts';
 import { writeImage, type Inflate } from './images';
 import type { Subsetter } from './subset';

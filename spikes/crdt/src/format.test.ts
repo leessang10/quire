@@ -4,7 +4,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { compactLoro, displayText, readState } from '@quire/sync';
+import { compactLoro, displayText, readState } from '@quiredoc/sync';
 import { configure, masked, newPeer, Peer, peers, sync, view, PARA_KEYS, pkey, EXPAND, type View } from './format';
 
 const START = '가나다라마\n바사아자차';

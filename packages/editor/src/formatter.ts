@@ -29,7 +29,7 @@ import {
   type TableGrid,
   type FieldKind,
   type HFKind,
-} from '@quire/model';
+} from '@quiredoc/model';
 import {
   CELL_PAD,
   LayoutCache,
@@ -51,7 +51,7 @@ import {
   type TableGridInput,
   type TableMeasure,
   type TableSpec,
-} from '@quire/layout';
+} from '@quiredoc/layout';
 
 /** 서식 번호 하나의 그리기 정보 (10 §4) */
 export interface DrawStyle {

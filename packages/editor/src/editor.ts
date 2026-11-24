@@ -43,7 +43,7 @@ import {
   type SectionStart,
   type Style,
   type FindQuery,
-} from '@quire/model';
+} from '@quiredoc/model';
 import {
   LayoutCache,
   PagedLayout,
@@ -55,7 +55,7 @@ import {
   type PageSetup,
   type PlacedLine,
   type PlacedPara,
-} from '@quire/layout';
+} from '@quiredoc/layout';
 import { EditContextInput, editContextSupported } from './edit-context';
 import { MemoryAssets, type AssetStore } from './assets';
 import { Formatter, NOTE_INDENT, defaultPageSetup, hasKeys, type TableView } from './formatter';
@@ -676,19 +676,19 @@ export class Editor {
 
   /** 글꼴을 불러와 HarfBuzz 셰이핑으로 바꾼다 (셰이핑 모듈·WASM은 이때 불러온다) */
   private async loadFonts(sources: FontSource[]): Promise<void> {
-    const shaping = await import('@quire/shaping');
+    const shaping = await import('@quiredoc/shaping');
     const fetchBytes = async (url: string) => {
       const r = await fetch(url);
       if (!r.ok) throw new Error(`Failed to load font: ${url} (${r.status})`);
       return new Uint8Array(await r.arrayBuffer());
     };
     // 글꼴 자리: 파일 하나는 바로 불러온 자리, 조각 목록은 조각마다 아직 안 불러온 자리
-    const slots: Array<import('@quire/shaping').FontSlot & { url?: string; bytes?: number }> = [];
+    const slots: Array<import('@quiredoc/shaping').FontSlot & { url?: string; bytes?: number }> = [];
     const ready: Array<{ i: number; data: Uint8Array }> = [];
     const readManifest = async (url: string) => {
       const r = await fetch(url);
       if (!r.ok) throw new Error(`Failed to load font manifest: ${url} (${r.status})`);
-      const m = (await r.json()) as import('@quire/shaping').FontManifest;
+      const m = (await r.json()) as import('@quiredoc/shaping').FontManifest;
       return shaping.slotsFromManifest(m, new URL(url, location.href));
     };
     for (const src of sources) {
@@ -1349,7 +1349,7 @@ export class Editor {
   }
 
   /**
-   * PDF로 내보낼 것 (15 §5.2, @quire/pdf의 exportPdf): 그리기 환경(이미지는 자산을 따로 받는다), 글꼴 자리별 파일, 자산 바이트.
+   * PDF로 내보낼 것 (15 §5.2, @quiredoc/pdf의 exportPdf): 그리기 환경(이미지는 자산을 따로 받는다), 글꼴 자리별 파일, 자산 바이트.
    * 엔진 글꼴(셰이핑)을 불러오지 않았으면 글꼴이 없다 (글자를 그리지 못한다)
    */
   printSource(): {

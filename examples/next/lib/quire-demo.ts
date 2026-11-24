@@ -3,11 +3,11 @@
  * 예제마다 이 파일을 복사해 쓴다 (examples/shared/quire-demo.ts가 원본).
  *
  * 앱이 공개 폴더에 둘 것 (examples/shared/copy-assets.mjs가 복사한다):
- *   <public>/quire/fonts/…              @quire/fonts의 글꼴 조각
+ *   <public>/quire/fonts/…              @quiredoc/fonts의 글꼴 조각
  *   <public>/quire/harfbuzz-subset.wasm  PDF 글꼴 부분화
  */
-import type { QuireDoc, QuireHandle, QuirePlugin } from '@quire/sdk';
-import { DEFAULT_LOCALE, Messages, dropMessageKey, highlightWordsPlugin, wordCountPlugin, type DropKind, type FontSource, type MessageKey, type WordCount } from '@quire/editor';
+import type { QuireDoc, QuireHandle, QuirePlugin } from '@quiredoc/sdk';
+import { DEFAULT_LOCALE, Messages, dropMessageKey, highlightWordsPlugin, wordCountPlugin, type DropKind, type FontSource, type MessageKey, type WordCount } from '@quiredoc/editor';
 
 export const ASSET_BASE = '/quire';
 
@@ -56,7 +56,7 @@ const MIME: Record<SaveKind, string> = {
 
 /** 파일을 열어 문서를 바꾼다. 버린 요소를 편집기 언어의 이름으로 돌려준다 (이름 → 개수) */
 export async function openFile(h: { load: QuireHandle['load']; editor?: { t: (key: MessageKey) => string } }, file: File): Promise<Record<string, number>> {
-  const c = await import('@quire/convert');
+  const c = await import('@quiredoc/convert');
   const name = file.name.toLowerCase();
   const r = name.endsWith('.hwpx')
     ? await c.importHwpx(new Uint8Array(await file.arrayBuffer()))
@@ -74,12 +74,12 @@ export async function openFile(h: { load: QuireHandle['load']; editor?: { t: (ke
 export async function exportAs(h: QuireHandle, kind: SaveKind): Promise<Uint8Array | string> {
   const src = h.editor.printSource();
   if (kind === 'pdf') {
-    const pdf = await import('@quire/pdf');
+    const pdf = await import('@quiredoc/pdf');
     const wasm = await fetch(`${ASSET_BASE}/harfbuzz-subset.wasm`).then((r) => r.arrayBuffer());
     const r = await pdf.exportPdf({ env: src.env, fonts: src.fonts, asset: src.asset, subsetter: await pdf.loadSubsetter(wasm), title: src.title });
     return r.bytes;
   }
-  const c = await import('@quire/convert');
+  const c = await import('@quiredoc/convert');
   const q = h.toJSON();
   const asset = async (id: string) => {
     const bytes = await src.asset(id);

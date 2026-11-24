@@ -5,8 +5,8 @@
  * 서버를 껐다 켜면 Worker가 다시 연결하고, 끊긴 동안의 편집을 맞춘다.
  * 모두 나가 방이 비면 서버가 새 판으로 압축한다. 그 사이 오프라인이던 탭은 다시 붙을 때 새 판으로 옮겨진다 (09 §9).
  */
-import { Editor, HttpAssets, remoteColorSlot } from '@quire/editor';
-import { startSyncWorker } from '@quire/sync';
+import { Editor, HttpAssets, remoteColorSlot } from '@quiredoc/editor';
+import { startSyncWorker } from '@quiredoc/sync';
 import { VersionsPane } from './versions-pane';
 
 const params = new URLSearchParams(location.search);

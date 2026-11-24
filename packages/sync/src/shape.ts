@@ -31,7 +31,7 @@ import {
   type TextDelta,
   type SectionProps,
   SECTION_KEYS,
-} from '@quire/model';
+} from '@quiredoc/model';
 import { annFromWire, annIdsInLoro, readAnn } from './annotations';
 import { readCmts } from './comments';
 

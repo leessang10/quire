@@ -10,9 +10,9 @@
  *
  * 결과는 `window.goldenResult`. 쿼리 ?only=report 로 한 문서만.
  */
-import { Editor, composeReference, summarizeLayout, type LayoutSummary } from '@quire/editor';
-import { HbShaper, loadShapingFont, slotOf } from '@quire/shaping';
-import { documentFromQuire, migrateQuire, quireFromDocument } from '@quire/sync';
+import { Editor, composeReference, summarizeLayout, type LayoutSummary } from '@quiredoc/editor';
+import { HbShaper, loadShapingFont, slotOf } from '@quiredoc/shaping';
+import { documentFromQuire, migrateQuire, quireFromDocument } from '@quiredoc/sync';
 import pretendardUrl from '../../../fonts/pretendard/Pretendard-Regular.otf?url';
 import pretendardBoldUrl from '../../../fonts/pretendard/Pretendard-Bold.otf?url';
 import notoUrl from '../../../fonts/noto-sans-kr/NotoSansKR-Regular.otf?url';

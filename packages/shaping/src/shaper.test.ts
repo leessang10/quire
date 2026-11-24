@@ -4,7 +4,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import * as hb from 'harfbuzzjs';
-import { layoutParagraph, type Measurer } from '@quire/layout';
+import { layoutParagraph, type Measurer } from '@quiredoc/layout';
 import { FALLBACK_FONT, HbShaper, loadShapingFont } from './shaper';
 
 const KO = 'C:/Windows/Fonts/malgun.ttf';

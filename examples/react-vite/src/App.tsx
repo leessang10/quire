@@ -1,6 +1,6 @@
-// 예제 2: React + Vite + Tailwind — @quire/react의 useQuire·QuireEditor·useEditorState
+// 예제 2: React + Vite + Tailwind — @quiredoc/react의 useQuire·QuireEditor·useEditorState
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { QuireEditor, useEditorState, useQuire } from '@quire/react';
+import { QuireEditor, useEditorState, useQuire } from '@quiredoc/react';
 import { ACCEPT, demoPlugins, fonts, openFile, sampleDoc, saveFile, type SaveKind } from './quire-demo.ts';
 
 const btn = 'rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-sm hover:bg-zinc-50 disabled:opacity-40 aria-pressed:border-blue-400 aria-pressed:bg-blue-100';

@@ -2,7 +2,7 @@
  * 브리지 수렴 시험: 피어마다 Doc + Loro, 업데이트를 손으로 주고받는다 (batchMs: null → flush()를 직접 호출).
  */
 import { describe, expect, it } from 'vitest';
-import { History, type Doc, type Op } from '@quire/model';
+import { History, type Doc, type Op } from '@quiredoc/model';
 import { SyncBridge } from './index';
 import { displayOrderFromLoro } from './shape';
 

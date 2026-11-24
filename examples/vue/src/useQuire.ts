@@ -1,6 +1,6 @@
-// Vue에서 Quire 붙이기 (공식 래퍼 없이 @quire/sdk만): 에디터 수명은 onMounted·onBeforeUnmount, 상태는 shallowRef
+// Vue에서 Quire 붙이기 (공식 래퍼 없이 @quiredoc/sdk만): 에디터 수명은 onMounted·onBeforeUnmount, 상태는 shallowRef
 import { onBeforeUnmount, onMounted, shallowRef, type Ref } from 'vue';
-import { createEditor, type CreateEditorOptions, type EditorState, type QuireHandle } from '@quire/sdk';
+import { createEditor, type CreateEditorOptions, type EditorState, type QuireHandle } from '@quiredoc/sdk';
 
 export function useQuire(host: Ref<HTMLElement | null>, options: Omit<CreateEditorOptions, 'host'>) {
   const handle = shallowRef<QuireHandle | null>(null);

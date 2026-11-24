@@ -1,5 +1,5 @@
 {
-  "name": "@quire/sdk",
+  "name": "@quiredoc/sdk",
   "description": "Quire: canvas-based Korean-first document editor — one-call setup (createEditor), commands, state and file I/O",
   "keywords": [
     "editor",
@@ -17,8 +17,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@quire/editor": "*",
-    "@quire/model": "*",
-    "@quire/sync": "*"
+    "@quiredoc/editor": "*",
+    "@quiredoc/model": "*",
+    "@quiredoc/sync": "*"
   }
 }

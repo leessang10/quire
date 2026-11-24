@@ -9,8 +9,8 @@
  * - 제안(삽입·삭제)은 hp:t 안의 insertBegin·deleteBegin과 header의 trackChanges.
  * 단위: HWPUNIT = 1/100 pt (정본 1/1000pt ÷ 10). 글자 크기 height = pt × 100.
  */
-import { DEFAULT_STYLES, LAST_SECTION, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps, type Style } from '@quire/model';
-import { writeZip, type QuireDoc, type QuireParagraph, type QuireTable } from '@quire/sync';
+import { DEFAULT_STYLES, LAST_SECTION, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps, type Style } from '@quiredoc/model';
+import { writeZip, type QuireDoc, type QuireParagraph, type QuireTable } from '@quiredoc/sync';
 import { EXTRA_STYLES, mimeOf, tableGrid, withSafeLinks, type AssetReader } from './common';
 import { XML_HEAD, escXml, x } from './xml';
 

@@ -14,18 +14,18 @@
 
 | 패키지 | 의존 | 환경 |
 |---|---|---|
-| `@quire/model`, `@quire/layout`, `@quire/shaping` | 없음 (셰이핑은 HarfBuzz WASM) | 브라우저, Worker, Node |
-| `@quire/sync` | Loro (WASM) | 브라우저, Worker, Node. 정본·`.quire`·동기화 |
-| `@quire/editor` | DOM | 브라우저. 순수 JS 클래스 `Editor` |
-| `@quire/sdk` | `@quire/editor` | 브라우저. 프레임워크 무관 `createEditor` (§3) |
-| `@quire/react` | React 18+ | 브라우저 (클라이언트 컴포넌트) |
-| `@quire/convert` | `@quire/sync` | 브라우저, Node. HTML·Markdown·DOCX·HWPX |
-| `@quire/pdf` | `@quire/editor`·`@quire/sync` | 브라우저, Node. `pdfFromQuire`는 DOM 없이 |
-| `@quire/fonts` | 없음 | 자산 패키지: 엔진 글꼴 조각과 `manifest.json` |
+| `@quiredoc/model`, `@quiredoc/layout`, `@quiredoc/shaping` | 없음 (셰이핑은 HarfBuzz WASM) | 브라우저, Worker, Node |
+| `@quiredoc/sync` | Loro (WASM) | 브라우저, Worker, Node. 정본·`.quire`·동기화 |
+| `@quiredoc/editor` | DOM | 브라우저. 순수 JS 클래스 `Editor` |
+| `@quiredoc/sdk` | `@quiredoc/editor` | 브라우저. 프레임워크 무관 `createEditor` (§3) |
+| `@quiredoc/react` | React 18+ | 브라우저 (클라이언트 컴포넌트) |
+| `@quiredoc/convert` | `@quiredoc/sync` | 브라우저, Node. HTML·Markdown·DOCX·HWPX |
+| `@quiredoc/pdf` | `@quiredoc/editor`·`@quiredoc/sync` | 브라우저, Node. `pdfFromQuire`는 DOM 없이 |
+| `@quiredoc/fonts` | 없음 | 자산 패키지: 엔진 글꼴 조각과 `manifest.json` |
 
-`@quire/server`(예정이었던 것)는 두지 않았다. 서버에서 할 일은 `@quire/convert`·`@quire/pdf`를 Node에서 그대로 쓴다 (예제 `examples/node`). 빌드는 `scripts/build-packages.mjs`(ESM + 타입, 16 §10.1).
+`@quiredoc/server`(예정이었던 것)는 두지 않았다. 서버에서 할 일은 `@quiredoc/convert`·`@quiredoc/pdf`를 Node에서 그대로 쓴다 (예제 `examples/node`). 빌드는 `scripts/build-packages.mjs`(ESM + 타입, 16 §10.1).
 
-## 3. 에디터 공개 API (프레임워크 무관, `@quire/sdk`)
+## 3. 에디터 공개 API (프레임워크 무관, `@quiredoc/sdk`)
 
 ```ts
 const editor = await createEditor({
@@ -58,7 +58,7 @@ editor.editor;                                  // 탈출구: Editor 자체 (넓
 
 ```tsx
 'use client';
-import { QuireEditor, useQuire, useEditorState } from '@quire/react';
+import { QuireEditor, useQuire, useEditorState } from '@quiredoc/react';
 
 export function ReportEditor({ doc }: { doc: QuireDoc }) {
   const editor = useQuire({ doc, fonts, plugins: [wordCountPlugin()] });
@@ -83,7 +83,7 @@ export function ReportEditor({ doc }: { doc: QuireDoc }) {
 
 | 항목 | 방침 (6-6 예제 `examples/next`, Next.js 16에서 확인) |
 |---|---|
-| SSR | `@quire/react`의 컴포넌트는 `'use client'`. 에디터는 브라우저에서만 만든다: `next/dynamic`으로 `ssr: false` |
+| SSR | `@quiredoc/react`의 컴포넌트는 `'use client'`. 에디터는 브라우저에서만 만든다: `next/dynamic`으로 `ssr: false` |
 | Turbopack | harfbuzzjs(Emscripten)가 Node에서만 부르는 `import("module")`을 브라우저 묶음에서도 찾는다 → `turbopack.resolveAlias: { module: { browser: './empty-module.js' } }`. webpack은 `resolve.fallback.module = false` |
 | WASM | HarfBuzz 셰이핑 WASM은 패키지가 찾고, Loro는 base64 진입점이라 따로 설정할 것이 없다 |
 | 글꼴 | 레이아웃용 글꼴은 `next/font`가 아니라 에디터가 직접 로드한다 (`fonts`의 manifest 주소, `public/quire/fonts/`). PDF 부분화는 `public/quire/harfbuzz-subset.wasm` |
@@ -100,7 +100,7 @@ export function ReportEditor({ doc }: { doc: QuireDoc }) {
 | 기능 | 위치 예 | 상태 |
 |---|---|---|
 | PDF 내보내기 | Route Handler, CLI | **구현**: `pdfFromQuire(q, { fonts, subsetter })` (5-4, 6-6). 편집 화면과 같은 쪽 나눔 (6-3 골든) |
-| 형식 변환 | Route Handler, CLI | **구현**: `@quire/convert` (HTML·Markdown·DOCX·HWPX). 예제 `examples/node/convert.mjs` |
+| 형식 변환 | Route Handler, CLI | **구현**: `@quiredoc/convert` (HTML·Markdown·DOCX·HWPX). 예제 `examples/node/convert.mjs` |
 | 저장 검증 | Server Action | **구현**: `migrateQuire`·`documentFromQuire` (망가진 정본은 설명 있는 오류, 6-4) |
 | 썸네일 | 저장 후 백그라운드 작업 | 나중 |
 | 읽기 전용 SSR 보기 | Server Component | 나중 (O-19) |

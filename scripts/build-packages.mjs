@@ -4,7 +4,7 @@
 // 저장소의 패키지는 개발용으로 소스(src/index.ts)를 그대로 내보낸다. 이 스크립트는 저장소를 바꾸지 않고
 // 1) tsc로 타입 선언(.d.ts)을, 2) Vite 라이브러리 모드로 패키지마다 ESM 묶음(dist/index.js)을 만들고,
 // 3) 배포용 package.json(exports → dist, 내부 의존 버전 고정)을 써서 4) npm pack 한다.
-// 글꼴 조각(@quire/fonts)은 scripts/build-fonts.mjs의 결과(조각 + manifest.json)를 담는다.
+// 글꼴 조각(@quiredoc/fonts)은 scripts/build-fonts.mjs의 결과(조각 + manifest.json)를 담는다.
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,7 @@ import { build } from 'vite';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, '.build');
-/** 판: 저장소 루트 package.json의 version 하나 (모든 @quire/* 패키지가 같은 판, 16 §10.8). QUIRE_VERSION으로 덮어쓸 수 있다 (출시 워크플로가 태그와 맞춘다) */
+/** 판: 저장소 루트 package.json의 version 하나 (모든 @quiredoc/* 패키지가 같은 판, 16 §10.8). QUIRE_VERSION으로 덮어쓸 수 있다 (출시 워크플로가 태그와 맞춘다) */
 const VERSION = process.env.QUIRE_VERSION || JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(VERSION ?? '')) throw new Error(`판이 semver가 아님: ${VERSION}`);
 /** 배포용 package.json에 같이 쓰는 것 */
@@ -41,7 +41,7 @@ const npm = (args, cwd) => {
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, 'packs'), { recursive: true });
 
-// 1) 타입 선언: 패키지 소스 전체를 한 번에 (서로의 타입을 '@quire/…'로 가리킨다)
+// 1) 타입 선언: 패키지 소스 전체를 한 번에 (서로의 타입을 '@quiredoc/…'로 가리킨다)
 const tsconfig = {
   extends: '../tsconfig.json',
   compilerOptions: { noEmit: false, declaration: true, emitDeclarationOnly: true, outDir: './types', rootDir: '../packages', noUnusedLocals: false, skipLibCheck: true },
@@ -59,7 +59,7 @@ for (const p of PACKAGES) {
   const dest = join(out, 'packages', p);
   mkdirSync(join(dest, 'dist'), { recursive: true });
   const deps = { ...(src.dependencies ?? {}) };
-  for (const k of Object.keys(deps)) if (k.startsWith('@quire/')) deps[k] = VERSION;
+  for (const k of Object.keys(deps)) if (k.startsWith('@quiredoc/')) deps[k] = VERSION;
   const peers = { ...(src.peerDependencies ?? {}) };
   const external = [...Object.keys(deps), ...Object.keys(peers)];
   // 2) ESM 묶음: 의존 패키지는 밖에 둔다 (harfbuzzjs/dist/*.wasm 같은 하위 경로도)
@@ -114,7 +114,7 @@ for (const p of PACKAGES) {
   if (existsSync(readme)) cpSync(readme, join(dest, 'README.md'));
 }
 
-// @quire/fonts: 글꼴 조각 (없으면 만든다)
+// @quiredoc/fonts: 글꼴 조각 (없으면 만든다)
 const fontsSrc = join(root, 'apps/playground/public/fonts');
 if (!existsSync(join(fontsSrc, 'pretendard/manifest.json'))) {
   console.log('글꼴 조각 만들기…');
@@ -126,11 +126,11 @@ if (!existsSync(join(fontsSrc, 'pretendard/manifest.json'))) {
   writeFileSync(
     join(dest, 'README.md'),
     [
-      '# @quire/fonts',
+      '# @quiredoc/fonts',
       '',
       `Font chunks and manifests used by the [Quire](${REPO}) editor: Pretendard and Noto Sans KR, split so the editor loads only the chunks a document needs.`,
       '',
-      "Copy `node_modules/@quire/fonts/fonts` to `<public>/quire/fonts/` and point the editor's `fonts` option at the manifests.",
+      "Copy `node_modules/@quiredoc/fonts/fonts` to `<public>/quire/fonts/` and point the editor's `fonts` option at the manifests.",
       '',
       '## License',
       '',
@@ -146,7 +146,7 @@ if (!existsSync(join(fontsSrc, 'pretendard/manifest.json'))) {
     join(dest, 'package.json'),
     `${JSON.stringify(
       {
-        name: '@quire/fonts',
+        name: '@quiredoc/fonts',
         version: VERSION,
         description: 'Font chunks for the Quire engine (Pretendard, Noto Sans KR; SIL OFL 1.1): copy into the public folder of your app',
         keywords: ['fonts', 'korean', 'pretendard', 'noto-sans-kr'],

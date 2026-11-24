@@ -2,7 +2,7 @@
  * 공유 위치(Loro 커서)와 프레즌스 시험 (09 §7)
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { History } from '@quire/model';
+import { History } from '@quiredoc/model';
 import { Presence } from './presence';
 import { SyncBridge } from './index';
 

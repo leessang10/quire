@@ -1,6 +1,6 @@
 # Changelog
 
-All `@quire/*` packages share one version and are released together. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/) (while in 0.x, a minor bump may contain breaking changes; see `docs/design/16-release.md` §10.8).
+All `@quiredoc/*` packages share one version and are released together. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/) (while in 0.x, a minor bump may contain breaking changes; see `docs/design/16-release.md` §10.8).
 
 ## [Unreleased]
 
@@ -10,14 +10,14 @@ First public release.
 
 ### Packages
 
-- `@quire/sdk`: `createEditor` (one call to mount an editor), commands, immutable state snapshots, subscriptions, document load/save.
-- `@quire/react`: `useQuire`, `QuireEditor`, `useEditorState` (React 18+, StrictMode safe).
-- `@quire/editor`: the editor core (canvas rendering, input, accessibility mirror, plugins, themes, i18n).
-- `@quire/convert`: HWPX, DOCX, Markdown and HTML import/export (browser and Node).
-- `@quire/pdf`: PDF export with embedded subset fonts, from the editor or headless from a document.
-- `@quire/sync`: real-time collaboration (Loro CRDT), presence, version history, `.quire` files.
-- `@quire/model`, `@quire/layout`, `@quire/shaping`: document model, layout engine, HarfBuzz shaping.
-- `@quire/fonts`: Pretendard and Noto Sans KR font chunks (SIL OFL 1.1).
+- `@quiredoc/sdk`: `createEditor` (one call to mount an editor), commands, immutable state snapshots, subscriptions, document load/save.
+- `@quiredoc/react`: `useQuire`, `QuireEditor`, `useEditorState` (React 18+, StrictMode safe).
+- `@quiredoc/editor`: the editor core (canvas rendering, input, accessibility mirror, plugins, themes, i18n).
+- `@quiredoc/convert`: HWPX, DOCX, Markdown and HTML import/export (browser and Node).
+- `@quiredoc/pdf`: PDF export with embedded subset fonts, from the editor or headless from a document.
+- `@quiredoc/sync`: real-time collaboration (Loro CRDT), presence, version history, `.quire` files.
+- `@quiredoc/model`, `@quiredoc/layout`, `@quiredoc/shaping`: document model, layout engine, HarfBuzz shaping.
+- `@quiredoc/fonts`: Pretendard and Noto Sans KR font chunks (SIL OFL 1.1).
 
 ### Editing and layout
 
@@ -31,7 +31,7 @@ First public release.
 ### Appearance and languages
 
 - Themes (classic, minimal, modern) × light/dark, `--quire-*` CSS variables (fixed public names, `tokens.scss` for SCSS), collaborator palette `--quire-remote-1…8`, continuous view, formatting marks overlay, zoom (`setZoom`, fit to width, Ctrl+wheel).
-- UI languages: Korean built in, English loaded on demand (`@quire/editor/i18n/en`); import reports use stable kinds with translated names.
+- UI languages: Korean built in, English loaded on demand (`@quiredoc/editor/i18n/en`); import reports use stable kinds with translated names.
 
 [Unreleased]: https://github.com/leessang10/quire/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/leessang10/quire/releases/tag/v0.1.0

@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Measurer } from '@quire/layout';
+import type { Measurer } from '@quiredoc/layout';
 import { FALLBACK_FONT, HbShaper, loadShapingFont, slotOf, type FontSlot } from './shaper';
 
 const root = join(__dirname, '../../..');

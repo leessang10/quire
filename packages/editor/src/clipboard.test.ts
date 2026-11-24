@@ -2,7 +2,7 @@
  * 서식 있는 복사·붙여넣기: 조각 만들기, 붙이기 규칙 (Google Docs와 같은 문단 속성 규칙), 목록·표·이미지, HTML 읽기·쓰기
  */
 import { describe, expect, it } from 'vitest';
-import { Doc, Document, History, cellStoryId, defaultListDef, noteRefs, noteStoryId, normalizeTable, type Op } from '@quire/model';
+import { Doc, Document, History, cellStoryId, defaultListDef, noteRefs, noteStoryId, normalizeTable, type Op } from '@quiredoc/model';
 import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragment, parseHtml, pasteFragment, type Fragment } from './clipboard';
 
 const NL = '\n';

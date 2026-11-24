@@ -5,7 +5,7 @@
  * - harfbuzzjs 객체는 WASM 메모리를 쓰므로 Buffer는 다 쓰면 destroy가 필요한지 확인한다 (v1: FinalizationRegistry).
  */
 import * as hb from 'harfbuzzjs';
-import type { Measurer } from '@quire/layout';
+import type { Measurer } from '@quiredoc/layout';
 
 export interface Glyph {
   /** 글리프 ID */

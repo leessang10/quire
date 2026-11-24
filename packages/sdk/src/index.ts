@@ -1,14 +1,14 @@
 /**
- * 에디터 공개 API (08 §3, 15 §8): 프레임워크와 무관한 createEditor. 편집기(@quire/editor)를 감싸
+ * 에디터 공개 API (08 §3, 15 §8): 프레임워크와 무관한 createEditor. 편집기(@quiredoc/editor)를 감싸
  * 명령(run), 불변 상태 스냅샷(getState), 상태 변경 알림(subscribe), UI 배치용 좌표(caretRect·rangeRects), 정본(toJSON),
  * 정리(destroy)를 준다. 문서 상태는 에디터가 소유한다: 앱은 저장할 때 subscribe + 디바운스로 toJSON()을 받는다.
  */
-import { Editor, type EditorOptions, type FindStatus, type ParagraphState, type PluginContext, type QuirePlugin, type Rect, type SelectionMarks } from '@quire/editor';
-import type { MarkSet } from '@quire/model';
-import { documentFromQuire, quireFromDocument, type QuireDoc } from '@quire/sync';
+import { Editor, type EditorOptions, type FindStatus, type ParagraphState, type PluginContext, type QuirePlugin, type Rect, type SelectionMarks } from '@quiredoc/editor';
+import type { MarkSet } from '@quiredoc/model';
+import { documentFromQuire, quireFromDocument, type QuireDoc } from '@quiredoc/sync';
 
-export type { QuirePlugin, PluginContext, Rect } from '@quire/editor';
-export type { QuireDoc } from '@quire/sync';
+export type { QuirePlugin, PluginContext, Rect } from '@quiredoc/editor';
+export type { QuireDoc } from '@quiredoc/sync';
 
 /** 불변 상태 스냅샷 (바뀔 때만 새 객체) */
 export interface EditorState {

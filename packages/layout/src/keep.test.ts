@@ -2,7 +2,7 @@
  * 쪽 나눔 제어 (12 §4): 앞에서 쪽 나눔, 문단 나누지 않음, 다음 문단과 함께, 과부·고아 줄. 증분 결과 = 처음부터 조립한 결과.
  */
 import { describe, expect, it } from 'vitest';
-import { Doc } from '@quire/model';
+import { Doc } from '@quiredoc/model';
 import { LayoutCache, PLAIN_STYLE, PagedLayout, type FormatSource, type Measurer, type PageSetup, type ParaBox } from './index';
 
 /** 모든 grapheme 폭 10 → 본문 폭 160 = 16글자, 줄 높이 20, 쪽 본문 높이 200 = 10줄 */

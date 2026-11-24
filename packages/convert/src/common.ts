@@ -2,9 +2,9 @@
  * 변환 공통 (15 §6.2): 모든 변환은 정본 JSON(QuireDoc)을 거친다. 가져오기 결과, 버린 요소 보고, 자산(이미지 바이트),
  * 포맷이 쓰는 덧붙인 스타일(제목 4–6, 코드), 이미지 크기 읽기.
  */
-import type { DropCounts, DropKind } from '@quire/editor';
-import { DEFAULT_STYLES, safeLink, type Style } from '@quire/model';
-import { assetIdOf, quireFromText, type QuireDoc, type QuireParagraph, type QuireTable } from '@quire/sync';
+import type { DropCounts, DropKind } from '@quiredoc/editor';
+import { DEFAULT_STYLES, safeLink, type Style } from '@quiredoc/model';
+import { assetIdOf, quireFromText, type QuireDoc, type QuireParagraph, type QuireTable } from '@quiredoc/sync';
 
 /** 가져오며 버린 것: 무엇 → 개수 (15 §6.1 "가져올 때 모르는 요소는 버리고 버린 요소 수를 알린다") */
 export interface ImportReport {

@@ -2,7 +2,7 @@
  * 제안 모드 동기화 (14 §4): 제안은 주석이므로 주석 동기화를 그대로 탄다. 제안 모드는 편집기(피어)마다의 상태다.
  */
 import { describe, expect, it } from 'vitest';
-import type { CommentAuthor, Document, Op } from '@quire/model';
+import type { CommentAuthor, Document, Op } from '@quiredoc/model';
 import { SyncBridge } from './index';
 
 const A: CommentAuthor = { id: 'ua', name: '가영', color: '#2563eb' };

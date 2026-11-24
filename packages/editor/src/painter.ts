@@ -3,8 +3,8 @@
  * 편집기의 것(선택, 주석·제안·장식, 캐럿, 원격 캐럿, 활성 스토리 흐리기, 개체 손잡이)은 덧그리기(PaintOverlay) 갈고리로
  * 편집기가 그린다. 그리기 순서가 편집기와 같아 화면 결과가 그대로다. DOM에 의존하지 않는다 (Node에서 PDF·시험).
  */
-import { OBJ, cellKey, noteStoryId, type Doc, type Document, type FieldKind, type ParagraphInfo, type TableGrid } from '@quire/model';
-import { CELL_PAD, cellGroups, cpSlice, lineX, rowParts, type PageSetup, type PagedLayout, type ParaLayout, type PlacedFloat, type PlacedLine, type PlacedPara } from '@quire/layout';
+import { OBJ, cellKey, noteStoryId, type Doc, type Document, type FieldKind, type ParagraphInfo, type TableGrid } from '@quiredoc/model';
+import { CELL_PAD, cellGroups, cpSlice, lineX, rowParts, type PageSetup, type PagedLayout, type ParaLayout, type PlacedFloat, type PlacedLine, type PlacedPara } from '@quiredoc/layout';
 import { NOTE_INDENT, PLAIN_DRAW, type DrawStyle, type FieldValues, type Formatter, type TableView } from './formatter';
 import { dateText, layoutHF, pageHF, type PageHF } from './headers';
 import type { FontRef, ImageSource, PaintTarget } from './paint';

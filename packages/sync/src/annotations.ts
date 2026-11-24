@@ -7,7 +7,7 @@
  * - 위치 단위는 그 스토리 Loro 텍스트의 UTF-16이다. 편집 모델 쪽 변환(화면 오프셋 ↔ UTF-16 ↔ 위치)은 부르는 쪽이 한다.
  */
 import { Cursor, type LoroDoc } from 'loro-crdt';
-import type { Annotation, AnnotationChange, Document } from '@quire/model';
+import type { Annotation, AnnotationChange, Document } from '@quiredoc/model';
 import { BODY_NAMES, storyNames } from './shape';
 
 export const ANNOTATIONS = 'annotations';

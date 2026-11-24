@@ -6,8 +6,8 @@
  * 셀에 한 글자 넣기 → 그 셀 스토리 변경 → 표 문단 touch → 본문 레이아웃 갱신 (표 다시 재기, 뒤 문단 위치).
  */
 import { it } from 'vitest';
-import { Doc, Document, cellStoryId, normalizeTable, type ParagraphInfo } from '@quire/model';
-import { CELL_PAD, LayoutCache, PLAIN_STYLE, PagedLayout, TableLayouter, type FormatSource, type Measurer, type PageSetup } from '@quire/layout';
+import { Doc, Document, cellStoryId, normalizeTable, type ParagraphInfo } from '@quiredoc/model';
+import { CELL_PAD, LayoutCache, PLAIN_STYLE, PagedLayout, TableLayouter, type FormatSource, type Measurer, type PageSetup } from '@quiredoc/layout';
 
 const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };
 const SETUP: PageSetup = { width: 794, height: 1123, margin: 96, gap: 24, lineHeight: 27, paraSpacing: 8, fontSize: 16 };

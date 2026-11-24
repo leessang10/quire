@@ -1,7 +1,7 @@
 /** 문서 열기 벤치마크: Doc.fromText + 첫 화면 레이아웃 */
 import { it } from 'vitest';
-import { Doc } from '@quire/model';
-import { PagedLayout, type Measurer, type PageSetup } from '@quire/layout';
+import { Doc } from '@quiredoc/model';
+import { PagedLayout, type Measurer, type PageSetup } from '@quiredoc/layout';
 
 const measurer: Measurer = { width: (g) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) };
 const setup: PageSetup = { width: 794, height: 1123, margin: 96, gap: 24, lineHeight: 27, paraSpacing: 8 };

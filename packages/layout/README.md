@@ -1,4 +1,4 @@
-# @quire/layout
+# @quiredoc/layout
 
 Quire layout engine: line breaking with Korean typesetting rules, pagination, columns, tables, footnotes.
 
@@ -7,12 +7,12 @@ Part of [Quire](https://github.com/leessang10/quire), a web document editor with
 ## Install
 
 ```sh
-npm install @quire/layout
+npm install @quiredoc/layout
 ```
 
 ## Usage
 
-Incremental page layout: line breaking (including Korean kinsoku and justification), widow/orphan control, sections, columns, headers/footers, footnotes and table splitting. Usually used through `@quire/editor`.
+Incremental page layout: line breaking (including Korean kinsoku and justification), widow/orphan control, sections, columns, headers/footers, footnotes and table splitting. Usually used through `@quiredoc/editor`.
 
 ## License
 

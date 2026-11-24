@@ -396,7 +396,7 @@ type Selection =
   - 유령 ¶의 문단 속성·서식은 Loro 텍스트에 걸 글자가 없다. 그래서 맵 `tp:<스토리>`(키 = `p_<속성>` 또는 서식 키)에 두고, 변경 기록은 `{ kind: 'tail' }`다.
   - 지우기는 유령 ¶ 앞까지다 (본문의 끝 ¶와 같은 규칙). 끝 문단은 옮기거나 숨기지 않는다.
   - 구획은 셀 안에서 처음 문단을 옮길 때 생긴다 (Loro 순서 목록에 END가 없어도 된다).
-- **Document** (`@quire/model`): 본문 Doc + 스토리 Doc들, `story(id)`(없으면 만듦), `storyIds`, `observe((story, change))`.
+- **Document** (`@quiredoc/model`): 본문 Doc + 스토리 Doc들, `story(id)`(없으면 만듦), `storyIds`, `observe((story, change))`.
   - 실행 취소 연산은 `{ type: 'story', story, op }`로 감싸고 `Document.apply`가 그 스토리에 적용한다.
   - `History.undo/redo`는 `OpTarget`(Doc 또는 Document)을 받는다. 한 트랜잭션에 여러 스토리의 연산을 담는다.
 - **Loro 이름**: 스토리마다 `s:`(텍스트), `so:`(순서), `sh:`·`sp:`·`su:`(숨김·자리표시·사용), `tp:`(끝 ¶) + 스토리 ID. 본문은 옛 이름 그대로다. 스타일·목록 정의 맵은 문서에 하나다.
@@ -436,7 +436,7 @@ type Selection =
 
 ### 구현
 
-- **표 레코드** (`@quire/model` `tables.ts`, `Document`):
+- **표 레코드** (`@quiredoc/model` `tables.ts`, `Document`):
   - 레코드는 행·열 ID 목록과 맵 `gone`·`w`(열 너비)·`span`·`ra`·`ca`·`attrs`로 되어 있다.
   - 행·열은 넣기만 하고, 지우기는 지운 표시다 (스파이크 T8). 넣기의 실행 취소도 지운 표시다.
   - 셀 스토리 ID는 `<표>|<행>|<열>`이다 (T9). 셀은 미리 만들지 않는다.
@@ -453,7 +453,7 @@ type Selection =
   - Worker는 init·원격 항목·ack에 레코드를 통째로 싣는다.
   - 메인은 그 표의 로컬 변경이 가는 중이면 원격 레코드를 미룬다 (끝 ¶ 맵과 같은 방식).
   - 새 판 압축과 재기반은 레코드를 옮긴다.
-- **레이아웃** (`@quire/layout`):
+- **레이아웃** (`@quiredoc/layout`):
   - `ParaFormat.table`(표 폭, 행 높이)이 있으면 표 문단은 줄 대신 행을 놓는다. 쪽은 행 사이에서만 나눈다.
   - `TableLayouter`는 셀마다 쪽 하나(높이 무한)로 조판한 `PagedLayout`을 둔다.
     - 행 높이 = max(최소 높이, 한 행짜리 셀의 내용 + 여백)이다.

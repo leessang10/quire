@@ -184,10 +184,10 @@
   --quire-radius: var(--radius);
 }
 ```
-- 원하면 `@quire/tailwind` 플러그인으로 변수를 Tailwind 색(`bg-quire-page` 등)으로 노출한다 (선택, 나중).
+- 원하면 `@quiredoc/tailwind` 플러그인으로 변수를 Tailwind 색(`bg-quire-page` 등)으로 노출한다 (선택, 나중).
 
 **SCSS**
-- 변수 목록을 `@quire/editor/tokens.scss`의 맵(`$quire-tokens`)과 믹스인(`@include quire.theme($overrides)`)으로 배포한다. 자동 완성과 일괄 덮어쓰기용이고, 결과는 위와 같은 CSS 변수다.
+- 변수 목록을 `@quiredoc/editor/tokens.scss`의 맵(`$quire-tokens`)과 믹스인(`@include quire.theme($overrides)`)으로 배포한다. 자동 완성과 일괄 덮어쓰기용이고, 결과는 위와 같은 CSS 변수다.
 
 **JS (임베드)**
 ```ts
@@ -227,7 +227,7 @@ editor.refreshTheme(); // 앱이 스타일시트를 바꾼 뒤
 
 ## 10. 7단계 구현 (2026-11-20)
 
-- `@quire/editor` `theme.ts`: 변수 목록(`THEME_TOKENS`, 기본값은 테마를 넣기 전 화면 색 그대로), 기본 테마 스타일시트(`THEME_CSS`, `:where`로 특이도 0 → 앱 CSS가 이긴다), 읽기(`readThemeColors`: 숨긴 요소의 `color`로 `rgb()`로 풀어 씀), 그림자 문법 한 겹 읽기.
+- `@quiredoc/editor` `theme.ts`: 변수 목록(`THEME_TOKENS`, 기본값은 테마를 넣기 전 화면 색 그대로), 기본 테마 스타일시트(`THEME_CSS`, `:where`로 특이도 0 → 앱 CSS가 이긴다), 읽기(`readThemeColors`: 숨긴 요소의 `color`로 `rgb()`로 풀어 씀), 그림자 문법 한 겹 읽기.
 - 편집기 옵션 `theme`(classic·minimal·modern), `colorScheme`(light·dark·auto), `pageView`(print·continuous). API `setTheme`, `setColorScheme`, `setPageView`, `refreshTheme`, `appearance`. 호스트에 `.quire`와 `data-quire-theme`·`data-quire-scheme`·`data-quire-page-view`.
 - 바뀜 감지: 호스트와 `<html>`의 `class`·`style`·`data-theme`·`data-quire-*` (`MutationObserver`), 시스템 다크 모드 (`auto`일 때). 다시 읽은 값이 같으면 다시 그리지 않고, 레이아웃은 다시 하지 않는다.
 - 쪽 그리기기(`PagePainter`)는 `env.colors`로 색을 받는다. PDF는 받지 않아 늘 기본 색이다 (문서 그대로).
@@ -291,9 +291,9 @@ editor.refreshTheme(); // 앱이 스타일시트를 바꾼 뒤
   const brand: QuireThemeTokens = { '--quire-accent': '#e11d48', '--quire-page': '#fffdf7' };
   host.style.cssText += themeDeclarations(brand);
   ```
-- **SCSS** (`@quire/editor/tokens.scss`): `$quire-tokens` 맵(위 기본값), `theme($overrides)` 믹스인(넘긴 것만 쓴다: 기본값을 다시 쓰면 미니멀·모던·다크 값을 덮는다), `token($name)` 함수(변수 이름). 모르는 이름은 컴파일 오류다. Sass의 패키지 가져오기(`pkg:`, `NodePackageImporter`)로 읽는다.
+- **SCSS** (`@quiredoc/editor/tokens.scss`): `$quire-tokens` 맵(위 기본값), `theme($overrides)` 믹스인(넘긴 것만 쓴다: 기본값을 다시 쓰면 미니멀·모던·다크 값을 덮는다), `token($name)` 함수(변수 이름). 모르는 이름은 컴파일 오류다. Sass의 패키지 가져오기(`pkg:`, `NodePackageImporter`)로 읽는다.
   ```scss
-  @use 'pkg:@quire/editor/tokens.scss' as quire;
+  @use 'pkg:@quiredoc/editor/tokens.scss' as quire;
   .quire { @include quire.theme((accent: #e11d48, page-shadow: none)); }
   .my-toolbar { border-color: var(quire.token(accent)); }
   ```

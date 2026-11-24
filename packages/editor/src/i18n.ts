@@ -15,7 +15,7 @@ export type Translate = (key: MessageKey, params?: MessageParams) => string;
 
 /**
  * 불러온 내장 언어 (18 §5). 한국어만 편집기 묶음에 들어 있고, 다른 언어는 필요할 때 따로 받는다
- * (`loadMessages`: 번들러가 언어마다 조각을 나눈다) 또는 앱이 직접 넣는다 (`registerMessages`, `@quire/editor/i18n/en`).
+ * (`loadMessages`: 번들러가 언어마다 조각을 나눈다) 또는 앱이 직접 넣는다 (`registerMessages`, `@quiredoc/editor/i18n/en`).
  */
 const registry: Record<string, Readonly<Record<string, string>>> = { ko };
 /** 내장 언어 표가 바뀐 횟수 (이미 만든 Messages가 찾는 순서를 다시 만든다) */
@@ -28,7 +28,7 @@ const LOADERS: Record<string, () => Promise<Readonly<Record<string, string>>>> =
 };
 const loading = new Map<string, Promise<void>>();
 
-/** 내장 언어 표를 넣는다 (정적으로 가져온 `@quire/editor/i18n/en` 등). 이미 만든 편집기·Messages도 다음 번역부터 쓴다 */
+/** 내장 언어 표를 넣는다 (정적으로 가져온 `@quiredoc/editor/i18n/en` 등). 이미 만든 편집기·Messages도 다음 번역부터 쓴다 */
 export function registerMessages(locale: string, table: Readonly<Record<string, string>>): void {
   registry[candidates(locale)[0]!] = table;
   registryVersion++;
