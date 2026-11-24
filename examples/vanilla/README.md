@@ -1,6 +1,6 @@
 # 바닐라 JS + 순수 CSS
 
-프레임워크 없이 `@quiredoc/sdk`의 `createEditor` 하나로 붙이는 가장 작은 예제입니다.
+프레임워크 없이 `@quiredoc/core`의 `createEditor` 하나로 붙이는 가장 작은 예제입니다.
 
 ![바닐라 예제](screenshots/screenshot.webp)
 
@@ -28,7 +28,7 @@ npm run dev        # http://localhost:5301
 ## 핵심 코드
 
 ```js
-import { createEditor } from '@quiredoc/sdk';
+import { createEditor } from '@quiredoc/core';
 
 const editor = await createEditor({
   host: document.querySelector('#editor'),

@@ -5,9 +5,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, MessageSquarePlus, PanelLeft, PanelRight, Share2 } from 'lucide-react';
 import { QuireEditor, useEditorState, useQuire } from '@quiredoc/react';
-import type { Editor, WordCount } from '@quiredoc/editor';
-import { safeLink } from '@quiredoc/model';
-import { highlightWordsPlugin, wordCountPlugin } from '@quiredoc/editor';
+import type { Editor, WordCount } from '@quiredoc/core';
+import { safeLink } from '@quiredoc/core';
+import { highlightWordsPlugin, wordCountPlugin } from '@quiredoc/core';
 import { fonts } from './lib/quire-demo';
 import { DemoSpellChecker, OPEN_ACCEPT, documentTitle, emptyDoc, openAny, openPdf, sampleDocument, saveAny, tourDoc, SAMPLES, type SaveFormat } from './lib/quire-app';
 import { useAct, useUi } from './lib/useUi';

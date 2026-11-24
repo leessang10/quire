@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Footprints, Heading1, Heading2, Heading3, ImagePlus, List, ListOrdered, Quote, SeparatorHorizontal, Table, Type } from 'lucide-react';
 import type { QuireController } from '@quiredoc/react';
-import type { Editor } from '@quiredoc/editor';
+import type { Editor } from '@quiredoc/core';
 import { cn } from '@/lib/utils';
 import { useT, type T } from '@/lib/i18n';
 

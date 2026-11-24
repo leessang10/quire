@@ -2,7 +2,7 @@
 /** 옆 창(개요·댓글과 제안), 찾기 카드, 상태 줄 */
 import { useEffect, useRef, useState } from 'react';
 import { CaseSensitive, Check, ChevronDown, ChevronUp, MessageSquare, Regex, Undo2, WholeWord, X } from 'lucide-react';
-import type { Editor, FindStatus, SuggestionView, ThreadView, WordCount } from '@quiredoc/editor';
+import type { Editor, FindStatus, SuggestionView, ThreadView, WordCount } from '@quiredoc/core';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

@@ -6,8 +6,8 @@
  *   <public>/quire/fonts/…              @quiredoc/fonts의 글꼴 조각
  *   <public>/quire/harfbuzz-subset.wasm  PDF 글꼴 부분화
  */
-import type { QuireDoc, QuireHandle, QuirePlugin } from '@quiredoc/sdk';
-import { DEFAULT_LOCALE, Messages, dropMessageKey, highlightWordsPlugin, wordCountPlugin, type DropKind, type FontSource, type MessageKey, type WordCount } from '@quiredoc/editor';
+import type { QuireDoc, QuireHandle, QuirePlugin } from '@quiredoc/core';
+import { DEFAULT_LOCALE, Messages, dropMessageKey, highlightWordsPlugin, wordCountPlugin, type DropKind, type FontSource, type MessageKey, type WordCount } from '@quiredoc/core';
 
 export const ASSET_BASE = '/quire';
 

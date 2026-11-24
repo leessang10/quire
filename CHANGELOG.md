@@ -4,18 +4,27 @@ All `@quiredoc/*` packages share one version and are released together. The form
 
 ## [Unreleased]
 
+### Changed (breaking): packages
+
+The ten 0.1.0 packages become one core and optional modules ([design 19](docs/design/19-packages.md)). Install `@quiredoc/core` and add only what you use; modules take `@quiredoc/core` as a peer dependency, so an app has one copy of it.
+
+| 0.1.0 | 0.2.0 |
+|---|---|
+| `@quiredoc/sdk`, `@quiredoc/editor`, `@quiredoc/model`, `@quiredoc/layout`, `@quiredoc/shaping` | `@quiredoc/core` |
+| `@quiredoc/editor/i18n/en`, `@quiredoc/editor/tokens.scss` | `@quiredoc/core/i18n/en`, `@quiredoc/core/tokens.scss` |
+| `@quiredoc/sync`: `QuireDoc`, `documentFromQuire`, `quireFromDocument`, `packQuire`, `openQuire`, `assetIdOf`, `readZip`, `writeZip` … | `@quiredoc/core` |
+| `@quiredoc/sync`: collaboration, presence, versions, Worker host | `@quiredoc/collab` |
+| `@quiredoc/react`, `@quiredoc/convert`, `@quiredoc/pdf`, `@quiredoc/fonts` | same names (they now take `@quiredoc/core` as a peer dependency) |
+
+- Saving and loading no longer pull in the CRDT (Loro, 21 MB installed): an app without collaboration ships none of it. The basic React example's startup JavaScript went from about 5.2 MB to about 0.5 MB.
+- `openQuire` returns the history section as unverified bytes (`history`) instead of a verified `crdt`. To use it for collaboration call `restoreHistory(opened)` from `@quiredoc/collab`; to keep it when saving again pass it to `packQuire({ …, history })`.
+- `packQuire({ loro })` became `packQuireWithHistory({ loro })` in `@quiredoc/collab`. `displayText` is in `@quiredoc/collab`.
+- The shaping layer's `FontMetrics` is renamed `ShapingFontMetrics` (it clashed with the editor's `FontMetrics`, a different type, once both live in core).
+
 ### Added
 
-- `collab(options)` in `@quiredoc/sync` (to be published as `@quiredoc/collab`): real-time collaboration as one plugin — `editor.use(collab({ worker, url, user }))` or `createEditor({ plugins: [collab(...)] })`. It connects, puts the shared document into the editor, keeps remote edits, carets, permissions and new epochs in step, and sends your selection.
+- `collab(options)` in `@quiredoc/collab`: real-time collaboration as one plugin — `editor.use(collab({ worker, url, user }))` or `createEditor({ plugins: [collab(...)] })`. It connects, puts the shared document into the editor, keeps remote edits, carets, permissions and new epochs in step, and sends your selection. Read-only until connected; detaching closes the connection.
 - `PluginContext.sync` (`setDocument`, `documentChanged`, `setRemoteCarets`, `setAccess`) for plugins whose document changes outside the editor, and `page` in `PluginContext.selection()` while editing a header or footer.
-
-### Changed (breaking)
-
-- The canonical document JSON and `.quire` files moved from `@quiredoc/sync` to `@quiredoc/model`: `QuireDoc`, `documentFromQuire`, `quireFromDocument`, `packQuire`, `openQuire`, `assetIdOf`, `readZip`, `writeZip` and related names. Saving and loading no longer pull in the CRDT (Loro): the basic React example's startup JavaScript went from about 5.2 MB to about 0.5 MB.
-- `openQuire` returns the history section as unverified bytes (`history`) instead of a verified `crdt`. To use it for collaboration, call `restoreHistory(opened)` from `@quiredoc/sync`; to keep it when saving again, pass it to `packQuire({ …, history })`.
-- `packQuire({ loro })` became `packQuireWithHistory({ loro })` in `@quiredoc/sync`. `displayText` stays in `@quiredoc/sync`.
-- `@quiredoc/sdk`, `@quiredoc/convert` and `@quiredoc/pdf` no longer depend on `@quiredoc/sync`.
-- `@quiredoc/shaping`: `FontMetrics` is renamed to `ShapingFontMetrics` (it clashed with the editor's `FontMetrics`, a different type).
 
 ## [0.1.0] - 2026-11-24
 
