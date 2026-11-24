@@ -10,6 +10,7 @@ All `@quiredoc/*` packages share one version and are released together. The form
 - `openQuire` returns the history section as unverified bytes (`history`) instead of a verified `crdt`. To use it for collaboration, call `restoreHistory(opened)` from `@quiredoc/sync`; to keep it when saving again, pass it to `packQuire({ …, history })`.
 - `packQuire({ loro })` became `packQuireWithHistory({ loro })` in `@quiredoc/sync`. `displayText` stays in `@quiredoc/sync`.
 - `@quiredoc/sdk`, `@quiredoc/convert` and `@quiredoc/pdf` no longer depend on `@quiredoc/sync`.
+- `@quiredoc/shaping`: `FontMetrics` is renamed to `ShapingFontMetrics` (it clashed with the editor's `FontMetrics`, a different type).
 
 ## [0.1.0] - 2026-11-24
 

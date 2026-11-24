@@ -25,8 +25,8 @@ import type { Measurer } from '@quiredoc/layout';
 /** 대체 측정기로 잰 글자의 글꼴 번호 */
 export const FALLBACK_FONT = 255;
 
-/** 글꼴 치수 (em 비율, 위가 양수) */
-export interface FontMetrics {
+/** 셰이핑 글꼴 치수 (em 비율, 위가 양수). 편집기의 그리기 치수(`FontMetrics`, px)와 다르다 (19 §4.3) */
+export interface ShapingFontMetrics {
   ascent: number;
   descent: number;
   /** 밑줄 위치 (기준선 기준, 보통 음수 = 아래)·두께 */
@@ -40,7 +40,7 @@ export interface FontMetrics {
 export interface ShapingFont {
   name: string;
   upem: number;
-  metrics: FontMetrics;
+  metrics: ShapingFontMetrics;
   hb: hb.Font;
   /** 옛 kern 표의 쌍 (왼쪽 글리프 × 65536 + 오른쪽 → 값). GPOS kern이 있거나 표가 없으면 null */
   legacyKern: Map<number, number> | null;
@@ -88,12 +88,12 @@ export function loadShapingFont(bytes: Uint8Array | ArrayBuffer, name: string): 
 }
 
 /** hhea·post·OS/2 표에서 치수를 읽는다 (없으면 크기 비례 기본값) */
-function readMetrics(face: hb.Face, upem: number): FontMetrics {
+function readMetrics(face: hb.Face, upem: number): ShapingFontMetrics {
   const view = (t: Uint8Array | undefined, need: number) => (t && t.length >= need ? new DataView(t.buffer, t.byteOffset, t.byteLength) : null);
   const hhea = view(face.referenceTable('hhea'), 8);
   const post = view(face.referenceTable('post'), 12);
   const os2 = view(face.referenceTable('OS/2'), 30);
-  const m: FontMetrics = {
+  const m: ShapingFontMetrics = {
     ascent: hhea ? hhea.getInt16(4) / upem : 0.8,
     descent: hhea ? -hhea.getInt16(6) / upem : 0.2,
     underlinePosition: post ? post.getInt16(8) / upem : -0.1,
