@@ -355,3 +355,10 @@
 **확인**: 이 기기에서 0.1.0으로 빌드해 `release.mjs`의 검사와 10개 패키지 `npm publish --dry-run`이 통과했다. npm에 `@quiredoc/*` 패키지는 없다(404). 범위(조직)의 주인은 로그인 없이 알 수 없다.
 
 **한계**: 저장소가 비공개라 npm provenance(`--provenance`)를 쓰지 않는다. `repository` 링크도 남에게는 열리지 않는다. 저장소를 공개하면 워크플로에 `id-token: write`와 `--provenance`를 더한다.
+
+**0.1.0 출시 기록 (2026-11-24)**
+
+- 이 기기에서 사용자가 `npm login` 뒤 `node scripts/release.mjs --publish`로 10개를 올렸다. 처음에는 스크립트가 npm 출력을 가로채 OTP를 묻지 못해 EOTP로 멈췄다 → 터미널에 붙여 돌리게 고쳤다 (#82).
+- npm이 새 패키지를 **단계 게시(staged publishing)**로 받았다: 이름마다 `0.0.0-stage` 자리표시(빈 껍데기, `latest`)가 먼저 생기고, 실제 0.1.0이 뒤따라 공개됐다. 레지스트리 응답은 한동안 자리표시만 보였다(캐시). `@quiredoc/layout`은 0.1.0이 빠져 있어 한 번 더 돌려 올렸다 (이미 있는 판은 건너뛴다). 계정의 Staged Packages 화면에는 기다리는 것이 없었다.
+- 확인: 10개 모두 `latest` = 0.1.0 (MIT, fonts는 OFL-1.1). 빈 폴더에서 `npm install @quiredoc/sdk @quiredoc/react @quiredoc/convert @quiredoc/pdf @quiredoc/fonts`가 0건 취약점으로 설치되고, Node에서 Markdown 가져오기(버린 요소 보고 `horizontalRule`)·HWPX·Markdown 내보내기, `@quiredoc/editor/i18n/en`, `tokens.scss`, 글꼴 조각이 동작한다.
+- 남은 것: 패키지마다 Trusted Publisher(GitHub Actions, `leessang10/quire`, `release.yml`) 등록. 그 뒤 출시는 태그로.
