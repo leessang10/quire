@@ -66,7 +66,7 @@ import { FRAGMENT_MIME, fragmentOf, fragmentToHtml, fragmentToText, htmlToFragme
 import { TextareaInput, type InputBackend, type InputIntent, type InputLogEntry, type InputMode } from './input';
 import type { SpellChecker } from './spell';
 import { CanvasTarget } from './paint';
-import { Messages, type MessageKey, type MessageParams, type MessageTable } from './i18n';
+import { Messages, loadMessages, messagesLoaded, type MessageKey, type MessageParams, type MessageTable } from './i18n';
 import type { PainterEnv } from './painter';
 import { DEFAULT_METRICS, PagePainter, noteLayout as noteLayoutOf, noteSlots as noteSlotsOf, type FontMetrics, type LinePaint, type NoteSlot, type ObjectPaint, type PaintOverlay, type StoryOverlay } from './painter';
 
@@ -473,6 +473,7 @@ export class Editor {
   private marksShown = false;
   /** 화면 확대 배율. 레이아웃·히트 테스트는 문서 좌표 그대로이고, 화면과 오갈 때만 곱하고 나눈다 */
   private zoomLevel = 1;
+  private destroyed = false;
   /** 색을 풀어 쓰는 숨긴 요소 */
   private themeProbe: HTMLElement | null = null;
   private readonly painter = new PagePainter(this.painterEnv());
@@ -499,6 +500,7 @@ export class Editor {
 
   constructor(private readonly opts: EditorOptions) {
     this.i18n = new Messages(opts.locale, opts.messages);
+    if (opts.locale) this.ensureMessages(opts.locale);
     this.fontSize = opts.fontSize ?? 16;
     this.assets = opts.assets ?? new MemoryAssets();
     const family = opts.fontFamily ?? `'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`;
@@ -884,11 +886,28 @@ export class Editor {
 
   /** 화면 언어를 바꾼다: 캔버스 표시·접근성 이름을 다시 그린다. 문서·레이아웃은 그대로 (18 §2) */
   setLocale(locale: string): void {
+    this.ensureMessages(locale);
     if (!this.i18n.setLocale(locale)) return;
+    this.relabel();
+  }
+
+  /** 언어를 바꾼 뒤 다시 그리기: 접근성 이름, 미러, 캔버스 표시 */
+  private relabel(): void {
     this.applyLocale();
     delete this.mirror.dataset.key;
     this.render();
     this.opts.onChange?.(this);
+  }
+
+  /** 아직 받지 않은 내장 언어(영어 등)를 받고, 받으면 지금 언어가 그것일 때 다시 그린다 (18 §5 나눠 싣기) */
+  private ensureMessages(locale: string): void {
+    if (messagesLoaded(locale)) return;
+    void loadMessages(locale).then(
+      (loaded) => {
+        if (loaded && !this.destroyed) this.relabel();
+      },
+      (err: unknown) => console.warn(`[quire] could not load messages for "${locale}"`, err),
+    );
   }
 
   /** 호스트의 lang (스크린 리더 발음, CSS :lang()), 입력 층·미러의 접근성 이름 */
@@ -1135,6 +1154,7 @@ export class Editor {
   }
 
   destroy(): void {
+    this.destroyed = true;
     if (this.bgTimer !== null) clearTimeout(this.bgTimer);
     for (const p of [...this.plugins].reverse()) this.unuse(p.plugin.name);
     this.spellP = null;

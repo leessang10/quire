@@ -2,7 +2,6 @@
  * UI 다국어 (18): 메시지 키 → 그 언어의 문장. 편집기 화면 문자열(캔버스 표시, 접근성 이름, 메뉴)은 모두 여기를 거친다.
  * 문서는 바꾸지 않는다: 저장되는 이름(스타일 h1, 구역 시작 방식)은 키이고, 보일 때만 번역한다 (18 §2).
  */
-import { en } from './i18n/en';
 import { ko, type MessageKey } from './i18n/ko';
 
 export type { MessageKey };
@@ -14,8 +13,64 @@ export type MessageParams = Record<string, string | number>;
 /** 번역 함수 (앱·플러그인이 같은 번역을 쓸 때) */
 export type Translate = (key: MessageKey, params?: MessageParams) => string;
 
-/** 편집기가 싣는 언어 */
-export const BUILTIN_MESSAGES: Readonly<Record<string, Readonly<Record<string, string>>>> = { ko, en };
+/**
+ * 불러온 내장 언어 (18 §5). 한국어만 편집기 묶음에 들어 있고, 다른 언어는 필요할 때 따로 받는다
+ * (`loadMessages`: 번들러가 언어마다 조각을 나눈다) 또는 앱이 직접 넣는다 (`registerMessages`, `@quire/editor/i18n/en`).
+ */
+const registry: Record<string, Readonly<Record<string, string>>> = { ko };
+/** 내장 언어 표가 바뀐 횟수 (이미 만든 Messages가 찾는 순서를 다시 만든다) */
+let registryVersion = 0;
+export const BUILTIN_MESSAGES: Readonly<Record<string, Readonly<Record<string, string>>>> = registry;
+
+/** 따로 받는 내장 언어 */
+const LOADERS: Record<string, () => Promise<Readonly<Record<string, string>>>> = {
+  en: () => import('./i18n/en').then((m) => m.en),
+};
+const loading = new Map<string, Promise<void>>();
+
+/** 내장 언어 표를 넣는다 (정적으로 가져온 `@quire/editor/i18n/en` 등). 이미 만든 편집기·Messages도 다음 번역부터 쓴다 */
+export function registerMessages(locale: string, table: Readonly<Record<string, string>>): void {
+  registry[candidates(locale)[0]!] = table;
+  registryVersion++;
+}
+
+/**
+ * 이 언어에 필요한 내장 표: 그 언어(앞부분까지) 중 따로 받는 것. 편집기가 싣지 않는 언어(fr 등)는 빠진 키를 영어로 채우므로
+ * 영어도. 한국어는 한국어 표만 (영어를 받지 않는다)
+ */
+function needed(locale: string): string[] {
+  const tags = candidates(locale);
+  const known = tags.some((l) => l === DEFAULT_LOCALE || LOADERS[l]);
+  return [...new Set(known ? tags : [...tags, FALLBACK_LOCALE])].filter((l) => LOADERS[l]);
+}
+
+/** 이 언어에 필요한 내장 표를 다 받았는가 */
+export function messagesLoaded(locale: string): boolean {
+  return needed(locale).every((l) => registry[l]);
+}
+
+/**
+ * 이 언어의 내장 표를 받는다 (없으면 그대로). 새로 받은 것이 있으면 true.
+ * 편집기는 `locale`·`setLocale`에서 알아서 부르고 다 받으면 다시 그린다. 앱 UI가 편집기 키를 같이 쓸 때 앱이 불러 기다린다
+ */
+export async function loadMessages(locale: string): Promise<boolean> {
+  const need = needed(locale).filter((l) => !registry[l]);
+  if (!need.length) return false;
+  await Promise.all(
+    need.map((l) => {
+      let p = loading.get(l);
+      if (!p) {
+        p = LOADERS[l]!().then((t) => {
+          if (!registry[l]) registerMessages(l, t);
+        });
+        p.catch(() => loading.delete(l)); // 실패하면 다음에 다시
+        loading.set(l, p);
+      }
+      return p;
+    }),
+  );
+  return true;
+}
 /** 기본 UI 언어 (정하지 않으면 navigator.language가 아니라 이것: 언어는 임베드하는 앱이 정한다, 18 §5) */
 export const DEFAULT_LOCALE = 'ko';
 /** 빠진 키의 두 번째 후보 */
@@ -44,6 +99,7 @@ function candidates(locale: string): string[] {
 export class Messages {
   private chain: Array<Readonly<Record<string, string>>> = [];
   private tag = DEFAULT_LOCALE;
+  private builtAt = -1;
 
   constructor(
     locale: string = DEFAULT_LOCALE,
@@ -71,6 +127,7 @@ export class Messages {
       if (builtin && !chain.includes(builtin)) chain.push(builtin);
     }
     this.chain = chain;
+    this.builtAt = registryVersion;
     return changed;
   }
 
@@ -81,6 +138,7 @@ export class Messages {
 
   /** 키 → 문장. 지금 언어에 없으면 대신한 언어로 (개발자 콘솔에 키마다 한 번 경고) */
   t = (key: MessageKey | string, params?: MessageParams): string => {
+    if (this.builtAt !== registryVersion) this.setLocale(this.tag); // 그 사이 받은 언어를 찾는 순서에 넣는다
     let template: string | undefined;
     for (const table of this.chain) {
       const v = table[key];
@@ -89,7 +147,7 @@ export class Messages {
         break;
       }
     }
-    if (!this.has(key)) {
+    if (!this.has(key) && messagesLoaded(this.tag)) {
       const id = `${this.tag}:${key}`;
       if (!warned.has(id)) {
         warned.add(id);

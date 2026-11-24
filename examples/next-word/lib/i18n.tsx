@@ -5,7 +5,7 @@
  * (편집기 기본은 ko), 고른 언어는 브라우저에 기억한다. 편집기 쪽은 QuireApp이 setLocale로 맞춘다.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Messages, type MessageKey, type MessageParams } from '@quire/editor';
+import { Messages, loadMessages, messagesLoaded, type MessageKey, type MessageParams } from '@quire/editor';
 import { en, ko, type AppMessageKey } from './messages';
 
 export type Locale = 'ko' | 'en';
@@ -39,7 +39,19 @@ interface I18n {
 const Ctx = createContext<I18n | null>(null);
 
 export function I18nProvider({ locale, onChange, children }: { locale: Locale; onChange: (l: Locale) => void; children: ReactNode }) {
-  const messages = useMemo(() => new Messages(locale, { ko, en }), [locale]);
+  // 편집기의 영어 표는 따로 받는다 (편집기 묶음에는 한국어만, 18 §5). 앱 UI도 편집기 키(attr.bold 등)를 쓰므로
+  // 받을 때까지 기다렸다가 t를 새로 만들어 다시 그린다
+  const [loaded, setLoaded] = useState(() => messagesLoaded(locale));
+  useEffect(() => {
+    if (messagesLoaded(locale)) return setLoaded(true);
+    setLoaded(false);
+    let live = true;
+    void loadMessages(locale).then(() => live && setLoaded(true));
+    return () => {
+      live = false;
+    };
+  }, [locale]);
+  const messages = useMemo(() => new Messages(locale, { ko, en }), [locale, loaded]);
   const t = useCallback<T>((key, params) => messages.t(key, params), [messages]);
   useEffect(() => {
     document.documentElement.lang = locale;
