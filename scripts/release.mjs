@@ -8,7 +8,7 @@
 // - 이미 올라간 판(이름@판)은 건너뛴다: 중간에 실패해도 다시 돌리면 남은 것만 올린다.
 // - 판이 -alpha.1 같은 시험판이면 dist-tag를 next로 (latest를 건드리지 않는다).
 // - npm은 NVM 셔림이 막는 기기가 있어 NPM_CLI(npm-cli.js 경로)가 있으면 노드로 직접 부른다.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -17,8 +17,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const built = join(root, '.build', 'packages');
 const publish = process.argv.includes('--publish');
 const otp = process.argv.find((a) => a.startsWith('--otp='))?.slice('--otp='.length);
-/** 의존 순서 (build-packages.mjs와 같다) + 글꼴 */
-const ORDER = ['model', 'layout', 'shaping', 'editor', 'sync', 'convert', 'pdf', 'sdk', 'react', 'fonts'];
+/** 올리는 순서: core 먼저 (모듈이 peer로 기댄다), 그다음 모듈과 글꼴 (19 §3) */
+const ORDER = ['core', 'collab', 'convert', 'pdf', 'react', 'fonts'];
+/** 폴더 안의 .js (재귀) */
+const jsFiles = (dir) => (existsSync(dir) ? readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? jsFiles(join(dir, f)) : f.endsWith('.js') ? [join(dir, f)] : [])) : []);
 const VERSION = process.env.QUIRE_VERSION || JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 
 const npm = (args, cwd) => {
@@ -50,7 +52,21 @@ for (const p of ORDER) {
   if (p !== 'fonts' && !existsSync(join(dir, 'LICENSE'))) bad('LICENSE 없음');
   for (const [d, v] of Object.entries({ ...j.dependencies, ...j.peerDependencies })) {
     if (/^(file|workspace|link):/.test(v) || v === '*') bad(`의존 ${d}@${v} (배포할 수 없는 판)`);
-    if (d.startsWith('@quiredoc/') && v !== VERSION) bad(`내부 의존 ${d}@${v} ≠ ${VERSION}`);
+  }
+  // 19 §2: 모듈은 core를 peer로만 (`^판`), 다른 @quiredoc/*에는 기대지 않는다. core는 @quiredoc/*에 기대지 않는다
+  for (const d of Object.keys(j.dependencies ?? {})) if (d.startsWith('@quiredoc/')) bad(`@quiredoc 의존은 peer여야 한다: ${d}`);
+  for (const [d, v] of Object.entries(j.peerDependencies ?? {})) {
+    if (!d.startsWith('@quiredoc/')) continue;
+    if (p === 'core' || d !== '@quiredoc/core') bad(`peer ${d}는 안 된다 (모듈은 @quiredoc/core만)`);
+    else if (v !== `^${VERSION}`) bad(`peer ${d}@${v} ≠ ^${VERSION}`);
+  }
+  // 묶음 안의 가져오기: core에는 @quiredoc/*·loro가 없다 (다섯 폴더는 묶었고 협업은 collab), 모듈은 @quiredoc/core만
+  for (const f of jsFiles(join(dir, 'dist'))) {
+    const s = readFileSync(f, 'utf8');
+    for (const m of s.matchAll(/(?:from|import\()\s*["'](@quiredoc\/[^"']+|loro-crdt[^"']*)["']/g)) {
+      const spec = m[1];
+      if (p === 'core' ? true : spec.startsWith('@quiredoc/') && spec !== '@quiredoc/core') bad(`${f.slice(dir.length + 1)}가 ${spec}를 가져온다`);
+    }
   }
   // exports가 가리키는 파일이 있다
   const targets = [];

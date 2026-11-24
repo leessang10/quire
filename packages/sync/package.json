@@ -1,12 +1,13 @@
 {
   "name": "@quiredoc/sync",
-  "description": "Quire collaboration and storage: CRDT sync (Loro), presence, version history, .quire files",
+  "description": "Quire collaboration: real-time CRDT sync (Loro), presence, version history, .quire collaboration history (published as @quiredoc/collab)",
   "keywords": [
     "crdt",
     "collaboration",
     "realtime",
     "loro",
-    "presence"
+    "presence",
+    "editor"
   ],
   "version": "0.0.0",
   "private": true,

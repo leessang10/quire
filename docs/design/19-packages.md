@@ -1,6 +1,6 @@
 # 19. 패키지 구성 (core + 조립)
 
-- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1·P-2 끝남 (§8).
+- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1·P-2·P-3 끝남 (§8).
 - 범위: npm에 내는 패키지의 경계·이름·의존 방식, 기능을 골라 붙이는 방법, 0.1.0에서 옮기는 단계.
 - 범위 밖: 편집기 기능 자체. 저장소 안의 개발 구조(워크스페이스 폴더)는 거의 그대로 둔다.
 - 바탕: 08(통합·임베드), 15 §19(플러그인 API), 16 §10.1·§10.8(빌드·출시).
@@ -158,3 +158,15 @@ const { importHwpx } = await import('@quiredoc/convert');
 - shaping의 `FontMetrics`(셰이핑 글꼴 치수, em 비율)를 `ShapingFontMetrics`로 바꿨다. 편집기의 `FontMetrics`(그리기 치수, px)는 그대로.
 - `QuirePlugin`·`PluginContext`·`Rect`는 sdk가 editor 것을 다시 내보내는 것이라 같은 타입이다: 겹침으로 치지 않는다 (core 진입점에서는 한 번만 낸다, P-3).
 - 시험 `packages/sdk/src/core-names.test.ts`: model·layout·shaping·editor·sdk 진입점이 **스스로 내는** 이름(다른 `@quiredoc/*`를 다시 내보내는 것 제외)이 서로 겹치지 않는다. 고치기 전 코드에서는 `FontMetrics: shaping, editor`로 실패하는 것을 확인했다.
+
+### 8.3 P-3 core 진입점과 빌드 (2026-11-24)
+
+- `packages/core`(개발용 이름 `@quiredoc/core`): `src/index.ts`가 model·layout·shaping·editor·sdk를 `export *`로 다시 낸다. 겹침은 P-2 시험이 막고, sdk가 editor 타입을 다시 내는 것은 같은 바인딩이라 TypeScript도 받는다.
+- `scripts/build-packages.mjs`를 **배포 단위** 기준으로 바꿨다 (`UNITS`: core·collab·convert·pdf·react + fonts). 저장소 폴더와 1:1이 아니다: core는 다섯 폴더를 묶고, collab의 소스는 `packages/sync`.
+  - core: 다섯 폴더 사이 가져오기는 묶음 안으로(외부는 harfbuzzjs뿐). 하위 경로 `i18n/en`(편집기의 지연 로딩도 같은 파일), `tokens.scss`. 타입은 `dist/types/<폴더>/`에 두고 서로의 `@quiredoc/<폴더>`를 상대 경로로 바꾼다.
+  - 모듈: 결과 JS·타입에서 `@quiredoc/{model,layout,shaping,editor,sdk}` → `@quiredoc/core`, 의존은 `peerDependencies: { "@quiredoc/core": "^판" }`. 모듈이 다른 모듈에 기대면 빌드가 멈춘다.
+- `scripts/release.mjs`: 순서 core → collab → convert → pdf → react → fonts. 새 검사: `@quiredoc/*` 의존은 peer로만, 모듈의 peer는 `@quiredoc/core@^판`만, core 묶음에 `@quiredoc/*`·`loro-crdt` 가져오기 없음, 모듈 묶음은 `@quiredoc/core` 밖의 `@quiredoc/*`를 가져오지 않음. core 묶음에 `import("@quiredoc/sync")`를 일부러 넣으면 실패하는 것을 확인했다.
+- README: `packages/core/README.md`(새로), `packages/sync/README.md`는 `@quiredoc/collab`용으로.
+- **결과**: tgz 여섯 개. core `dist/index.js` 619 KB(Loro 없음), `dist/i18n/en.js` 3 KB. 6개 검사·dry-run 통과.
+- **설치 확인** (빈 프로젝트에 tgz 여섯을 설치): TypeScript(Bundler 해석)로 core·`core/i18n/en`·collab·convert·pdf·react 공개 이름이 다 풀리고(`skipLibCheck`를 끄면 harfbuzzjs 타입의 `EmscriptenModule` 하나가 남는다: 0.1.0부터 있던 제3자 문제), Node에서 core의 `.quire` 왕복, convert(MD → HWPX), collab의 `packQuireWithHistory` → core `openQuire` → `restoreHistory`, `i18n/en`이 돈다. 모듈은 앱의 core 하나를 함께 쓴다 (peer).
+- 남은 것 (P-5): 예제들은 아직 옛 tgz 이름(`quiredoc-sdk-…` 등)을 가리키므로 **새로 설치하면 실패한다** (이미 설치한 node_modules로는 돈다). P-5에서 예제를 core·collab으로 옮긴다.
