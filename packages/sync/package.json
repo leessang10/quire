@@ -1,9 +1,19 @@
 {
   "name": "@quire/sync",
+  "description": "Quire collaboration and storage: CRDT sync (Loro), presence, version history, .quire files",
+  "keywords": [
+    "crdt",
+    "collaboration",
+    "realtime",
+    "loro",
+    "presence"
+  ],
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "dependencies": {
     "@quire/model": "*",
     "loro-crdt": "1.17.1"

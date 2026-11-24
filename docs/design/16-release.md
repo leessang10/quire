@@ -1,6 +1,6 @@
 # 16. 출시 준비와 안정화 (6단계)
 
-- 상태: 진행 중 (6-6, 6-1, 6-2, 6-3, 6-4, 6-5 끝남. 6-7 1차 실행: Chrome·EditContext 26개 통과, 한자 후보 Enter 문제를 고침. 스크린리더 청취·Edge·textarea 경로는 남음, §10.7)
+- 상태: 진행 중 (6-1–6-6 끝남, 출시 준비 끝남 §10.8: 0.1.0을 태그로 낼 수 있다. 6-7 1차 실행: Chrome·EditContext 26개 통과, 한자 후보 Enter 문제를 고침. 스크린리더 청취·Edge·textarea 경로는 남음, §10.7)
 - 관련: [06. 로드맵](06-roadmap.md) §3 성능 목표·§4 위험, [08. 앱 통합](08-integration.md), 10–15 각 결과 절의 "한계·남은 것"
 
 ## 1. 목표
@@ -326,3 +326,29 @@
   - V3(스크린리더): 기록상 스크린리더가 "없음"인 실행이다. 내레이터·NVDA로 실제로 들어 보는 확인은 남았다 (O-11).
   - 확대(17 §10 "화면 확대") 상태의 IME 후보 창 위치는 체크리스트 항목이 아니라 기록이 없다.
   - Edge, 입력 경로 B (textarea)는 아직 돌리지 않았다.
+
+### 10.8 출시 (2026-11-24)
+
+**정한 것** (사용자 결정): 라이선스 MIT (글꼴 패키지는 SIL OFL 1.1), npm 공개 레지스트리의 `@quire` 범위.
+
+**판 정책**
+
+- 모든 `@quire/*` 패키지가 같은 판을 쓰고 함께 낸다 (lockstep). 판은 저장소 루트 `package.json`의 `version` 하나에서 온다 (`scripts/build-packages.mjs`가 읽고 내부 의존도 그 판으로 고정).
+- semver. 0.x 동안에는 깨지는 변경이 minor(0.1 → 0.2), 그 밖은 patch. 1.0부터 정석대로.
+- 공개 API로 보는 것: 패키지 `exports`의 이름과 타입, CSS 변수·클래스·상태 속성 (17 §10.1), 메시지 키 (18 §9.1), 정본 문서 형식(`QuireDoc.version`)과 `.quire` 파일, 가져오기 보고의 종류(`DropKind`). 이름을 바꾸면 한 판 동안 옛 이름도 받는다 (17 §9 O-45).
+- 시험판은 `0.2.0-beta.1`처럼 쓰고 npm `next` 태그로 낸다 (`latest`를 건드리지 않는다). GitHub Release는 prerelease.
+- 바뀐 것은 `CHANGELOG.md`의 `[Unreleased]`에 쌓다가 출시 때 판 절로 옮긴다.
+
+**배포 패키지** (`scripts/build-packages.mjs`): MIT, `repository`·`homepage`·`bugs`, `keywords`, `publishConfig.access: public`, 패키지마다 `README.md`(packages/*/README.md)와 `LICENSE`. 글꼴은 OFL과 글꼴별 라이선스 파일.
+
+**절차**
+
+1. 처음 한 번 (사람이): npm에서 `@quire` 조직을 만들고(이미 남의 것이면 범위 이름을 바꿔야 한다), Automation 토큰을 만들어 GitHub 저장소 Secrets에 `NPM_TOKEN`으로 넣는다.
+2. `CHANGELOG.md`의 `[Unreleased]`를 `[X.Y.Z] - 날짜`로 옮기고, 루트 `package.json`의 `version`을 X.Y.Z로 → PR → 머지.
+3. main에서 `git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. `.github/workflows/release.yml`: 태그와 판·CHANGELOG 절이 맞는지 → 타입 검사·빠른 시험·골든 → 패키지 빌드 → `scripts/release.mjs --publish`(검사 뒤 의존 순서대로 `npm publish`, 이미 있는 판은 건너뛰므로 실패 뒤 다시 돌려도 된다) → GitHub Release(CHANGELOG 절과 tgz).
+5. 손으로 미리 보기: `node scripts/build-packages.mjs && node scripts/release.mjs` (검사와 `npm publish --dry-run`). 워크플로를 `workflow_dispatch`로 돌리면 기본이 dry-run이다.
+
+**확인**: 이 기기에서 0.1.0으로 빌드해 `release.mjs`의 검사와 10개 패키지 `npm publish --dry-run`이 통과했다. npm에 `@quire/*` 패키지는 없다(404). 범위(조직)의 주인은 로그인 없이 알 수 없다.
+
+**한계**: 저장소가 비공개라 npm provenance(`--provenance`)를 쓰지 않는다. `repository` 링크도 남에게는 열리지 않는다. 저장소를 공개하면 워크플로에 `id-token: write`와 `--provenance`를 더한다.

@@ -1,7 +1,14 @@
 {
   "name": "@quire/model",
+  "description": "Quire document model: stories, paragraphs, marks, tables, annotations and operations",
+  "keywords": [
+    "document-model",
+    "editor"
+  ],
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" }
+  "exports": {
+    ".": "./src/index.ts"
+  }
 }

@@ -1,7 +1,17 @@
 {
   "name": "@quire/layout",
+  "description": "Quire layout engine: line breaking with Korean typesetting rules, pagination, columns, tables, footnotes",
+  "keywords": [
+    "layout",
+    "typesetting",
+    "pagination",
+    "line-breaking",
+    "korean"
+  ],
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" }
+  "exports": {
+    ".": "./src/index.ts"
+  }
 }
