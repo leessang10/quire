@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Doc } from '@quiredoc/model';
 import type { LoroDoc } from 'loro-crdt';
-import { displayText } from './canonical';
+import { displayText } from './history';
 import { SyncClient } from './client';
 import { SyncCore } from './core';
 import { applyHunks, compactDoc, compactLoro, diffText, readEpoch, rebaseHunks, rebaseOnto, type Hunk } from './epoch';

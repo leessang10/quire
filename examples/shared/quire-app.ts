@@ -276,7 +276,7 @@ export const SAVE_FORMATS: Array<{ kind: SaveFormat; label: string; ext: string 
 export async function openAny(h: QuireHandle, file: File): Promise<Record<string, number>> {
   const name = file.name.toLowerCase();
   if (name.endsWith('.quire')) {
-    const { openQuire } = await import('@quiredoc/sync');
+    const { openQuire } = await import('@quiredoc/model');
     const q = await openQuire(new Uint8Array(await file.arrayBuffer()));
     await h.load(q.doc, q.assets.map((a) => [a.id, { bytes: a.bytes, type: a.mime }] as [string, { bytes: Uint8Array; type: string }]));
     return {};
@@ -288,7 +288,7 @@ export async function openAny(h: QuireHandle, file: File): Promise<Record<string
 /** 저장 (내려받기). 바이트 수 */
 export async function saveAny(h: QuireHandle, kind: SaveFormat, title = documentTitle(h)): Promise<number> {
   if (kind !== 'quire') return saveFile(h, kind);
-  const { packQuire, assetIdsOf } = await import('@quiredoc/sync');
+  const { packQuire, assetIdsOf } = await import('@quiredoc/model');
   const { mimeOf } = await import('@quiredoc/convert');
   const src = h.editor.printSource();
   const assets = [];
@@ -337,7 +337,7 @@ export function emptyDoc(): QuireDoc {
 /** 기능 둘러보기 문서: 주요 요소 문서(제목 1–6, 글자·문단 서식, 목록, 그림, 각주, 인용, 코드, 표) + 머리말·꼬리말(쪽 번호) */
 export async function tourDoc(): Promise<{ doc: QuireDoc; assets: Array<[string, { bytes: Uint8Array; type: string }]> }> {
   const { elementsDocument } = await import('@quiredoc/convert');
-  const { assetIdOf } = await import('@quiredoc/sync');
+  const { assetIdOf } = await import('@quiredoc/model');
   const png = await samplePng();
   const asset = await assetIdOf(png);
   const doc = elementsDocument({ asset, w: 240 * 750, h: 120 * 750 }) as QuireDoc & { sections?: Array<Record<string, unknown>>; stories: Record<string, unknown> };

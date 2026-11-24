@@ -7,7 +7,8 @@ import { LoroDoc } from 'loro-crdt';
 import { commentOnlyUpdate, startServer, type ServerOptions, type SyncServer } from '../../../apps/sync-server/src/server';
 import { memoryStorage } from '../../../apps/sync-server/src/store';
 import { serveSyncWorker, startSyncWorker, type WorkerClient } from './host';
-import { SyncBridge, assetIdOf } from './index';
+import { SyncBridge } from './index';
+import { assetIdOf } from '@quiredoc/model';
 import { HttpAssets } from '../../editor/src/assets';
 
 const cleanups: Array<() => unknown> = [];

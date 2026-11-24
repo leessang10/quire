@@ -45,7 +45,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { LoroDoc, VersionVector, decodeImportBlobMeta } from 'loro-crdt';
-import { assetIdOf, assetIdsOf, canonicalJson, compactDocument, documentFromLoro, documentFromQuire, openQuire, packQuire, quireFromDocument, quireFromText, readEpoch, restoreInto, type QuireAsset } from '@quiredoc/sync';
+import { compactDocument, documentFromLoro, packQuireWithHistory, readEpoch, restoreHistory, restoreInto } from '@quiredoc/sync';
+import { assetIdOf, assetIdsOf, canonicalJson, documentFromQuire, openQuire, quireFromDocument, quireFromText, type QuireAsset } from '@quiredoc/model';
 import { fileStorage, memoryStorage, type PeerUser, type Role, type RoomStore, type Storage, type VersionRecord } from './store';
 
 export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6, ROLE: 7 } as const;
@@ -594,7 +595,7 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
       const a = room.store.getAsset(id);
       if (a) assets.push({ id, ...a });
     }
-    void packQuire({ loro: room.doc, assets }).then((bytes) => {
+    void packQuireWithHistory({ loro: room.doc, assets }).then((bytes) => {
       reply(res, 200, bytes, 'application/vnd.quire', { 'content-disposition': `attachment; filename="${encodeURIComponent(name)}.quire"` });
       idle(room);
     });
@@ -606,9 +607,11 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     if (opened.readOnly) return { status: 422, body: { error: '이 엔진보다 새 포맷이라 읽기 전용으로만 열 수 있습니다' } };
     const room = roomOf(name);
     if (room.doc.oplogVersion().length() > 0 || room.conns.size > 0) return { status: 409, body: { error: '이미 내용이 있는 방입니다' } };
+    // 이력이 문서와 같으면 이력으로 (협업 연속성), 아니면 document.json에서 새로 (19 §4.1)
+    const crdt = await restoreHistory(opened);
     let update: Uint8Array;
-    if (opened.crdt) {
-      update = opened.crdt;
+    if (crdt) {
+      update = crdt;
     } else {
       update = compactDocument(documentFromQuire(opened.doc).document, randomEpoch(), randomPeer()).export({ mode: 'snapshot' });
     }
@@ -620,8 +623,8 @@ export function startServer(port = 8787, log: (s: string) => void = () => {}, op
     room.changedSinceBase = true;
     room.jsonStale = true;
     idle(room);
-    log(`+ ${name}: .quire에서 만듦 (이력 ${opened.crdt ? '있음' : '없음'})`);
-    return { status: 201, body: { room: name, history: opened.crdt !== null, notes: opened.notes } };
+    log(`+ ${name}: .quire에서 만듦 (이력 ${crdt ? '있음' : '없음'})`);
+    return { status: 201, body: { room: name, history: crdt !== null, notes: opened.notes } };
   }
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex) => {

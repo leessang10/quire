@@ -4,7 +4,7 @@
  */
 import type { DropCounts, DropKind } from '@quiredoc/editor';
 import { DEFAULT_STYLES, safeLink, type Style } from '@quiredoc/model';
-import { assetIdOf, quireFromText, type QuireDoc, type QuireParagraph, type QuireTable } from '@quiredoc/sync';
+import { assetIdOf, quireFromText, type QuireDoc, type QuireParagraph, type QuireTable } from '@quiredoc/model';
 
 /** 가져오며 버린 것: 무엇 → 개수 (15 §6.1 "가져올 때 모르는 요소는 버리고 버린 요소 수를 알린다") */
 export interface ImportReport {

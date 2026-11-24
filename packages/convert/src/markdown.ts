@@ -4,7 +4,7 @@
  * 가져오기: 블록 → 인라인 두 단계의 자체 파서 (GFM 명세의 일부).
  */
 import { defaultListDef, noteStoryId, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs } from '@quiredoc/model';
-import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quiredoc/sync';
+import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quiredoc/model';
 import { BODY_WIDTH, Report, finishImport, addAsset, addUsedStyles, emptyQuire, fromDataUrl, tableGrid, type ImportResult, type ImportedAsset, withSafeLinks } from './common';
 
 const isTable = (b: QuireParagraph | QuireTable): b is QuireTable => 'table' in b;

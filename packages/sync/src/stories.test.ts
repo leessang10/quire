@@ -330,7 +330,7 @@ describe('stories in storage (canonical JSON, compaction, .quire, rebase)', () =
   });
 
   it('round-trips stories through the canonical JSON', async () => {
-    const { quireFromDocument, documentFromQuire, canonicalJson } = await import('./canonical');
+    const { quireFromDocument, documentFromQuire, canonicalJson } = await import('@quiredoc/model');
     const d = build();
     const json = canonicalJson(quireFromDocument(d));
     const q = JSON.parse(json);
@@ -344,15 +344,16 @@ describe('stories in storage (canonical JSON, compaction, .quire, rebase)', () =
   it('keeps stories (with last-paragraph attributes in the tail map) through compaction and .quire', async () => {
     const { compactDocument } = await import('./epoch');
     const { documentFromLoro } = await import('./shape');
-    const { packQuire, openQuire } = await import('./quire-file');
-    const { documentFromQuire } = await import('./canonical');
+    const { openQuire } = await import('@quiredoc/model');
+    const { documentFromQuire } = await import('@quiredoc/model');
     const d = build();
     const loro = compactDocument(d, 'e1', 5);
     expect(loro.getText('s:t|r0|c0').toString()).toBe(`셀 가나${NL}둘째 줄`);
     expect(loro.getMap('tp:t|r0|c0').toJSON()).toEqual({ p_align: 'center' });
     expect(view(documentFromLoro(loro))).toEqual(view(d));
-    const opened = await openQuire(await packQuire({ loro }));
-    expect(opened.crdt).not.toBeNull();
+    const { packQuireWithHistory, restoreHistory } = await import('./history');
+    const opened = await openQuire(await packQuireWithHistory({ loro }));
+    expect(await restoreHistory(opened)).not.toBeNull();
     expect(view(documentFromQuire(opened.doc).document)).toEqual(view(d));
   });
 

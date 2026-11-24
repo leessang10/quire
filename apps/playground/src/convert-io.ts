@@ -2,7 +2,7 @@
  * HTML·Markdown·DOCX·HWPX 가져오기·내보내기 (15 §6, 5-5–5-7): 정본을 거친다. 변환 모듈은 처음 쓸 때 불러온다.
  */
 import { dropMessageKey, type DropCounts, type DropKind, type Editor } from '@quiredoc/editor';
-import { documentFromQuire, quireFromDocument } from '@quiredoc/sync';
+import { documentFromQuire, quireFromDocument } from '@quiredoc/model';
 
 export type ConvertKind = 'html' | 'md' | 'docx' | 'hwpx';
 const LABEL: Record<ConvertKind, string> = { html: 'HTML', md: 'Markdown', docx: 'DOCX', hwpx: 'HWPX' };

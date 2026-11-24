@@ -1,6 +1,6 @@
 # 19. 패키지 구성 (core + 조립)
 
-- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다.
+- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1 끝남 (§8).
 - 범위: npm에 내는 패키지의 경계·이름·의존 방식, 기능을 골라 붙이는 방법, 0.1.0에서 옮기는 단계.
 - 범위 밖: 편집기 기능 자체. 저장소 안의 개발 구조(워크스페이스 폴더)는 거의 그대로 둔다.
 - 바탕: 08(통합·임베드), 15 §19(플러그인 API), 16 §10.1·§10.8(빌드·출시).
@@ -140,3 +140,15 @@ const { importHwpx } = await import('@quiredoc/convert');
 - O-51. `@quiredoc/core/headless`(DOM 없는 진입점)가 필요한가: 지금은 나무 흔들기로 충분해 보인다. 서버 묶음 크기가 문제가 되면 더한다.
 - O-52. 변환을 형식마다 나눌지 (`@quiredoc/hwpx`·`docx`·`markdown`): 지금은 공통 코드(common·xml)를 나누고 HTML 읽기는 core에 있어 이득이 작다. 형식별 외부 의존이 생기면(예: HWP 5 바이너리 읽기) 그때 나눈다.
 - O-53. 앞으로의 모듈 후보: 한국어 맞춤법 검사기(`@quiredoc/spellcheck-ko`, 15 O-36), 동기화 서버(`@quiredoc/server`), Vue·Svelte 바인딩(16 §10.1에서 미룬 것).
+
+## 8. 진행
+
+### 8.1 P-1 정본·파일 옮기기 (2026-11-24)
+
+- `canonical.ts`·`zip.ts`·`quire-file.ts`를 `packages/sync/src`에서 `packages/model/src`로 옮기고 `@quiredoc/model`에서 낸다. `canonical.ts`의 `@quiredoc/model` 가져오기는 model 안의 상대 경로로 바꿨다.
+- **`.quire` 파일의 이력**: `openQuire`는 history/crdt.bin을 열어 보지 않고 `history`(바이트, 확인하지 않음)로 돌려준다 (0.1.0의 `crdt`, 확인한 값을 대신함). `packQuire({ …, history })`는 바이트를 그대로 싣고 그 정본 해시를 manifest에 적는다.
+- **sync에 남긴 것** (`packages/sync/src/history.ts`): `displayText(loro)`, `packQuireWithHistory({ loro, assets })`(Loro 스냅샷을 이력으로), `restoreHistory(opened)`(이력을 Loro로 읽어 화면 상태 정본 해시가 document.json과 같으면 그 스냅샷, 아니면 null과 `notes`). 동기화 서버의 내려받기·`.quire`로 방 만들기가 이 둘을 쓴다.
+- 가져오기를 옮겼다: convert·pdf·sdk·플레이그라운드·동기화 서버·예제 공통 코드(`examples/shared/quire-app.ts`)·시험. **convert·pdf·sdk는 이제 sync에 의존하지 않는다** (package.json에서 뺐다).
+- 시험: `packages/model/src/quire-file.test.ts` — sync 없이 서식·자산 왕복, 이력 바이트가 열기 → 다시 저장에서 그대로이고 manifest에 정본 해시가 적힘, 그리고 model·layout·shaping·editor·sdk·convert·pdf 소스와 package.json이 `loro-crdt`·`@quiredoc/sync`를 가져오지 않음. sync의 파일 시험은 `packQuireWithHistory`·`restoreHistory`로 (이력이 문서와 다르면 버림, 다시 포맷만 했으면 유지).
+- **효과 (측정)**: `examples/react-vite` 프로덕션 빌드에서 시작 때 받는 JS가 5,261 KB(5,072 KB 조각에 Loro) → **492 KB**, 묶음 어디에도 Loro 없음. 앱은 그대로 돈다 (브라우저 확인, 콘솔 오류 없음). 0.2.0 패키지 구성 전이지만 sdk가 sync를 떼어 낸 것만으로 §1의 문제가 풀린다.
+- 예제의 `package-lock.json`(git에 넣지 않음)에 옛 tgz 체크섬이 남아 있으면 `EINTEGRITY`로 설치가 실패한다: 같은 판 0.1.0의 tgz 내용이 바뀌었기 때문. 지우고 다시 설치한다.

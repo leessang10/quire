@@ -3,10 +3,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Doc } from '@quiredoc/model';
-import { canonicalJson, displayText, migrateQuire, quireFromText, stateHash, textFromQuire } from './canonical';
-import { openQuire, packQuire } from './quire-file';
+import { displayText, packQuireWithHistory, restoreHistory } from './history';
+import { canonicalJson, migrateQuire, quireFromText, stateHash, textFromQuire } from '@quiredoc/model';
+import { openQuire, packQuire } from '@quiredoc/model';
 import { LoroWriter, initLoro, newLoro, readRaw, readState } from './shape';
-import { crc32, readZip, writeZip } from './zip';
+import { crc32, readZip, writeZip } from '@quiredoc/model';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -94,44 +95,46 @@ describe('.quire file', () => {
     const loro = editedLoro();
     const text = displayText(loro);
     expect(text).toBe('가둘째\n넷째\n첫째\n');
-    const bytes = await packQuire({ loro });
+    const bytes = await packQuireWithHistory({ loro });
     const names = (await readZip(bytes)).map((e) => e.name);
     expect(names).toEqual(['mimetype', 'manifest.json', 'document.json', 'history/crdt.bin']);
     const opened = await openQuire(bytes);
     expect(opened.text).toBe(text);
     expect(opened.readOnly).toBe(false);
     expect(opened.notes).toEqual([]);
-    expect(opened.crdt).not.toBeNull();
+    const crdt = await restoreHistory(opened);
+    expect(crdt).not.toBeNull();
     const back = newLoro(8);
-    back.import(opened.crdt!);
+    back.import(crdt!);
     expect(displayText(back)).toBe(text);
     // 같은 문서는 같은 바이트열
-    expect(await packQuire({ loro })).toEqual(bytes);
+    expect(await packQuireWithHistory({ loro })).toEqual(bytes);
   });
 
   it('drops crdt.bin when document.json was edited outside', async () => {
-    const entries = await readZip(await packQuire({ loro: editedLoro() }));
+    const entries = await readZip(await packQuireWithHistory({ loro: editedLoro() }));
     const doc = JSON.parse(dec.decode(entries[2]!.data));
     doc.stories.body[0].c[0].t = '고친 문단';
     entries[2]!.data = enc.encode(JSON.stringify(doc)); // 키 순서·공백도 다름
     const opened = await openQuire(await writeZip(entries));
     expect(opened.text).toBe('고친 문단\n넷째\n첫째\n');
-    expect(opened.crdt).toBeNull();
+    expect(opened.history).not.toBeNull(); // 파일에는 있다 (core는 확인하지 않는다)
+    expect(await restoreHistory(opened)).toBeNull();
     expect(opened.notes.join(' ')).toMatch(/history dropped/);
   });
 
   it('keeps crdt.bin when document.json was only reformatted', async () => {
-    const entries = await readZip(await packQuire({ loro: editedLoro() }));
+    const entries = await readZip(await packQuireWithHistory({ loro: editedLoro() }));
     entries[2]!.data = enc.encode(JSON.stringify(JSON.parse(dec.decode(entries[2]!.data))));
     const opened = await openQuire(await writeZip(entries));
-    expect(opened.crdt).not.toBeNull();
+    expect(await restoreHistory(opened)).not.toBeNull();
   });
 
   it('opens a text-only file, and newer formats read-only', async () => {
     const bytes = await packQuire({ text: '하나\n둘\n' });
     expect((await readZip(bytes)).map((e) => e.name)).toEqual(['mimetype', 'manifest.json', 'document.json']);
     const opened = await openQuire(bytes);
-    expect(opened).toMatchObject({ text: '하나\n둘\n', crdt: null, readOnly: false });
+    expect(opened).toMatchObject({ text: '하나\n둘\n', history: null, readOnly: false });
     const entries = await readZip(bytes);
     const m = JSON.parse(dec.decode(entries[1]!.data));
     m.formatVersion = 9;
@@ -148,7 +151,7 @@ describe('.quire file', () => {
 describe('canonical JSON with formatting (10, step 2-2)', () => {
   it('round-trips marks and paragraph attributes through document.json', async () => {
     const { Doc } = await import('@quiredoc/model');
-    const { quireFromDoc, docFromQuire } = await import('./canonical');
+    const { quireFromDoc, docFromQuire } = await import('@quiredoc/model');
     const doc = Doc.fromText('제목\n본문은 굵게, 이건 링크\n');
     doc.setParaAttr(0, 'style', 'Heading1');
     doc.setParaAttr(1, 'align', 'justify');
@@ -174,7 +177,7 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
 
   it('stores only styles that differ from the defaults, and restores them (2-4)', async () => {
     const { Doc } = await import('@quiredoc/model');
-    const { quireFromDoc, docFromQuire } = await import('./canonical');
+    const { quireFromDoc, docFromQuire } = await import('@quiredoc/model');
     const doc = Doc.fromText('제목\n본문\n');
     expect(quireFromDoc(doc).styles).toEqual({});
     doc.setStyle('h1', { ...doc.style('h1')!, marks: { bold: true, size: 30000, color: '#1a5fb4' } });
@@ -193,7 +196,7 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
 
   it('stores list definitions in settings.lists and list attributes on paragraphs, not the numbers (2-5)', async () => {
     const { Doc } = await import('@quiredoc/model');
-    const { quireFromDoc, docFromQuire } = await import('./canonical');
+    const { quireFromDoc, docFromQuire } = await import('@quiredoc/model');
     const doc = Doc.fromText('가\n나\n다\n');
     const [id] = doc.createList('number');
     doc.setParaAttr(0, 'list', { id, level: 0 });
@@ -211,8 +214,8 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
 
   it('stores inline images as img runs and their bytes under assets/ (2-8)', async () => {
     const { Doc } = await import('@quiredoc/model');
-    const { quireFromDoc, docFromQuire } = await import('./canonical');
-    const { assetIdOf, assetIdsOf } = await import('./quire-file');
+    const { quireFromDoc, docFromQuire } = await import('@quiredoc/model');
+    const { assetIdOf, assetIdsOf } = await import('@quiredoc/model');
     const bytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
     const id = await assetIdOf(bytes);
     const doc = Doc.fromText('앞 뒤\n');
@@ -239,7 +242,7 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
   });
 
   it('drops keys this engine does not know, with notes', async () => {
-    const { docFromQuire } = await import('./canonical');
+    const { docFromQuire } = await import('@quiredoc/model');
     const q = quireFromText('가나\n');
     q.stories.body[0] = { p: { align: 'center', mystery: 1 }, c: [{ t: '가나', m: { bold: true, sparkle: true } as never }] };
     const { doc, notes } = docFromQuire(q);

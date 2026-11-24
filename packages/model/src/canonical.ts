@@ -5,37 +5,14 @@
  * - 키 순서를 고정해 직렬화한다(키 사전순, 들여쓰기 2칸, 끝 줄바꿈). 같은 문서는 늘 같은 바이트열 → 해시·diff가 안정적이다.
  * - CRDT 원소 ID·묘비·구획 표식은 들어가지 않는다. 그래서 정본으로 저장했다 다시 열면 구획이 하나뿐인 깨끗한 문서가 된다.
  */
-import {
-  DEFAULT_STYLES,
-  LAST_SECTION,
-  SECTION_KEYS,
-  fullSection,
-  Doc,
-  Document,
-  MARK_KEYS,
-  OBJ,
-  OBJ_KEYS,
-  cellKey,
-  cellStoryId,
-  isNoteStory,
-  noteRefs,
-  noteStoryId,
-  emptyTable,
-  newTableId,
-  normalizeTable,
-  type ListDef,
-  type MarkSet,
-  type ObjAttrs,
-  type ParaAttrs,
-  type SectionProps,
-  type Style,
-  type TableRecord,
-  type CommentMessage,
-  type CommentThread,
-  keysOfThread,
-} from '@quiredoc/model';
-import type { LoroDoc } from 'loro-crdt';
-import { readRaw, readState } from './shape';
+import { type CommentMessage, type CommentThread, keysOfThread } from './comments';
+import { Doc, MARK_KEYS, OBJ, OBJ_KEYS, type MarkSet, type ObjAttrs, type ParaAttrs } from './doc';
+import { Document } from './document';
+import { type ListDef } from './lists';
+import { isNoteStory, noteRefs, noteStoryId } from './notes';
+import { LAST_SECTION, SECTION_KEYS, fullSection, type SectionProps } from './sections';
+import { DEFAULT_STYLES, type Style } from './styles';
+import { cellKey, cellStoryId, emptyTable, newTableId, normalizeTable, type TableRecord } from './tables';
 
 export interface QuireRun {
   /** 글 (개체 런이면 없음) */
@@ -495,11 +472,4 @@ export async function sha256Hex(data: Uint8Array | string): Promise<string> {
 /** 정본 상태 해시: 정본 JSON 바이트열의 SHA-256 (07 §3의 stateHash) */
 export function stateHash(q: QuireDoc): Promise<string> {
   return sha256Hex(canonicalJson(q));
-}
-
-/** Loro 문서의 화면 텍스트 (Doc.fromRaw로 화면 순서·숨김을 적용한 결과) */
-export function displayText(loro: LoroDoc): string {
-  const { raw, keys } = readRaw(loro);
-  if (raw.length === 0) return '';
-  return Doc.fromRaw(raw, keys, readState(loro)).text();
 }

@@ -3,7 +3,7 @@
  * "내보내기 → 가져오기" 왕복 뒤 투영이 같아야 한다 (DOCX·HWPX도 같은 틀에 열만 더한다).
  */
 import { MARK_KEYS, OBJ, defaultListDef, fullSection, noteStoryId, type CommentThread, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type SectionProps } from '@quiredoc/model';
-import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quiredoc/sync';
+import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quiredoc/model';
 import { emptyQuire, tableGrid } from './common';
 
 export type Format = 'markdown' | 'html' | 'docx' | 'hwpx';

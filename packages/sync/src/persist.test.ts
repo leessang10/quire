@@ -7,10 +7,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { startServer, type ServerOptions, type SyncServer } from '../../../apps/sync-server/src/server';
 import { fileStorage, memoryStorage } from '../../../apps/sync-server/src/store';
-import { displayText } from './canonical';
+import { displayText, restoreHistory } from './history';
 import { readEpoch } from './epoch';
 import { serveSyncWorker, startSyncWorker, type WorkerClient } from './host';
-import { openQuire } from './quire-file';
+import { openQuire } from '@quiredoc/model';
 import { readRaw } from './shape';
 
 const cleanups: Array<() => unknown> = [];
@@ -98,7 +98,7 @@ describe('server storage', () => {
     expect(json.stories.body[0].c[0].t).toBe('첫 문단가나다라마');
     const file = await openQuire(new Uint8Array(await (await fetch(`http://localhost:${s2.port}/${name}.quire`)).arrayBuffer()));
     expect(file.text).toBe('첫 문단가나다라마\n');
-    expect(file.crdt).not.toBeNull();
+    expect(await restoreHistory(file)).not.toBeNull();
   });
 
   it('compacts an idle room into a new epoch and late joiners get the compact document', async () => {
@@ -163,7 +163,7 @@ describe('server storage', () => {
   it('creates a room from an uploaded .quire file', async () => {
     const s = await serve({});
     const name = room();
-    const { packQuire } = await import('./quire-file');
+    const { packQuire } = await import('@quiredoc/model');
     const put = await fetch(`http://localhost:${s.port}/${name}.quire`, { method: 'PUT', body: await packQuire({ text: '올린\n파일\n' }) });
     expect(put.status).toBe(201);
     expect(await put.json()).toMatchObject({ history: false });
@@ -176,7 +176,7 @@ describe('server storage', () => {
   it('keeps formats of an uploaded .quire file in the room, its JSON and a joining client (2-6)', async () => {
     const s = await serve({});
     const name = room();
-    const { packQuire } = await import('./quire-file');
+    const { packQuire } = await import('@quiredoc/model');
     const { Doc } = await import('@quiredoc/model');
     const doc = Doc.fromText('제목\n굵은 본문');
     doc.setParaAttr(0, 'style', 'h1');
@@ -201,7 +201,7 @@ describe('server storage', () => {
   it('stores assets by content hash, and puts them into and takes them out of .quire files (2-8)', async () => {
     const s = await serve({});
     const name = room();
-    const { assetIdOf, packQuire, openQuire } = await import('./quire-file');
+    const { assetIdOf, packQuire, openQuire } = await import('@quiredoc/model');
     const { Doc } = await import('@quiredoc/model');
     const bytes = new Uint8Array([137, 80, 78, 71, 9, 9, 9, 9]);
     const id = await assetIdOf(bytes);

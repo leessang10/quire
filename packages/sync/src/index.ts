@@ -10,12 +10,6 @@ export { WsLink } from './ws';
 export { serveSyncWorker, startSyncWorker, WorkerClient } from './host';
 export type { WorkerConfig } from './host';
 export type { ToMain, ToWorker, RemoteSel, StoryInit, StoryDelta } from './protocol';
-export { canonicalJson, displayText, docFromQuire, documentFromQuire, migrateQuire, quireFromDoc, quireFromDocument, quireFromText, sha256Hex, stateHash, textFromQuire, SCHEMA_VERSION } from './canonical';
-export type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from './canonical';
-export { openQuire, packQuire, assetIdOf, assetIdsOf, MIMETYPE, FORMAT_VERSION } from './quire-file';
-export { readZip, writeZip } from './zip';
-export type { ReadEntry, ZipEntry } from './zip';
-export type { OpenedQuire, Manifest, QuireAsset } from './quire-file';
 export { applyHunks, compactDoc, compactDocument, compactLoro, diffText, documentFromSnapshot, restoreInto, readEpoch, rebaseHunks, rebaseOnto, syncFormats, META } from './epoch';
 export type { Hunk, RebaseInfo } from './epoch';
 export { parseRebase } from './ws';
@@ -28,3 +22,5 @@ export type { Names } from './shape';
 export { readTable, tableIdsOf, writeTable, writeTableRecord } from './shape';
 export { compareVersions } from './compare';
 export type { Frontiers } from './compare';
+// .quire 파일의 협업 이력 (19 §4.1). 문서 JSON·파일 읽기·쓰기는 @quiredoc/model
+export { displayText, packQuireWithHistory, restoreHistory } from './history';

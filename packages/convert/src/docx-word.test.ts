@@ -5,7 +5,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { assetIdOf } from '@quiredoc/sync';
+import { assetIdOf } from '@quiredoc/model';
 import { SUPPORT, elementsDocument, firstDifference, importDocx, project } from './index';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAEElEQVR4nGNgYGD4z8DAAAAEAwEAmEtrpQAAAABJRU5ErkJggg==';

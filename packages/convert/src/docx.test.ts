@@ -4,7 +4,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { assetIdOf, documentFromQuire, readZip, writeZip, type QuireParagraph } from '@quiredoc/sync';
+import { assetIdOf, documentFromQuire, readZip, writeZip, type QuireParagraph } from '@quiredoc/model';
 import { SUPPORT, elementsDocument, exportDocx, firstDifference, importDocx, project, type ImportedAsset } from './index';
 import { parseXml } from './xml';
 
