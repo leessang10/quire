@@ -16,6 +16,8 @@ const out = join(root, '.build');
 const VERSION = '0.1.0';
 /** dist 밖에 함께 싣는 파일 (패키지 → 파일, exports에도 연다) */
 const EXTRA = { editor: ['tokens.scss'] };
+/** index 밖의 진입점 (패키지 → 하위 경로 → 소스). 편집기가 필요할 때 import()로 받는 번역도 같은 파일을 쓴다 (18 §5 나눠 싣기) */
+const ENTRIES = { editor: { 'i18n/en': 'src/i18n/en.ts' } };
 /** 의존 순서 (앞이 먼저) */
 const PACKAGES = ['model', 'layout', 'shaping', 'editor', 'sync', 'convert', 'pdf', 'sdk', 'react'];
 
@@ -62,7 +64,11 @@ for (const p of PACKAGES) {
       minify: false,
       sourcemap: true,
       target: 'es2022',
-      lib: { entry: join(root, 'packages', p, 'src/index.ts'), formats: ['es'], fileName: () => 'index.js' },
+      lib: {
+        entry: { index: join(root, 'packages', p, 'src/index.ts'), ...Object.fromEntries(Object.entries(ENTRIES[p] ?? {}).map(([k, f]) => [k, join(root, 'packages', p, f)])) },
+        formats: ['es'],
+        fileName: (_format, name) => `${name}.js`,
+      },
       rollupOptions: { external: (id) => external.some((e) => id === e || id.startsWith(`${e}/`)) || id.startsWith('node:') },
     },
   });
@@ -79,7 +85,10 @@ for (const p of PACKAGES) {
     license: 'UNLICENSED',
     type: 'module',
     sideEffects: false,
-    exports: { '.': { types: './dist/types/index.d.ts', import: './dist/index.js' }, ...(EXTRA[p] ? Object.fromEntries(EXTRA[p].map((f) => [`./${f}`, `./${f}`])) : {}) },
+    exports: {
+      '.': { types: './dist/types/index.d.ts', import: './dist/index.js' },
+      ...Object.fromEntries(Object.keys(ENTRIES[p] ?? {}).map((k) => [`./${k}`, { types: `./dist/types/${k}.d.ts`, import: `./dist/${k}.js` }])),
+      ...(EXTRA[p] ? Object.fromEntries(EXTRA[p].map((f) => [`./${f}`, `./${f}`])) : {}) },
     module: './dist/index.js',
     types: './dist/types/index.d.ts',
     files: ['dist', ...(EXTRA[p] ?? [])],

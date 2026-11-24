@@ -3,17 +3,43 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BUILTIN_MESSAGES, Messages, formatMessage } from './i18n';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { BUILTIN_MESSAGES, Messages, formatMessage, loadMessages, messagesLoaded } from './i18n';
 import { en } from './i18n/en';
 import { ko } from './i18n/ko';
 import { DROP_KINDS, dropMessageKey, isDropKind } from './import-report';
 
 afterEach(() => vi.restoreAllMocks());
 
+// 이 파일의 시험은 차례대로 돈다: 처음 묶음은 영어를 받기 전, 그 뒤는 받은 뒤
+describe('나눠 싣기 (18 §5)', () => {
+  it('편집기 묶음에는 한국어만 있고, 영어는 받기 전까지 한국어로 대신한다 (경고 없이)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(Object.keys(BUILTIN_MESSAGES)).toEqual(['ko']);
+    expect(messagesLoaded('ko')).toBe(true);
+    expect(messagesLoaded('en')).toBe(false);
+    expect(messagesLoaded('fr')).toBe(false); // 싣지 않는 언어는 빠진 키를 영어로 채우므로 영어가 필요하다
+    expect(new Messages('en').t('attr.bold')).toBe('굵게');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('받으면 이미 만든 Messages도 다음 번역부터 영어다. 한국어는 아무것도 받지 않는다', async () => {
+    const m = new Messages('en-GB');
+    expect(await loadMessages('ko')).toBe(false);
+    expect(await loadMessages('en-GB')).toBe(true);
+    expect(await loadMessages('en')).toBe(false);
+    expect(messagesLoaded('en')).toBe(true);
+    expect(m.t('attr.bold')).toBe('Bold');
+    expect(BUILTIN_MESSAGES.en).toBe(en);
+  });
+});
+
 describe('메시지 파일', () => {
+  beforeAll(() => loadMessages('en'));
+
   it('언어마다 키 집합이 같다', () => {
     const keys = Object.keys(ko).sort();
+    expect(Object.keys(en).sort()).toEqual(keys);
     for (const [locale, table] of Object.entries(BUILTIN_MESSAGES)) expect(Object.keys(table).sort(), locale).toEqual(keys);
   });
 
