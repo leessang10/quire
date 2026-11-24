@@ -1,6 +1,6 @@
 # 19. 패키지 구성 (core + 조립)
 
-- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1 끝남 (§8).
+- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1·P-2 끝남 (§8).
 - 범위: npm에 내는 패키지의 경계·이름·의존 방식, 기능을 골라 붙이는 방법, 0.1.0에서 옮기는 단계.
 - 범위 밖: 편집기 기능 자체. 저장소 안의 개발 구조(워크스페이스 폴더)는 거의 그대로 둔다.
 - 바탕: 08(통합·임베드), 15 §19(플러그인 API), 16 §10.1·§10.8(빌드·출시).
@@ -152,3 +152,9 @@ const { importHwpx } = await import('@quiredoc/convert');
 - 시험: `packages/model/src/quire-file.test.ts` — sync 없이 서식·자산 왕복, 이력 바이트가 열기 → 다시 저장에서 그대로이고 manifest에 정본 해시가 적힘, 그리고 model·layout·shaping·editor·sdk·convert·pdf 소스와 package.json이 `loro-crdt`·`@quiredoc/sync`를 가져오지 않음. sync의 파일 시험은 `packQuireWithHistory`·`restoreHistory`로 (이력이 문서와 다르면 버림, 다시 포맷만 했으면 유지).
 - **효과 (측정)**: `examples/react-vite` 프로덕션 빌드에서 시작 때 받는 JS가 5,261 KB(5,072 KB 조각에 Loro) → **492 KB**, 묶음 어디에도 Loro 없음. 앱은 그대로 돈다 (브라우저 확인, 콘솔 오류 없음). 0.2.0 패키지 구성 전이지만 sdk가 sync를 떼어 낸 것만으로 §1의 문제가 풀린다.
 - 예제의 `package-lock.json`(git에 넣지 않음)에 옛 tgz 체크섬이 남아 있으면 `EINTEGRITY`로 설치가 실패한다: 같은 판 0.1.0의 tgz 내용이 바뀌었기 때문. 지우고 다시 설치한다.
+
+### 8.2 P-2 이름 정리 (2026-11-24)
+
+- shaping의 `FontMetrics`(셰이핑 글꼴 치수, em 비율)를 `ShapingFontMetrics`로 바꿨다. 편집기의 `FontMetrics`(그리기 치수, px)는 그대로.
+- `QuirePlugin`·`PluginContext`·`Rect`는 sdk가 editor 것을 다시 내보내는 것이라 같은 타입이다: 겹침으로 치지 않는다 (core 진입점에서는 한 번만 낸다, P-3).
+- 시험 `packages/sdk/src/core-names.test.ts`: model·layout·shaping·editor·sdk 진입점이 **스스로 내는** 이름(다른 `@quiredoc/*`를 다시 내보내는 것 제외)이 서로 겹치지 않는다. 고치기 전 코드에서는 `FontMetrics: shaping, editor`로 실패하는 것을 확인했다.
