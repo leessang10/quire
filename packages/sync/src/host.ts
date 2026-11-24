@@ -1,7 +1,7 @@
 /**
  * Worker 진입점과 메인 쪽 연결 도우미 (09 §8).
  *
- * Worker 파일에서:   import { serveSyncWorker } from '@quiredoc/sync/host'; serveSyncWorker(self);
+ * Worker 파일에서:   import { serveSyncWorker } from '@quiredoc/sync'; serveSyncWorker(self);
  * 메인에서:          const client = await startSyncWorker(new Worker(...), config, options);
  *
  * 모드
