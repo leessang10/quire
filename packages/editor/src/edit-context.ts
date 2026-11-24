@@ -219,7 +219,11 @@ export class EditContextInput implements InputBackend {
       this.onIntent({ kind: 'compositionEnd', text });
       if (this.pendingParagraph) {
         this.pendingParagraph = false;
-        this.onIntent({ kind: 'insertParagraph' });
+        // 한글 음절 조합을 끝낸 Enter는 확정하고 문단도 나눈다. 후보 창에서 고른 Enter(한자 변환·일본어 변환)는
+        // 고르기만 한다: 실제 IME 기록에서 한자 후보를 Enter로 고르면 같은 누름의 두 번째 keydown이 오지 않고,
+        // 문단을 나누면 "韓⏎"가 된다
+        if (splitsOnEnter(text)) this.onIntent({ kind: 'insertParagraph' });
+        else this.log('skip', `Enter chose a candidate (${fmt(text)}): no paragraph`);
       }
     });
 
@@ -318,6 +322,14 @@ export class EditContextInput implements InputBackend {
   private log(type: string, detail: string): void {
     this.onLog?.({ time: performance.now(), type, detail });
   }
+}
+
+/**
+ * 조합을 끝낸 Enter가 문단도 나누는가. 한글 조합(음절 확정)은 나누고, 후보 창에서 고른 결과(한자, 일본어 가나·한자)는
+ * 고르기만 한다
+ */
+export function splitsOnEnter(text: string): boolean {
+  return !/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text);
 }
 
 function fmt(s: string | null | undefined): string {

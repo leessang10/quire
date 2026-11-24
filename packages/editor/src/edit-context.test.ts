@@ -4,7 +4,7 @@
  * 이벤트 순서는 Chromium의 EditContext와 실제 Windows 한국어 IME 기록을 따른다.
  */
 import { describe, expect, it } from 'vitest';
-import { EditContextInput, type EditContextLike } from './edit-context';
+import { EditContextInput, splitsOnEnter, type EditContextLike } from './edit-context';
 import type { InputIntent } from './input';
 
 class FakeEditContext extends EventTarget implements EditContextLike {
@@ -315,6 +315,24 @@ describe('EditContext input (path A)', () => {
     key({ key: 'Enter', keyCode: 13 });
     key({ key: 'Enter', keyCode: 13, repeat: true });
     expect(seen()).toEqual(['insertParagraph', 'insertParagraph']);
+  });
+
+  it('Enter that picks a Hanja candidate only confirms it (no paragraph)', () => {
+    const { ec, key, seen, editor } = setup();
+    // 실제 기록 (2026-11-24 체크리스트 v4-cell-hanja): 한 → 한자 키로 재변환 → 후보 창에서 Enter → 韓.
+    // 같은 누름의 두 번째 keydown(13)은 오지 않는다
+    ec.startComposition();
+    ec.compose('韓');
+    key({ key: 'Process', code: 'Enter', keyCode: 229 });
+    ec.endComposition();
+    expect(seen()).toEqual(['compositionStart', 'compositionUpdate:韓', 'compositionEnd:韓']);
+    expect(editor.text).toBe('韓');
+    // 다음 Enter는 평소대로 나눈다
+    key({ key: 'Enter', code: 'Enter', keyCode: 13 }, 'keyup');
+    key({ key: 'Enter', code: 'Enter', keyCode: 13 });
+    expect(seen()).toEqual(['insertParagraph']);
+    expect(splitsOnEnter('한')).toBe(true);
+    expect(splitsOnEnter('かな')).toBe(false);
   });
 
   it('keeps holding Enter after a composition: repeated keydowns are not dropped', () => {
