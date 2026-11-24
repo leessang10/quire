@@ -35,6 +35,14 @@ export const THEME_VARIABLES = [
   '--quire-table-border',
   '--quire-placeholder',
   '--quire-placeholder-text',
+  '--quire-remote-1',
+  '--quire-remote-2',
+  '--quire-remote-3',
+  '--quire-remote-4',
+  '--quire-remote-5',
+  '--quire-remote-6',
+  '--quire-remote-7',
+  '--quire-remote-8',
 ] as const;
 
 export type ThemeVariable = (typeof THEME_VARIABLES)[number];
@@ -93,10 +101,12 @@ export interface ThemeColors {
   placeholder: string;
   placeholderText: string;
   accent: string;
+  /** 협업 팔레트 (O-42): 프레즌스의 팔레트 번호 1–8이 이 색이 된다 */
+  remote: string[];
 }
 
 /** 변수 이름과 기본값 (클래식 라이트: 테마를 넣기 전 화면과 같은 색) */
-export const THEME_TOKENS: Record<Exclude<keyof ThemeColors, 'pageShadow' | 'pageBorder'>, [ThemeVariable, string]> = {
+export const THEME_TOKENS: Record<Exclude<keyof ThemeColors, 'pageShadow' | 'pageBorder' | 'remote'>, [ThemeVariable, string]> = {
   desk: ['--quire-desk', '#e9e9ec'],
   page: ['--quire-page', '#ffffff'],
   text: ['--quire-text', '#1d1d1f'],
@@ -115,6 +125,17 @@ export const THEME_TOKENS: Record<Exclude<keyof ThemeColors, 'pageShadow' | 'pag
   placeholderText: ['--quire-placeholder-text', '#6e6e73'],
   accent: ['--quire-accent', '#3884ff'],
 };
+/** 협업 팔레트 변수와 기본값 (클래식 라이트). 다크는 밝은 쪽 색 (THEME_CSS) */
+export const REMOTE_PALETTE: ReadonlyArray<readonly [ThemeVariable, string]> = [
+  ['--quire-remote-1', '#2563eb'],
+  ['--quire-remote-2', '#c2410c'],
+  ['--quire-remote-3', '#047857'],
+  ['--quire-remote-4', '#7c3aed'],
+  ['--quire-remote-5', '#be123c'],
+  ['--quire-remote-6', '#0e7490'],
+  ['--quire-remote-7', '#a16207'],
+  ['--quire-remote-8', '#4d7c0f'],
+];
 export const PAGE_SHADOW_VAR: ThemeVariable = '--quire-page-shadow';
 export const PAGE_BORDER_VAR: ThemeVariable = '--quire-page-border';
 
@@ -130,6 +151,8 @@ export const THEME_CSS = `
   --quire-mark: #9a9aa2; --quire-field: #e4e4ea; --quire-grip: #a1a1a6; --quire-grip-active: var(--quire-accent);
   --quire-drop-line: var(--quire-accent); --quire-drag-source: rgba(56, 132, 255, 0.10); --quire-table-border: #8e8e93;
   --quire-placeholder: #e9e9ec; --quire-placeholder-text: #6e6e73;
+  --quire-remote-1: #2563eb; --quire-remote-2: #c2410c; --quire-remote-3: #047857; --quire-remote-4: #7c3aed;
+  --quire-remote-5: #be123c; --quire-remote-6: #0e7490; --quire-remote-7: #a16207; --quire-remote-8: #4d7c0f;
 }
 :where(.quire[data-quire-theme='minimal']) {
   --quire-desk: var(--quire-page); --quire-page-shadow: none; --quire-page-border: #e4e4e7;
@@ -142,6 +165,8 @@ export const THEME_CSS = `
 :where(.quire[data-quire-scheme='dark']) {
   --quire-desk: #1f1f23; --quire-page-shadow: 0 1px 10px rgba(0, 0, 0, 0.6); --quire-selection-inactive: rgba(0, 0, 0, 0.18);
   --quire-grip: #6e6e76; --quire-placeholder: #2a2a30; --quire-placeholder-text: #a1a1aa;
+  --quire-remote-1: #60a5fa; --quire-remote-2: #fb923c; --quire-remote-3: #34d399; --quire-remote-4: #a78bfa;
+  --quire-remote-5: #fb7185; --quire-remote-6: #22d3ee; --quire-remote-7: #facc15; --quire-remote-8: #a3e635;
 }
 :where(.quire[data-quire-theme='minimal'][data-quire-scheme='dark']) { --quire-page-border: #3f3f46; --quire-desk: #18181b; }
 :where(.quire[data-quire-theme='modern'][data-quire-scheme='dark']) { --quire-desk: #18181b; --quire-page-border: #3f3f46; --quire-accent: #fafafa; --quire-selection: rgba(56, 132, 255, 0.28); }
@@ -172,6 +197,7 @@ export function readThemeColors(host: HTMLElement, probe: HTMLElement): ThemeCol
   out.pageShadow = parseShadow(raw(PAGE_SHADOW_VAR), resolve) ?? (raw(PAGE_SHADOW_VAR) ? null : { color: 'rgba(0, 0, 0, 0.12)', blur: 8, offsetY: 1 });
   const border = raw(PAGE_BORDER_VAR);
   out.pageBorder = !border || border === 'none' ? null : resolve(border, '#d4d4d8');
+  out.remote = REMOTE_PALETTE.map(([name, def]) => resolve(raw(name), def));
   return out;
 }
 
@@ -208,7 +234,18 @@ export function defaultThemeColors(): ThemeColors {
   for (const [key, [, def]] of Object.entries(THEME_TOKENS)) (out as unknown as Record<string, string>)[key] = def;
   out.pageShadow = { color: 'rgba(0, 0, 0, 0.12)', blur: 8, offsetY: 1 };
   out.pageBorder = null;
+  out.remote = REMOTE_PALETTE.map(([, def]) => def);
   return out;
+}
+
+/**
+ * 사용자 id → 협업 팔레트 번호 1–8 (늘 같은 번호). 프레즌스 `user.color`에 `String(remoteColorSlot(id))`를 주면
+ * 색이 테마의 `--quire-remote-N`을 따른다
+ */
+export function remoteColorSlot(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return ((h >>> 0) % REMOTE_PALETTE.length) + 1;
 }
 
 export function sameColors(a: ThemeColors | null, b: ThemeColors): boolean {

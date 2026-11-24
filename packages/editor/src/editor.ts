@@ -474,6 +474,8 @@ export class Editor {
   /** 화면 확대 배율. 레이아웃·히트 테스트는 문서 좌표 그대로이고, 화면과 오갈 때만 곱하고 나눈다 */
   private zoomLevel = 1;
   private destroyed = false;
+  /** 풀어 쓴 사용자 색 (CSS 색 → rgb) */
+  private readonly resolvedColors = new Map<string, string>();
   /** 색을 풀어 쓰는 숨긴 요소 */
   private themeProbe: HTMLElement | null = null;
   private readonly painter = new PagePainter(this.painterEnv());
@@ -1006,9 +1008,32 @@ export class Editor {
     const next = readThemeColors(this.opts.host, this.themeProbe);
     if (sameColors(this.colors, next)) return false;
     this.colors = next;
+    this.resolvedColors.clear();
     this.paintBackground();
     this.caretEl.style.background = next.caret;
     return true;
+  }
+
+  /**
+   * 사용자 색 (프레즌스·제안 작성자): 팔레트 번호 '1'–'8'은 테마의 --quire-remote-N, #hex는 그대로,
+   * 그 밖의 CSS 색(var(), rgb(), 이름)은 숨긴 요소로 풀어 쓴다 (테마를 다시 읽으면 다시 푼다)
+   */
+  private userColor(c: string): string {
+    const slot = /^\s*([1-8])\s*$/.exec(c);
+    if (slot) return this.colors.remote[Number(slot[1]) - 1] ?? '#2563eb';
+    if (/^#[0-9a-f]{3,8}$/i.test(c)) return c;
+    let v = this.resolvedColors.get(c);
+    if (v === undefined) {
+      v = '#2563eb';
+      const probe = this.themeProbe;
+      if (probe) {
+        probe.style.color = '';
+        probe.style.color = c;
+        if (probe.style.color) v = getComputedStyle(probe).color || v;
+      }
+      this.resolvedColors.set(c, v);
+    }
+    return v;
   }
 
   /** 스크롤 영역 바탕 (캔버스 밖으로 보이는 부분) */
@@ -1516,7 +1541,7 @@ export class Editor {
           if (sd > ed || (sd === ed && !withMark)) continue;
           const sx = X(sd);
           const ex = X(ed) + (withMark ? this.fontSize * 0.5 : 0);
-          ctx.fillStyle = withAlpha(rc.color, 0.22);
+          ctx.fillStyle = withAlpha(this.userColor(rc.color), 0.22);
           ctx.fillRect(sx, y, Math.max(1, ex - sx), ln.height);
         }
       },
@@ -1636,7 +1661,7 @@ export class Editor {
       if (a.type === 'suggestion') {
         // 제안: 삽입은 작성자 색 옅은 바탕 (밑줄·취소선은 글자 뒤에 drawSuggestionLines)
         if (a.data.kind !== 'insert' && a.id !== this.focusAnn) continue;
-        ctx.fillStyle = a.id === this.focusAnn ? COLORS.annFocus : withAlpha(suggestionColor(a), 0.1);
+        ctx.fillStyle = a.id === this.focusAnn ? COLORS.annFocus : withAlpha(this.userColor(suggestionColor(a)), 0.1);
       } else ctx.fillStyle = a.id === this.focusAnn ? COLORS.annFocus : a.type === 'comment' ? COLORS.annComment : COLORS.annOther;
       ctx.fillRect(sx, y, ex - sx, ln.height);
     }
@@ -1696,7 +1721,7 @@ export class Editor {
     for (const a of anns) {
       if (a.from >= lineTo) break;
       if (a.to <= lineFrom || a.type !== 'suggestion') continue;
-      const color = suggestionColor(a);
+      const color = this.userColor(suggestionColor(a));
       ctx.fillStyle = color;
       if (a.data.kind === 'para' || a.data.kind === 'table') {
         // ¶·표 개체 하나 범위: 왼쪽 여백에 막대
@@ -3026,7 +3051,8 @@ export class Editor {
       }
       const x = Math.round(px + r.x);
       const y = r.y - top;
-      ctx.fillStyle = rc.color;
+      const color = this.userColor(rc.color);
+      ctx.fillStyle = color;
       ctx.fillRect(x - 1, y + 2, 2, r.height - 4);
       // 이름표: 캐럿 위 (위에 자리가 없으면 아래)
       const tw = ctx.measureText(rc.name).width + 8;
@@ -3034,7 +3060,7 @@ export class Editor {
       const ly = y - th + 2 >= 0 ? y - th + 2 : y + r.height - 2;
       const lx = Math.min(x - 1, w - tw - 2);
       ctx.fillRect(lx, ly, tw, th);
-      ctx.fillStyle = readableOn(rc.color);
+      ctx.fillStyle = readableOn(color);
       ctx.fillText(rc.name, lx + 4, ly + th / 2 + 0.5);
     }
     ctx.restore();
@@ -5610,22 +5636,36 @@ export class Editor {
 /** 제안 작성자 색 (없으면 기본 파랑) */
 function suggestionColor(a: AnnotationRange): string {
   const c = (a.data.author as { color?: unknown } | undefined)?.color;
-  return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c : '#2563eb';
+  return typeof c === 'string' && c.trim() ? c : '#2563eb';
 }
 
-function withAlpha(hex: string, a: number): string {
-  const n = parseInt(hex.slice(1, 7), 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+function withAlpha(color: string, a: number): string {
+  const [r, g, b] = rgbOf(color);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+/** #rgb·#rrggbb·rgb()·rgba() → [r, g, b] (모르면 기본 파랑) */
+function rgbOf(color: string): [number, number, number] {
+  const c = color.trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})(?:[0-9a-f]{2})?$/i.exec(c)?.[1];
+  if (hex) {
+    const full = hex.length === 3 ? [...hex].map((h) => h + h).join('') : hex;
+    const n = parseInt(full, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(c);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+  return [37, 99, 235];
 }
 
 /** 배경색 위에서 읽히는 글자색 (흰색 또는 검정) */
-function readableOn(hex: string): string {
-  const n = parseInt(hex.slice(1, 7), 16);
+function readableOn(color: string): string {
+  const [r, g, b] = rgbOf(color);
   const lin = (c: number) => {
     const v = c / 255;
     return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
   };
-  const L = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
   // 흰 글자와의 대비가 4.5 이상이면 흰색
   return 1.05 / (L + 0.05) >= 4.5 ? '#ffffff' : '#1d1d1f';
 }

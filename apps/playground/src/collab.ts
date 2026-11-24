@@ -108,8 +108,9 @@ function status() {
 }
 
 const USERS = [
-  { name: '피어 A', color: '#2563eb' },
-  { name: '피어 B', color: '#c2410c' },
+  // 협업 팔레트 번호 (테마를 따른다, 17 §10)
+  { name: '피어 A', color: '1' },
+  { name: '피어 B', color: '2' },
 ];
 
 function makePeer(k: number, client: WorkerClient) {

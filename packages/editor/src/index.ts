@@ -18,7 +18,7 @@ export type { PageHF } from './headers';
 export { CanvasTarget, RecordingTarget } from './paint';
 export type { FontRef, ImageSource, PaintCommand, PaintTarget, TextRun } from './paint';
 export { DEFAULT_METRICS, PAINT_COLORS, PagePainter, noteLayout, noteSlots } from './painter';
-export { THEME_ATTRIBUTES, THEME_CLASSES, THEME_CSS, THEME_TOKENS, THEME_VARIABLES, ensureThemeStyles, themeDeclarations } from './theme';
+export { THEME_ATTRIBUTES, THEME_CLASSES, THEME_CSS, THEME_TOKENS, THEME_VARIABLES, ensureThemeStyles, remoteColorSlot, themeDeclarations } from './theme';
 export type { ColorScheme, PageView, QuireThemeTokens, ThemeColors, ThemeName, ThemeVariable } from './theme';
 export { BUILTIN_MESSAGES, DEFAULT_LOCALE, Messages, formatMessage, loadMessages, messagesLoaded, registerMessages } from './i18n';
 export type { MessageKey, MessageParams, MessageTable, Translate } from './i18n';

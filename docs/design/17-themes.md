@@ -245,13 +245,14 @@ editor.refreshTheme(); // 앱이 스타일시트를 바꾼 뒤
   - 예제: Word식 상태 줄(− 슬라이더 + 배율 쪽 폭 맞춤, 슬라이더 가운데가 100%), Google Docs식 도구 막대의 배율 선택(쪽 폭에 맞춤 포함), Notion식 ··· 메뉴의 − 배율 +, react-full 보기 메뉴.
 - 주석 범위 색(댓글·고른 주석)은 변수로 열지 않았다 (나중).
 - 하지 않음 (2026-11-24 결정): 집중 모드(T-4 일부)와 고대비 모드(T-2 일부, §5 `forced-colors`). 떠 있는 서식 막대는 예제 앱(Notion식)이 앱 쪽에서 만든다.
-- 나중: 협업 팔레트 변수. 어두운 종이는 Notion식 예제가 앱 CSS로 보인다 (T-5).
+- **협업 팔레트** (2026-11-24, O-42): `--quire-remote-1`…`--quire-remote-8` (라이트는 짙은 색, 다크는 밝은 색). 프레즌스 `user.color`(와 제안 작성자 색)에 팔레트 번호 `'1'`–`'8'`을 주면 그 변수 색이 되어 테마·다크를 따른다. `#hex`는 그대로, 그 밖의 CSS 색(`var(--brand)`, `rgb()`, 이름)은 숨긴 요소로 풀어 쓴다. `remoteColorSlot(id)`는 사용자 id → 늘 같은 번호(1–8). 협업 플레이그라운드·실시간 데모가 번호를 쓴다.
+- 어두운 종이는 Notion식 예제가 앱 CSS로 보인다 (T-5).
 - **스타일 예제** (Next.js + Tailwind + shadcn/ui): 같은 편집기를 Google Docs식(`examples/next-shadcn`)·Word식(`examples/next-word`: 리본, 클래식·인쇄 모양)·Notion식(`examples/next-notion`: 미니멀·연속 보기, `/` 메뉴, 떠 있는 서식 막대)으로 꾸민다. Notion식의 어두운 화면은 앱 CSS가 `.dark .quire { --quire-page; --quire-text … }`를 덮어써 문서 면까지 어둡게 한다 (T-5 "어두운 종이"를 예제로).
 - 앱 명령용 공개 API를 더했다: `replaceRange(from, to, text)`, `insertText(text)` (Notion식 `/` 메뉴가 "/찾을 말"을 지울 때).
 
 ### 10.1 공개 이름 (T-3, 2026-11-23)
 
-§4의 표는 설계 때의 후보이고, **지금 공개 API는 이 절의 목록이다**. 사용자 CSS가 직접 쓰는 약속이라 이름을 바꾸려면 판을 올리고 한 판 동안 옛 이름도 읽는다 (§9 O-45). 시험(`theme.test.ts`)이 이 표, `THEME_VARIABLES`, 기본 스타일시트, `tokens.scss`가 같은지 본다. §4에 있지만 여기 없는 변수(`--quire-background`·`--quire-radius`·`--quire-remote-*`·`--quire-hf-dim` 등)는 아직 없다: 편집기가 도구 막대·대화상자를 그리지 않고(앱 몫), 협업 팔레트·편집 중 흐림은 고정값이다.
+§4의 표는 설계 때의 후보이고, **지금 공개 API는 이 절의 목록이다**. 사용자 CSS가 직접 쓰는 약속이라 이름을 바꾸려면 판을 올리고 한 판 동안 옛 이름도 읽는다 (§9 O-45). 시험(`theme.test.ts`)이 이 표, `THEME_VARIABLES`, 기본 스타일시트, `tokens.scss`가 같은지 본다. §4에 있지만 여기 없는 변수(`--quire-background`·`--quire-radius`·`--quire-hf-dim` 등)는 아직 없다: 편집기가 도구 막대·대화상자를 그리지 않고(앱 몫), 편집 중 흐림은 고정값이다.
 
 | 변수 | 쓰임 | 클래식 라이트 기본값 |
 |---|---|---|
@@ -274,6 +275,14 @@ editor.refreshTheme(); // 앱이 스타일시트를 바꾼 뒤
 | `--quire-table-border` | 테두리가 지정되지 않은 표의 선 | `#8e8e93` |
 | `--quire-placeholder` | 아직 조립하지 않은 쪽·그림 자리 바탕 | `#e9e9ec` |
 | `--quire-placeholder-text` | 자리표시 글자, 나눔 배지 글자 | `#6e6e73` |
+| `--quire-remote-1` | 협업 팔레트 1번 (파랑): 다른 사용자의 캐럿·이름표·선택, 제안 작성자 색 | `#2563eb` |
+| `--quire-remote-2` | 협업 팔레트 2번 (주황): 다른 사용자의 캐럿·이름표·선택, 제안 작성자 색 | `#c2410c` |
+| `--quire-remote-3` | 협업 팔레트 3번 (초록): 다른 사용자의 캐럿·이름표·선택, 제안 작성자 색 | `#047857` |
+| `--quire-remote-4` | 협업 팔레트 4번 (보라): 다른 사용자의 캐럿·이름표·선택, 제안 작성자 색 | `#7c3aed` |
+| `--quire-remote-5` | 협업 팔레트 5번 (장미): 다른 사용자의 캐럿·이름표·선택, 제안 작성자 색 | `#be123c` |
+| `--quire-remote-6` | 협업 팔레트 6번 (청록): 다른 사용자의 캐럿·이름표·선택, 제안 작성자 색 | `#0e7490` |
+| `--quire-remote-7` | 협업 팔레트 7번 (황토): 다른 사용자의 캐럿·이름표·선택, 제안 작성자 색 | `#a16207` |
+| `--quire-remote-8` | 협업 팔레트 8번 (연두): 다른 사용자의 캐럿·이름표·선택, 제안 작성자 색 | `#4d7c0f` |
 
 - **클래스** (`THEME_CLASSES`): `.quire` 호스트, `.quire-scroller` 스크롤 상자, `.quire-canvas` 쪽 캔버스, `.quire-caret` 캐럿. 자리·크기·책상 색은 편집기가 인라인으로 정하므로, 클래스로는 그 밖의 모양(스크롤 막대, 커서, 캐럿 모양 등)만 바꾼다. §6의 도구 막대·대화상자 클래스는 편집기가 그런 UI를 만들 때 쓴다 (지금은 없음).
 - **상태 속성** (`THEME_ATTRIBUTES`): 호스트의 `data-quire-theme`(classic·minimal·modern), `data-quire-scheme`(light·dark, `auto`는 계산된 값), `data-quire-page-view`(print·continuous).

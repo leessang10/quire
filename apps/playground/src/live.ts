@@ -5,7 +5,7 @@
  * 서버를 껐다 켜면 Worker가 다시 연결하고, 끊긴 동안의 편집을 맞춘다.
  * 모두 나가 방이 비면 서버가 새 판으로 압축한다. 그 사이 오프라인이던 탭은 다시 붙을 때 새 판으로 옮겨진다 (09 §9).
  */
-import { Editor, HttpAssets } from '@quire/editor';
+import { Editor, HttpAssets, remoteColorSlot } from '@quire/editor';
 import { startSyncWorker } from '@quire/sync';
 import { VersionsPane } from './versions-pane';
 
@@ -60,9 +60,8 @@ try {
   /* 저장소를 쓸 수 없는 환경 */
 }
 
-const COLORS = ['#2563eb', '#c2410c', '#047857', '#7c3aed', '#be123c', '#0e7490'];
 const peer = 1 + Math.floor(Math.random() * 2 ** 40);
-const user = { name: `사용자 ${String(peer).slice(-4)}`, color: COLORS[peer % COLORS.length]! };
+const user = { name: `사용자 ${String(peer).slice(-4)}`, color: String(remoteColorSlot(String(peer))) }; // 협업 팔레트 번호: 테마·다크를 따른다
 
 const TEXT = `이 문서는 중계 서버의 "${room}" 방에 있습니다. 같은 주소를 다른 탭이나 다른 브라우저에서 열면 함께 편집됩니다.
 
