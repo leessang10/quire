@@ -6,6 +6,7 @@
  */
 import type { Doc, Document, Op } from '@quiredoc/model';
 import type { Translate } from './i18n';
+import type { RemoteCaret } from './editor';
 
 /** 스토리 안의 자리 (story null = 본문) */
 export interface StoryPos {
@@ -83,8 +84,8 @@ export interface PluginContext {
   /** 편집 중인 스토리 (null = 본문)와 그 Doc */
   story(): string | null;
   doc(): Doc;
-  /** 선택 영역 (편집 중인 스토리의 화면 오프셋). from ≤ to */
-  selection(): { anchor: number; head: number; from: number; to: number; story: string | null };
+  /** 선택 영역 (편집 중인 스토리의 화면 오프셋). from ≤ to. 머리말·꼬리말이면 편집 중인 쪽(page) */
+  selection(): { anchor: number; head: number; from: number; to: number; story: string | null; page?: number };
   /** 편집 중인 스토리에서 선택한다 */
   select(anchor: number, head?: number): void;
   /** 그 스토리로 들어가(셀·각주·머리말) 범위를 고르고 보이게 스크롤한다. 못 들어가면 false */
@@ -115,6 +116,20 @@ export interface PluginContext {
   setData(value: unknown): void;
   /** 편집기의 화면 언어로 번역 (18). 메뉴 이름 등 */
   t: Translate;
+  /**
+   * 동기화 플러그인용 (협업 등, 19 §4.4): 편집기 밖에서 문서가 바뀌는 플러그인만 쓴다. 문서를 고치는 길이 아니다
+   * (고치는 것은 그대로 edit·editDocument)
+   */
+  sync: {
+    /** 문서를 통째로 바꾼다 (동기화가 연결되어 공유 문서를 받았을 때, 새 판으로 바뀌었을 때). 실행 취소 기록은 비운다 */
+    setDocument(document: Document): void;
+    /** 편집기의 문서가 편집기 밖에서 바뀌었다 (원격 편집을 이미 문서에 넣은 뒤): 다시 조판하고 그린다 */
+    documentChanged(): void;
+    /** 다른 사람의 캐럿·선택 */
+    setRemoteCarets(list: RemoteCaret[]): void;
+    /** 권한 (14 §6): edit · comment(댓글만) · view(보기만) */
+    setAccess(role: 'edit' | 'comment' | 'view'): void;
+  };
 }
 
 export interface QuirePlugin {

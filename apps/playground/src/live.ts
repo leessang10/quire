@@ -4,9 +4,11 @@
  *   주소:  /live.html?room=<방>&server=ws://localhost:8787
  * 서버를 껐다 켜면 Worker가 다시 연결하고, 끊긴 동안의 편집을 맞춘다.
  * 모두 나가 방이 비면 서버가 새 판으로 압축한다. 그 사이 오프라인이던 탭은 다시 붙을 때 새 판으로 옮겨진다 (09 §9).
+ * 협업은 플러그인 하나로 붙인다 (`collab()`, 19 §4.4): 공유 문서·원격 변경·프레즌스·권한·새 판·내 선택 보내기를 플러그인이 맡고,
+ * 이 페이지는 상태 줄·접속자 목록·파일·버전 같은 앱 화면만 그린다.
  */
 import { Editor, HttpAssets, remoteColorSlot } from '@quiredoc/editor';
-import { startSyncWorker } from '@quiredoc/sync';
+import { collab } from '@quiredoc/sync';
 import { VersionsPane } from './versions-pane';
 
 const params = new URLSearchParams(location.search);
@@ -79,42 +81,34 @@ const storyLabel = (s?: string) =>
 let showPeople = () => {};
 
 void (async () => {
-  let editor: Editor | null = null;
-  const worker = new Worker(new URL('./sync-worker.ts', import.meta.url), { type: 'module' });
-  const client = await startSyncWorker(
-    worker,
-    { mode: 'ws', peer, user, url: `${server}/${encodeURIComponent(room)}${q}`, text: TEXT },
-    {
-      onRemoteChange: () => editor?.docChanged(),
-      onPresence: () => {
-        editor?.setRemoteCarets(client.remotes());
-        showPeople();
-      },
-      onStatus: setStatus,
-      onRole: (r) => {
-        role = r;
-        editor?.setAccess(r);
-        setStatus(true);
-      },
-      onReset: (lost) => {
-        editor?.setDocument(client.document);
-        note(
-          lost
-            ? '서버가 이 문서의 옛 판을 몰라, 끊긴 동안의 편집을 살리지 못했습니다.'
-            : '서버가 문서를 새 판으로 정리했습니다. 끊긴 동안의 편집을 새 판에 옮겼습니다.',
-        );
-      },
+  const sync = collab({
+    worker: () => new Worker(new URL('./sync-worker.ts', import.meta.url), { type: 'module' }),
+    url: `${server}/${encodeURIComponent(room)}${q}`,
+    user,
+    peer,
+    text: TEXT,
+    onStatus: setStatus,
+    onRole: (r) => {
+      role = r;
+      setStatus(true);
     },
-  );
-  setStatus(true);
-  editor = new Editor({
+    onReset: (lost) =>
+      note(
+        lost
+          ? '서버가 이 문서의 옛 판을 몰라, 끊긴 동안의 편집을 살리지 못했습니다.'
+          : '서버가 문서를 새 판으로 정리했습니다. 끊긴 동안의 편집을 새 판에 옮겼습니다.',
+      ),
+    onPresence: () => showPeople(),
+  });
+  const editor = new Editor({
     host,
-    document: client.document,
-    onChange: () => editor?.setRemoteCarets(client.remotes()),
-    onSelectionChange: (a, h, story, page) => client.setSelection(a, h, story, page),
     // 이미지 원본은 서버의 자산 저장소 (11 §2.2)
     assets: new HttpAssets(`${server.replace(/^ws/, 'http')}/${encodeURIComponent(room)}/assets/`, undefined, token),
   });
+  editor.use(sync);
+  const client = await sync.ready;
+  role = client.role;
+  setStatus(true);
   showPeople = () => {
     const ed = editor!;
     const list = client.remotes();
@@ -149,11 +143,9 @@ void (async () => {
     }
   };
   showPeople();
-  editor.setAccess(client.role);
-  setStatus(true);
   editor.focus();
   // 버전 기록 (14 §5)
   new VersionsPane(document.getElementById('versions')!, editor, `${httpBase}/${encodeURIComponent(room)}`, q);
-  addEventListener('pagehide', () => client.close());
+  addEventListener('pagehide', () => editor.destroy()); // 플러그인이 연결을 닫고 Worker를 끝낸다
   Object.assign(window, { client, editor });
 })();

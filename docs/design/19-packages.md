@@ -1,6 +1,6 @@
 # 19. 패키지 구성 (core + 조립)
 
-- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1·P-2·P-3 끝남 (§8).
+- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1–P-4 끝남 (§8).
 - 범위: npm에 내는 패키지의 경계·이름·의존 방식, 기능을 골라 붙이는 방법, 0.1.0에서 옮기는 단계.
 - 범위 밖: 편집기 기능 자체. 저장소 안의 개발 구조(워크스페이스 폴더)는 거의 그대로 둔다.
 - 바탕: 08(통합·임베드), 15 §19(플러그인 API), 16 §10.1·§10.8(빌드·출시).
@@ -170,3 +170,12 @@ const { importHwpx } = await import('@quiredoc/convert');
 - **결과**: tgz 여섯 개. core `dist/index.js` 619 KB(Loro 없음), `dist/i18n/en.js` 3 KB. 6개 검사·dry-run 통과.
 - **설치 확인** (빈 프로젝트에 tgz 여섯을 설치): TypeScript(Bundler 해석)로 core·`core/i18n/en`·collab·convert·pdf·react 공개 이름이 다 풀리고(`skipLibCheck`를 끄면 harfbuzzjs 타입의 `EmscriptenModule` 하나가 남는다: 0.1.0부터 있던 제3자 문제), Node에서 core의 `.quire` 왕복, convert(MD → HWPX), collab의 `packQuireWithHistory` → core `openQuire` → `restoreHistory`, `i18n/en`이 돈다. 모듈은 앱의 core 하나를 함께 쓴다 (peer).
 - 남은 것 (P-5): 예제들은 아직 옛 tgz 이름(`quiredoc-sdk-…` 등)을 가리키므로 **새로 설치하면 실패한다** (이미 설치한 node_modules로는 돈다). P-5에서 예제를 core·collab으로 옮긴다.
+
+### 8.4 P-4 협업 플러그인 (2026-11-25)
+
+- `collab(options)` (`packages/sync/src/collab.ts`, 배포는 `@quiredoc/collab`): `QuirePlugin` 하나. 붙으면 Worker를 시작해 서버에 연결하고, 공유 문서를 편집기에 넣고(`ctx.sync.setDocument`), 원격 변경(`documentChanged`)·다른 사람 캐럿(`setRemoteCarets`)·서버가 정한 권한(`setAccess`)·새 판(다시 `setDocument`)을 편집기에 잇고, 편집기의 `selection` 이벤트를 서버로 보낸다(셀·머리말의 스토리와 쪽까지). 떼면 이벤트를 떼고 연결을 닫고, 함수로 받은 Worker는 끝낸다.
+  - 옵션: `worker`(앱이 만든 Worker 또는 만드는 함수: 번들러마다 Worker 만드는 법이 달라 앱 몫), `url`, `user`, `peer?`, `text?`(빈 방의 첫 글), `batchMs?`, 알림 `onReady`·`onStatus`·`onRole`·`onReset`·`onPresence`(앱 화면용). 플러그인의 `client`(연결된 `WorkerClient`)와 `ready`(연결해 문서를 넣으면 풀림).
+  - 연결 전에는 보기만 (그 전에 쓴 글은 공유 문서로 바뀌며 사라지므로). 플러그인 하나는 편집기 하나에만.
+- **플러그인 면을 넓혔다** (`PluginContext`): `sync.setDocument`·`sync.documentChanged`·`sync.setRemoteCarets`·`sync.setAccess`(편집기 밖에서 문서가 바뀌는 플러그인용, 문서를 고치는 길은 그대로 `edit`·`editDocument`), `selection()`에 `page`(머리말·꼬리말을 편집 중인 쪽). sync는 editor의 **타입만** 가져온다(배포 묶음에서는 `@quiredoc/core`, 실행 코드에는 없음).
+- 플레이그라운드 실시간 페이지(`apps/playground/src/live.ts`)가 `editor.use(collab({...}))` 하나로 돈다: 직접 엮던 Worker 시작·편집기 콜백·권한·새 판 처리를 뺐고, 앱은 상태 줄·접속자 목록·파일·버전만 그린다. 나갈 때 `editor.destroy()`가 플러그인 정리로 연결을 닫는다.
+- 확인: 동기화 서버 + 두 탭 — 한 탭에서 친 글이 다른 탭에 오고, 다른 탭에 그 사람 캐럿·이름표(팔레트 1번)가 그려지고, 접속자 목록이 서로 보이고, 한 탭에서 `editor.destroy()`하면 다른 탭의 접속자가 1명으로. 콘솔 오류 없음. 시험 `packages/sync/src/collab.test.ts`(실제 서버, 가짜 PluginContext): 연결 전 보기만 → 연결 뒤 공유 문서·편집 권한, 두 플러그인 사이 편집 전달과 원격 변경 알림, 선택 → 상대 캐럿(색 포함), 정리(이벤트 떼기·client null·만든 Worker 끝내기), 두 편집기에 붙이기 거부.
