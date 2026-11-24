@@ -1,5 +1,15 @@
 {
   "name": "@quire/editor",
+  "description": "Quire editor core: canvas rendering, Korean IME input (EditContext), selection, tables, comments, suggestions, themes, i18n",
+  "keywords": [
+    "editor",
+    "canvas",
+    "ime",
+    "editcontext",
+    "korean",
+    "hangul",
+    "collaboration"
+  ],
   "version": "0.0.0",
   "private": true,
   "type": "module",

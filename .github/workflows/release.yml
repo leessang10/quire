@@ -1,0 +1,73 @@
+# 출시 (16 §10.8): vX.Y.Z 태그를 푸시하면 검사·빌드한 뒤 @quire/* 패키지를 npm에 올리고 GitHub Release를 만든다.
+# 미리 할 것: npm에 @quire 조직, Automation 토큰을 저장소 Secrets의 NPM_TOKEN으로.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: npm에 올리지 않고 검사·dry-run만
+        type: boolean
+        default: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: 태그와 판이 같은가
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "태그 ${GITHUB_REF_NAME}와 package.json 판 v${VERSION}이 다르다" >&2
+            exit 1
+          fi
+          grep -q "^## \[${VERSION}\]" CHANGELOG.md || { echo "CHANGELOG.md에 [${VERSION}] 절이 없다" >&2; exit 1; }
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx vitest run --config vitest.fast.config.ts
+      - run: node scripts/build-fonts.mjs
+      - run: node scripts/golden.mjs
+        env:
+          QUIRE_BENCH_BROWSER: /usr/bin/google-chrome
+      - run: node scripts/build-packages.mjs
+
+      - name: npm에 올리기
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PUBLISH: ${{ startsWith(github.ref, 'refs/tags/') || inputs.dry-run == false }}
+        run: |
+          if [ "$PUBLISH" = "true" ]; then
+            if [ -z "$NODE_AUTH_TOKEN" ]; then echo "저장소 Secrets에 NPM_TOKEN이 없다" >&2; exit 1; fi
+            node scripts/release.mjs --publish
+          else
+            node scripts/release.mjs
+          fi
+
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {on=1; next} on && (/^## \[/ || /^\[[^]]+\]: /) {exit} on' CHANGELOG.md > notes.md
+          PRE=""; case "$VERSION" in *-*) PRE="--prerelease";; esac
+          gh release create "$GITHUB_REF_NAME" .build/packs/*.tgz --title "$GITHUB_REF_NAME" --notes-file notes.md $PRE

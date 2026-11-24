@@ -1,5 +1,12 @@
 {
   "name": "@quire/pdf",
+  "description": "PDF export for Quire documents with embedded, subset fonts (browser or Node)",
+  "keywords": [
+    "pdf",
+    "export",
+    "korean",
+    "fonts"
+  ],
   "version": "0.0.0",
   "private": true,
   "type": "module",

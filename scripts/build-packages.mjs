@@ -13,7 +13,17 @@ import { build } from 'vite';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, '.build');
-const VERSION = '0.1.0';
+/** 판: 저장소 루트 package.json의 version 하나 (모든 @quire/* 패키지가 같은 판, 16 §10.8). QUIRE_VERSION으로 덮어쓸 수 있다 (출시 워크플로가 태그와 맞춘다) */
+const VERSION = process.env.QUIRE_VERSION || JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(VERSION ?? '')) throw new Error(`판이 semver가 아님: ${VERSION}`);
+/** 배포용 package.json에 같이 쓰는 것 */
+const REPO = 'https://github.com/leessang10/quire';
+const meta = (dir) => ({
+  repository: { type: 'git', url: `git+${REPO}.git`, directory: dir },
+  homepage: `${REPO}#readme`,
+  bugs: { url: `${REPO}/issues` },
+  publishConfig: { access: 'public' },
+});
 /** dist 밖에 함께 싣는 파일 (패키지 → 파일, exports에도 연다) */
 const EXTRA = { editor: ['tokens.scss'] };
 /** index 밖의 진입점 (패키지 → 하위 경로 → 소스). 편집기가 필요할 때 import()로 받는 번역도 같은 파일을 쓴다 (18 §5 나눠 싣기) */
@@ -82,7 +92,9 @@ for (const p of PACKAGES) {
     name: src.name,
     version: VERSION,
     description: src.description ?? `Quire ${p}`,
-    license: 'UNLICENSED',
+    ...(src.keywords ? { keywords: src.keywords } : {}),
+    license: 'MIT',
+    ...meta(`packages/${p}`),
     type: 'module',
     sideEffects: false,
     exports: {
@@ -91,12 +103,13 @@ for (const p of PACKAGES) {
       ...(EXTRA[p] ? Object.fromEntries(EXTRA[p].map((f) => [`./${f}`, `./${f}`])) : {}) },
     module: './dist/index.js',
     types: './dist/types/index.d.ts',
-    files: ['dist', ...(EXTRA[p] ?? [])],
+    files: ['dist', 'LICENSE', ...(EXTRA[p] ?? [])],
     dependencies: deps,
     ...(Object.keys(peers).length ? { peerDependencies: peers } : {}),
   };
   writeFileSync(join(dest, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`);
   for (const f of EXTRA[p] ?? []) cpSync(join(root, 'packages', p, f), join(dest, f));
+  cpSync(join(root, 'LICENSE'), join(dest, 'LICENSE'));
   const readme = join(root, 'packages', p, 'README.md');
   if (existsSync(readme)) cpSync(readme, join(dest, 'README.md'));
 }
@@ -110,6 +123,21 @@ if (!existsSync(join(fontsSrc, 'pretendard/manifest.json'))) {
 {
   const dest = join(out, 'packages', 'fonts');
   cpSync(fontsSrc, join(dest, 'fonts'), { recursive: true });
+  writeFileSync(
+    join(dest, 'README.md'),
+    [
+      '# @quire/fonts',
+      '',
+      `Font chunks and manifests used by the [Quire](${REPO}) editor: Pretendard and Noto Sans KR, split so the editor loads only the chunks a document needs.`,
+      '',
+      "Copy `node_modules/@quire/fonts/fonts` to `<public>/quire/fonts/` and point the editor's `fonts` option at the manifests.",
+      '',
+      '## License',
+      '',
+      'The fonts are licensed under the SIL Open Font License 1.1 (see `LICENSE-pretendard.txt` and `LICENSE-noto-sans-kr.txt`).',
+      '',
+    ].join('\n'),
+  );
   for (const lic of ['pretendard', 'noto-sans-kr']) {
     const l = join(root, 'fonts', lic, 'LICENSE.txt');
     if (existsSync(l)) cpSync(l, join(dest, `LICENSE-${lic}.txt`));
@@ -120,9 +148,11 @@ if (!existsSync(join(fontsSrc, 'pretendard/manifest.json'))) {
       {
         name: '@quire/fonts',
         version: VERSION,
-        description: 'Quire 엔진 글꼴 조각 (Pretendard, Noto Sans KR, OFL): 앱의 공개 폴더에 복사해 쓴다',
+        description: 'Font chunks for the Quire engine (Pretendard, Noto Sans KR; SIL OFL 1.1): copy into the public folder of your app',
+        keywords: ['fonts', 'korean', 'pretendard', 'noto-sans-kr'],
         license: 'OFL-1.1',
-        files: ['fonts', 'LICENSE-*.txt'],
+        ...meta('fonts'),
+        files: ['fonts', 'LICENSE-*.txt', 'README.md'],
       },
       null,
       2,

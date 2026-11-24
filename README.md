@@ -6,7 +6,17 @@
 — 진짜 페이지 레이아웃, 정밀한 한글 조판, IME 완전 제어, 초대형 문서, 블록 이동까지 포함한 협업 —
 를 처음부터 다른 구조로 풀기 위한 프로젝트입니다.
 
-> 상태: **6단계 (출시 준비·안정화)** — 1–5단계 완료, 6단계는 6-1–6-6 완료·6-7(실제 환경 확인) 남음 ([로드맵](docs/design/06-roadmap.md)). 0단계 결과: [편집기·성능](docs/spikes/phase0-baseline.md), [동기화(CRDT) 비교](docs/spikes/phase0-crdt.md)
+> 상태: **0.1.0 출시 준비 완료** — 1–7단계 완료, 6-7(실제 환경 확인)은 1차 실행 끝·스크린리더 청취 남음 ([로드맵](docs/design/06-roadmap.md), [출시 절차](docs/design/16-release.md)). 바뀐 것: [CHANGELOG](CHANGELOG.md). 라이선스: [MIT](LICENSE) (글꼴은 SIL OFL 1.1). 0단계 결과: [편집기·성능](docs/spikes/phase0-baseline.md), [동기화(CRDT) 비교](docs/spikes/phase0-crdt.md)
+
+## 설치 (패키지)
+
+```bash
+npm install @quire/sdk @quire/fonts        # 바닐라·Vue·Svelte 등: createEditor
+npm install @quire/react @quire/fonts      # React: useQuire · QuireEditor
+npm install @quire/convert @quire/pdf      # HWPX·DOCX·Markdown·HTML 변환, PDF (Node에서도)
+```
+
+글꼴 조각(`@quire/fonts`)과 PDF용 `harfbuzz-subset.wasm`은 앱의 공개 폴더에 둔다. 붙이는 법은 [examples/](examples/README.md)의 예제 여섯(바닐라·React·Next.js·Vue·SvelteKit·Node)과 스타일 예제 셋(Word식·Google Docs식·Notion식)을 본다.
 
 ## 실행
 

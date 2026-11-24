@@ -1,5 +1,15 @@
 {
   "name": "@quire/sdk",
+  "description": "Quire: canvas-based Korean-first document editor — one-call setup (createEditor), commands, state and file I/O",
+  "keywords": [
+    "editor",
+    "wysiwyg",
+    "word-processor",
+    "canvas",
+    "korean",
+    "hangul",
+    "ime"
+  ],
   "version": "0.0.0",
   "private": true,
   "type": "module",

@@ -1,5 +1,15 @@
 {
   "name": "@quire/convert",
+  "description": "Import and export for Quire documents: HWPX, DOCX, Markdown, HTML (no DOM required)",
+  "keywords": [
+    "hwpx",
+    "hwp",
+    "docx",
+    "markdown",
+    "html",
+    "converter",
+    "korean"
+  ],
   "version": "0.0.0",
   "private": true,
   "type": "module",
