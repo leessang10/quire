@@ -1,4 +1,4 @@
-# @quire/editor
+# @quiredoc/editor
 
 Quire editor core: canvas rendering, Korean IME input (EditContext), selection, tables, comments, suggestions, themes, i18n.
 
@@ -7,14 +7,14 @@ Part of [Quire](https://github.com/leessang10/quire), a web document editor with
 ## Install
 
 ```sh
-npm install @quire/editor
+npm install @quiredoc/editor
 ```
 
 ## Usage
 
 The `Editor` class: draws pages on a canvas with its own layout engine, handles input through EditContext (or a hidden textarea), keeps an accessibility mirror, and exposes formatting, tables, images, comments, suggestion mode, find & replace, spell-check hooks, themes (`--quire-*` CSS variables), zoom and UI languages (ko built in, en loaded on demand).
 
-Most apps should start from `@quire/sdk` or `@quire/react`. Theme tokens for SCSS: `@use 'pkg:@quire/editor/tokens.scss' as quire;`.
+Most apps should start from `@quiredoc/sdk` or `@quiredoc/react`. Theme tokens for SCSS: `@use 'pkg:@quiredoc/editor/tokens.scss' as quire;`.
 
 ## License
 

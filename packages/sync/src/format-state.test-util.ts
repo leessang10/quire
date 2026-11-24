@@ -1,5 +1,5 @@
 /** 시험용: 문서의 서식 상태 (비교용). 문단마다 글·글자별 서식·¶ 서식·속성, 스타일, 목록 정의, 목록 번호 */
-import type { Doc } from '@quire/model';
+import type { Doc } from '@quiredoc/model';
 
 export function formatState(doc: Doc) {
   const ms = (id: number) => JSON.stringify(doc.markSet(id));

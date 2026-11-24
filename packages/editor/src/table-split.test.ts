@@ -2,8 +2,8 @@
  * 표 쪽 분할 (12 §8): 행 쪼개기(줄 단위), 제목 행 반복, 행 나누지 않음, 쪽보다 큰 행, 증분 = 처음부터
  */
 import { describe, expect, it } from 'vitest';
-import { Doc, Document, cellStoryId } from '@quire/model';
-import { LayoutCache, PagedLayout, SectionFrames, cellGroups, rowParts, type Measurer, type PlacedLine } from '@quire/layout';
+import { Doc, Document, cellStoryId } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, SectionFrames, cellGroups, rowParts, type Measurer, type PlacedLine } from '@quiredoc/layout';
 import { Formatter, defaultPageSetup } from './formatter';
 
 const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };

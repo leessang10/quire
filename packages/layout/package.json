@@ -1,5 +1,5 @@
 {
-  "name": "@quire/layout",
+  "name": "@quiredoc/layout",
   "description": "Quire layout engine: line breaking with Korean typesetting rules, pagination, columns, tables, footnotes",
   "keywords": [
     "layout",

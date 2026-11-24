@@ -4,7 +4,7 @@
  * - 단축키: Mod+F·Mod+H(앱이 막대를 연다), F3·Shift+F3
  * - 장식: 결과(find), 지금 결과(find-current)
  */
-import { FindCache, compileFind, findInDocument, replaceMatches, type Document, type FindMatch, type FindQuery } from '@quire/model';
+import { FindCache, compileFind, findInDocument, replaceMatches, type Document, type FindMatch, type FindQuery } from '@quiredoc/model';
 import type { Decoration, DecorationPara, PluginContext, QuirePlugin } from './plugins';
 
 /** 찾기 상태 (15 §3.1): 결과 수, 지금 결과 번호(-1이면 없음), 상한에 닿았나, 틀린 조건 */

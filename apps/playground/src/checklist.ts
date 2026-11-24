@@ -3,7 +3,7 @@
  * 비교한 뒤 통과·실패를 적는다. 결과는 환경(OS·브라우저·입력기·입력 층·스크린리더)별로 이 브라우저에 저장하고,
  * Markdown(결과 보고서에 붙이기)이나 JSON(입력 이벤트 포함)으로 내보낸다.
  */
-import { Editor, editContextSupported, type InputLogEntry } from '@quire/editor';
+import { Editor, editContextSupported, type InputLogEntry } from '@quiredoc/editor';
 import { SCENARIOS, judge, type Scenario } from './checklist-scenarios';
 
 type Status = 'pass' | 'fail' | 'skip';

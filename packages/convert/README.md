@@ -1,4 +1,4 @@
-# @quire/convert
+# @quiredoc/convert
 
 Import and export for Quire documents: HWPX, DOCX, Markdown, HTML (no DOM required).
 
@@ -7,13 +7,13 @@ Part of [Quire](https://github.com/leessang10/quire), a web document editor with
 ## Install
 
 ```sh
-npm install @quire/convert
+npm install @quiredoc/convert
 ```
 
 ## Usage
 
 ```ts
-import { importDocx, exportHwpx } from '@quire/convert';
+import { importDocx, exportHwpx } from '@quiredoc/convert';
 
 const { doc, assets, report } = await importDocx(bytes); // report.dropped: unsupported elements by kind
 const hwpx = await exportHwpx(doc, { asset: readAsset });

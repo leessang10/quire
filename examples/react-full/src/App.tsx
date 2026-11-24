@@ -4,10 +4,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, MessageSquarePlus, PanelLeft, PanelRight, Share2 } from 'lucide-react';
-import { QuireEditor, useEditorState, useQuire } from '@quire/react';
-import type { Editor, WordCount } from '@quire/editor';
-import { safeLink } from '@quire/model';
-import { highlightWordsPlugin, wordCountPlugin } from '@quire/editor';
+import { QuireEditor, useEditorState, useQuire } from '@quiredoc/react';
+import type { Editor, WordCount } from '@quiredoc/editor';
+import { safeLink } from '@quiredoc/model';
+import { highlightWordsPlugin, wordCountPlugin } from '@quiredoc/editor';
 import { fonts } from './lib/quire-demo';
 import { DemoSpellChecker, OPEN_ACCEPT, documentTitle, emptyDoc, openAny, openPdf, sampleDocument, saveAny, tourDoc, SAMPLES, type SaveFormat } from './lib/quire-app';
 import { useAct, useUi } from './lib/useUi';
@@ -243,7 +243,7 @@ export function App() {
       <NoticeDialog open={dialog === 'about'} title="이 예제에 대해" onClose={() => setDialog(null)}>
         <div className="space-y-2 leading-6">
           <p>
-            Quire 편집기의 기능을 모두 보여 주는 React 예제입니다. 화면은 <code>@quire/react</code>의 <code>useQuire</code>·<code>QuireEditor</code>로 붙이고, 도구 막대·메뉴는
+            Quire 편집기의 기능을 모두 보여 주는 React 예제입니다. 화면은 <code>@quiredoc/react</code>의 <code>useQuire</code>·<code>QuireEditor</code>로 붙이고, 도구 막대·메뉴는
             편집기 API(<code>handle.editor</code>)를 부릅니다.
           </p>
           <p>문서는 캔버스에 직접 그려지고(한글 IME·스크린리더용 입력 층은 따로), HWPX·DOCX·Markdown·HTML·.quire를 열고 저장하며 PDF로 내보냅니다.</p>

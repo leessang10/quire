@@ -4,7 +4,7 @@
  */
 import { Messages } from './i18n';
 import { describe, expect, it } from 'vitest';
-import { Doc, Document, type Op } from '@quire/model';
+import { Doc, Document, type Op } from '@quiredoc/model';
 import { findPlugin } from './find-plugin';
 import { highlightWordsPlugin, wordCountPlugin, type WordCount } from './example-plugins';
 import { normalizeKey, eventKey, type DecorationSource, type PluginContext, type PluginEvent, type QuirePlugin } from './plugins';

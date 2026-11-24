@@ -1,5 +1,5 @@
 {
-  "name": "@quire/sync-server",
+  "name": "@quiredoc/sync-server",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,6 +8,6 @@
   },
   "dependencies": {
     "loro-crdt": "1.17.1",
-    "@quire/sync": "*"
+    "@quiredoc/sync": "*"
   }
 }

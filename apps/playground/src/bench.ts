@@ -10,7 +10,7 @@
  *
  * 쿼리: ?pages=1000&keys=300&scrollMs=3000
  */
-import { Editor } from '@quire/editor';
+import { Editor } from '@quiredoc/editor';
 
 const params = new URLSearchParams(location.search);
 const PAGES = Number(params.get('pages') ?? 1000);

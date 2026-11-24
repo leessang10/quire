@@ -28,7 +28,7 @@ import {
   Underline,
   Undo2,
 } from 'lucide-react';
-import type { Editor } from '@quire/editor';
+import type { Editor } from '@quiredoc/editor';
 import { COLORS, FONTS, HIGHLIGHTS, LINE_SPACINGS, SIZES, STYLES, type Ui } from '../lib/quire-app';
 import { Divider, Dropdown, MenuItem, MenuLabel, MenuSeparator, ToolButton } from './ui';
 

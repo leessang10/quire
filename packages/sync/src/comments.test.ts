@@ -2,7 +2,7 @@
  * 댓글 (14 §3, G2): 스레드·답글·고치기·해결·지우기, 동시 답글이 모두 남음, 고아 스레드가 남아 보임, 정본·새 판, Worker 경로.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { Doc, Document, History, type CommentAuthor, type Op } from '@quire/model';
+import { Doc, Document, History, type CommentAuthor, type Op } from '@quiredoc/model';
 import { SyncBridge } from './index';
 import { SyncClient } from './client';
 import { SyncCore } from './core';

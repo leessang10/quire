@@ -2,7 +2,7 @@
  * 정본 JSON·.quire 파일 시험 (07, 09 §9)
  */
 import { describe, expect, it } from 'vitest';
-import { Doc } from '@quire/model';
+import { Doc } from '@quiredoc/model';
 import { canonicalJson, displayText, migrateQuire, quireFromText, stateHash, textFromQuire } from './canonical';
 import { openQuire, packQuire } from './quire-file';
 import { LoroWriter, initLoro, newLoro, readRaw, readState } from './shape';
@@ -147,7 +147,7 @@ describe('.quire file', () => {
 
 describe('canonical JSON with formatting (10, step 2-2)', () => {
   it('round-trips marks and paragraph attributes through document.json', async () => {
-    const { Doc } = await import('@quire/model');
+    const { Doc } = await import('@quiredoc/model');
     const { quireFromDoc, docFromQuire } = await import('./canonical');
     const doc = Doc.fromText('제목\n본문은 굵게, 이건 링크\n');
     doc.setParaAttr(0, 'style', 'Heading1');
@@ -173,7 +173,7 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
   });
 
   it('stores only styles that differ from the defaults, and restores them (2-4)', async () => {
-    const { Doc } = await import('@quire/model');
+    const { Doc } = await import('@quiredoc/model');
     const { quireFromDoc, docFromQuire } = await import('./canonical');
     const doc = Doc.fromText('제목\n본문\n');
     expect(quireFromDoc(doc).styles).toEqual({});
@@ -192,7 +192,7 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
   });
 
   it('stores list definitions in settings.lists and list attributes on paragraphs, not the numbers (2-5)', async () => {
-    const { Doc } = await import('@quire/model');
+    const { Doc } = await import('@quiredoc/model');
     const { quireFromDoc, docFromQuire } = await import('./canonical');
     const doc = Doc.fromText('가\n나\n다\n');
     const [id] = doc.createList('number');
@@ -210,7 +210,7 @@ describe('canonical JSON with formatting (10, step 2-2)', () => {
   });
 
   it('stores inline images as img runs and their bytes under assets/ (2-8)', async () => {
-    const { Doc } = await import('@quire/model');
+    const { Doc } = await import('@quiredoc/model');
     const { quireFromDoc, docFromQuire } = await import('./canonical');
     const { assetIdOf, assetIdsOf } = await import('./quire-file');
     const bytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);

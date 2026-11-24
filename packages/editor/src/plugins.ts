@@ -4,7 +4,7 @@
  * 문서 상태를 바꾸는 길은 트랜잭션 하나뿐이라 읽기 전용·제안 모드가 플러그인에도 적용된다.
  * 찾기(find-plugin)와 맞춤법(spell-plugin)이 이 API만으로 다시 짠 내장 플러그인이다.
  */
-import type { Doc, Document, Op } from '@quire/model';
+import type { Doc, Document, Op } from '@quiredoc/model';
 import type { Translate } from './i18n';
 
 /** 스토리 안의 자리 (story null = 본문) */

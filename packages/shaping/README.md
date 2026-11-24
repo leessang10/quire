@@ -1,4 +1,4 @@
-# @quire/shaping
+# @quiredoc/shaping
 
 Quire text shaping: HarfBuzz (WASM) shaping, font fallback and on-demand font chunk loading.
 
@@ -7,12 +7,12 @@ Part of [Quire](https://github.com/leessang10/quire), a web document editor with
 ## Install
 
 ```sh
-npm install @quire/shaping
+npm install @quiredoc/shaping
 ```
 
 ## Usage
 
-Text shaping with HarfBuzz, itemization and font fallback, plus loading of font chunks on demand. Usually used through `@quire/editor`.
+Text shaping with HarfBuzz, itemization and font fallback, plus loading of font chunks on demand. Usually used through `@quiredoc/editor`.
 
 ## License
 

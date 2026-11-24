@@ -8,7 +8,7 @@
  * 위치는 UTF-16 단위의 살아 있는 원소 열(= Loro 텍스트) 기준이다. 구획 표식도 한 글자다.
  * 같은 자리에 양쪽이 넣으면 원격(Worker 쪽에 먼저 있던 것)이 앞, 로컬이 뒤다.
  */
-import { OBJ_MARK_PREFIX, PARA_MARK_PREFIX, type RawChange, type TableChange } from '@quire/model';
+import { OBJ_MARK_PREFIX, PARA_MARK_PREFIX, type RawChange, type TableChange } from '@quiredoc/model';
 
 /** 원격 텍스트 연산 (Loro 이벤트 델타를 차례로 적용할 단위로 편 것) */
 export type RemoteOp = (

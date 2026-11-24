@@ -4,7 +4,7 @@
  * FontFile3/OpenType, TrueType이면 CIDFontType2 + FontFile2. 글자 복사·검색을 위해 ToUnicode CMap을 단다.
  */
 import * as hb from 'harfbuzzjs';
-import { loadShapingFont, type ShapingFont } from '@quire/shaping';
+import { loadShapingFont, type ShapingFont } from '@quiredoc/shaping';
 import { capHeight, cffCids, headInfo, isCff, sfntTables } from './sfnt';
 import type { Subsetter } from './subset';
 import { name, type PdfWriter, type Ref } from './writer';

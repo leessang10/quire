@@ -1,11 +1,11 @@
-import { Editor, highlightWordsPlugin, wordCountPlugin, type InputLogEntry, type WordCount } from '@quire/editor';
+import { Editor, highlightWordsPlugin, wordCountPlugin, type InputLogEntry, type WordCount } from '@quiredoc/editor';
 import { CommentsPane } from './comments-pane';
 import { FindBar } from './find-bar';
 import { openPdf } from './pdf-export';
 import { lastConvert, openFile, saveAs } from './convert-io';
 import { DemoChecker, SpellContextMenu } from './spell-demo';
-import { documentFromQuire, quireFromDocument } from '@quire/sync';
-import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quire/model';
+import { documentFromQuire, quireFromDocument } from '@quiredoc/sync';
+import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quiredoc/model';
 
 const SAMPLE = `Quire 0단계 프로토타입
 

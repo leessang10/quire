@@ -1,6 +1,6 @@
 # Vue 3 + SCSS
 
-공식 래퍼 없이 `@quire/sdk`만으로 Vue에 붙이는 예제입니다. 수명주기를 묶는 작은 컴포저블 하나면 됩니다.
+공식 래퍼 없이 `@quiredoc/sdk`만으로 Vue에 붙이는 예제입니다. 수명주기를 묶는 작은 컴포저블 하나면 됩니다.
 
 ![Vue 예제](screenshots/screenshot.webp)
 
@@ -28,7 +28,7 @@ npm run dev                       # http://localhost:5304
 ```ts
 // src/useQuire.ts
 import { onBeforeUnmount, onMounted, shallowRef, type Ref } from 'vue';
-import { createEditor, type CreateEditorOptions, type EditorState, type QuireHandle } from '@quire/sdk';
+import { createEditor, type CreateEditorOptions, type EditorState, type QuireHandle } from '@quiredoc/sdk';
 
 export function useQuire(host: Ref<HTMLElement | null>, options: Omit<CreateEditorOptions, 'host'>) {
   const handle = shallowRef<QuireHandle | null>(null);

@@ -1,6 +1,6 @@
-// @quire/editor 화면 테마 변수 (설계 17 §7·§10.1). 자동 완성과 오타 검사용이고, 결과는 CSS 변수다.
+// @quiredoc/editor 화면 테마 변수 (설계 17 §7·§10.1). 자동 완성과 오타 검사용이고, 결과는 CSS 변수다.
 //
-//   @use 'pkg:@quire/editor/tokens.scss' as quire;
+//   @use 'pkg:@quiredoc/editor/tokens.scss' as quire;
 //   .quire { @include quire.theme((accent: #e11d48, page: #fffdf7)); }
 //
 // $quire-tokens는 클래식 라이트 기본값이다 (편집기 기본 스타일시트와 같다, 시험이 맞춘다).

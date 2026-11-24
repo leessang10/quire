@@ -3,9 +3,9 @@
  * UI 코드가 아닌 것만 둔다: 화면 상태 읽기, 개요, 쪽 설정 값, 모든 형식 열기·저장(.quire 포함), 기능 둘러보기 문서,
  * 예제 문서 목록, 데모 맞춤법 검사기. 저장·내보내기 자체는 quire-demo.ts를 쓴다.
  */
-import type { QuireDoc, QuireHandle } from '@quire/sdk';
-import { WordListChecker, type Editor, type SpellChecker, type SpellIssue } from '@quire/editor';
-import { PAPER_SIZES, type SectionProps, type SectionStart } from '@quire/model';
+import type { QuireDoc, QuireHandle } from '@quiredoc/sdk';
+import { WordListChecker, type Editor, type SpellChecker, type SpellIssue } from '@quiredoc/editor';
+import { PAPER_SIZES, type SectionProps, type SectionStart } from '@quiredoc/model';
 import { ASSET_BASE, saveFile, type SaveKind } from './quire-demo';
 
 // ── 화면 상태 ─────────────────────────────────────────
@@ -276,7 +276,7 @@ export const SAVE_FORMATS: Array<{ kind: SaveFormat; label: string; ext: string 
 export async function openAny(h: QuireHandle, file: File): Promise<Record<string, number>> {
   const name = file.name.toLowerCase();
   if (name.endsWith('.quire')) {
-    const { openQuire } = await import('@quire/sync');
+    const { openQuire } = await import('@quiredoc/sync');
     const q = await openQuire(new Uint8Array(await file.arrayBuffer()));
     await h.load(q.doc, q.assets.map((a) => [a.id, { bytes: a.bytes, type: a.mime }] as [string, { bytes: Uint8Array; type: string }]));
     return {};
@@ -288,8 +288,8 @@ export async function openAny(h: QuireHandle, file: File): Promise<Record<string
 /** 저장 (내려받기). 바이트 수 */
 export async function saveAny(h: QuireHandle, kind: SaveFormat, title = documentTitle(h)): Promise<number> {
   if (kind !== 'quire') return saveFile(h, kind);
-  const { packQuire, assetIdsOf } = await import('@quire/sync');
-  const { mimeOf } = await import('@quire/convert');
+  const { packQuire, assetIdsOf } = await import('@quiredoc/sync');
+  const { mimeOf } = await import('@quiredoc/convert');
   const src = h.editor.printSource();
   const assets = [];
   for (const id of assetIdsOf(h.editor.document)) {
@@ -336,8 +336,8 @@ export function emptyDoc(): QuireDoc {
 
 /** 기능 둘러보기 문서: 주요 요소 문서(제목 1–6, 글자·문단 서식, 목록, 그림, 각주, 인용, 코드, 표) + 머리말·꼬리말(쪽 번호) */
 export async function tourDoc(): Promise<{ doc: QuireDoc; assets: Array<[string, { bytes: Uint8Array; type: string }]> }> {
-  const { elementsDocument } = await import('@quire/convert');
-  const { assetIdOf } = await import('@quire/sync');
+  const { elementsDocument } = await import('@quiredoc/convert');
+  const { assetIdOf } = await import('@quiredoc/sync');
   const png = await samplePng();
   const asset = await assetIdOf(png);
   const doc = elementsDocument({ asset, w: 240 * 750, h: 120 * 750 }) as QuireDoc & { sections?: Array<Record<string, unknown>>; stories: Record<string, unknown> };

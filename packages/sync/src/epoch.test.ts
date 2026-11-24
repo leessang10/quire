@@ -2,7 +2,7 @@
  * 새 판 압축·재기반 시험 (09 §9)
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { Doc } from '@quire/model';
+import { Doc } from '@quiredoc/model';
 import type { LoroDoc } from 'loro-crdt';
 import { displayText } from './canonical';
 import { SyncClient } from './client';

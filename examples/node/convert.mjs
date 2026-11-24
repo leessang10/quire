@@ -2,12 +2,12 @@
 // 예제 6: Node (브라우저·DOM 없음) — 문서 변환기
 //   node convert.mjs <입력> <출력>
 //   입력: .hwpx .docx .md .html     출력: .pdf .hwpx .docx .md .html
-// 모든 변환은 정본(QuireDoc)을 거친다. PDF는 @quire/fonts의 글꼴 조각으로 서버에서 조판한다 (편집기와 같은 쪽 나눔).
+// 모든 변환은 정본(QuireDoc)을 거친다. PDF는 @quiredoc/fonts의 글꼴 조각으로 서버에서 조판한다 (편집기와 같은 쪽 나눔).
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, extname, join } from 'node:path';
-import { exportDocx, exportHtml, exportHwpx, exportMarkdown, importDocx, importHtml, importHwpx, importMarkdown, mimeOf } from '@quire/convert';
-import { loadSubsetter, pdfFromQuire } from '@quire/pdf';
+import { exportDocx, exportHtml, exportHwpx, exportMarkdown, importDocx, importHtml, importHwpx, importMarkdown, mimeOf } from '@quiredoc/convert';
+import { loadSubsetter, pdfFromQuire } from '@quiredoc/pdf';
 
 const [input, output] = process.argv.slice(2);
 if (!input || !output) {
@@ -42,7 +42,7 @@ const outExt = extname(output).toLowerCase();
 let data;
 if (outExt === '.pdf') {
   // 글꼴: 조각 목록(manifest)의 조각마다 글꼴 자리 하나. 굵은 얼굴은 같은 이름의 조각
-  const fontsDir = join(dirname(require.resolve('@quire/fonts/package.json')), 'fonts');
+  const fontsDir = join(dirname(require.resolve('@quiredoc/fonts/package.json')), 'fonts');
   const manifest = (id) => JSON.parse(readFileSync(join(fontsDir, id, 'manifest.json'), 'utf8'));
   const read = (id, file) => new Uint8Array(readFileSync(join(fontsDir, id, file)));
   const pre = manifest('pretendard');

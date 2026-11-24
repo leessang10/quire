@@ -18,7 +18,7 @@ import {
   rebaseOnto,
   type ToMain,
   type ToWorker,
-} from '@quire/sync';
+} from '@quiredoc/sync';
 
 const NL = String.fromCharCode(10);
 const LOREM =

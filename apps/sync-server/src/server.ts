@@ -45,7 +45,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { LoroDoc, VersionVector, decodeImportBlobMeta } from 'loro-crdt';
-import { assetIdOf, assetIdsOf, canonicalJson, compactDocument, documentFromLoro, documentFromQuire, openQuire, packQuire, quireFromDocument, quireFromText, readEpoch, restoreInto, type QuireAsset } from '@quire/sync';
+import { assetIdOf, assetIdsOf, canonicalJson, compactDocument, documentFromLoro, documentFromQuire, openQuire, packQuire, quireFromDocument, quireFromText, readEpoch, restoreInto, type QuireAsset } from '@quiredoc/sync';
 import { fileStorage, memoryStorage, type PeerUser, type Role, type RoomStore, type Storage, type VersionRecord } from './store';
 
 export const MSG = { HELLO: 1, SYNC: 2, UPDATE: 3, PRESENCE: 4, GONE: 5, REBASE: 6, ROLE: 7 } as const;

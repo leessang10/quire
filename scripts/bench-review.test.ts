@@ -5,9 +5,9 @@
  *   npx vitest run --config vitest.bench.config.ts scripts/bench-review.test.ts --silent=false
  */
 import { expect, it } from 'vitest';
-import { Doc, Document } from '@quire/model';
-import { LayoutCache, PagedLayout, type Measurer } from '@quire/layout';
-import { documentFromQuire, quireFromDocument } from '@quire/sync';
+import { Doc, Document } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, type Measurer } from '@quiredoc/layout';
+import { documentFromQuire, quireFromDocument } from '@quiredoc/sync';
 import { defaultPageSetup } from '../packages/editor/src/formatter';
 
 const measurer: Measurer = { width: (g) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) };

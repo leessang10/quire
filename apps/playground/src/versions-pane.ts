@@ -3,8 +3,8 @@
  * 비교(앞 버전·지금과: 판 이력을 받아 클라이언트에서 diff → 제안 표시), 복원(두 번 눌러 확인).
  * 목록은 열 때·버전을 만들 때·몇 초마다 다시 읽는다 (자동 버전은 서버가 남긴다).
  */
-import type { Editor } from '@quire/editor';
-import { compareVersions, documentFromSnapshot, type Frontiers } from '@quire/sync';
+import type { Editor } from '@quiredoc/editor';
+import { compareVersions, documentFromSnapshot, type Frontiers } from '@quiredoc/sync';
 import { LoroDoc } from 'loro-crdt';
 
 interface Item {

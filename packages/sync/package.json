@@ -1,5 +1,5 @@
 {
-  "name": "@quire/sync",
+  "name": "@quiredoc/sync",
   "description": "Quire collaboration and storage: CRDT sync (Loro), presence, version history, .quire files",
   "keywords": [
     "crdt",
@@ -15,7 +15,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@quire/model": "*",
+    "@quiredoc/model": "*",
     "loro-crdt": "1.17.1"
   }
 }

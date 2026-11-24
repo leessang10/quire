@@ -3,7 +3,7 @@
  * 매 단계: 각 피어의 Doc = 그 피어의 Loro에서 처음부터 만든 Doc (서식 포함). 끝: 모든 피어가 같다.
  */
 import { describe, expect, it } from 'vitest';
-import { History, MARK_KEYS, defaultListDef, type Doc, type MarkKey, type Op } from '@quire/model';
+import { History, MARK_KEYS, defaultListDef, type Doc, type MarkKey, type Op } from '@quiredoc/model';
 import { SyncBridge } from './index';
 import { docFromLoro } from './shape';
 import { formatState, stable } from './format-state.test-util';

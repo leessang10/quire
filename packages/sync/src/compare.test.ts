@@ -2,7 +2,7 @@
  * 버전 비교 (14 §5.3, 4-6): 비교 문서를 모두 수락하면 B, 모두 거부하면 A (글자·서식·문단 속성).
  */
 import { describe, expect, it } from 'vitest';
-import type { Document } from '@quire/model';
+import type { Document } from '@quiredoc/model';
 import { SyncBridge } from './index';
 import { compareVersions, type Frontiers } from './compare';
 import { documentFromLoro } from './shape';

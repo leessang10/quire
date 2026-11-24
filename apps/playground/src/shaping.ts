@@ -7,8 +7,8 @@
  * B4 줄바꿈: 같은 문서를 캔버스 측정기와 HarfBuzz 측정기로 조판 → 문단마다 줄 나눔이 같은가, 시간
  * B5 셰이핑 속도 (WASM, 브라우저)
  */
-import { PagedLayout, layoutParagraph, type Measurer, type PageSetup } from '@quire/layout';
-import { Doc } from '@quire/model';
+import { PagedLayout, layoutParagraph, type Measurer, type PageSetup } from '@quiredoc/layout';
+import { Doc } from '@quiredoc/model';
 import { HbMeasurer, advance, fingerprint, hbVersion, loadFont, shape, toPx, type HbFont } from '../../../spikes/shaping/src/hb';
 import { LOREM, SAMPLES } from '../../../spikes/shaping/src/corpus';
 

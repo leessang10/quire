@@ -1,4 +1,4 @@
-// 출시 (16 §10.8): 빌드한 @quire/* 패키지(.build/packages)를 검사하고 npm에 의존 순서대로 올린다.
+// 출시 (16 §10.8): 빌드한 @quiredoc/* 패키지(.build/packages)를 검사하고 npm에 의존 순서대로 올린다.
 //   node scripts/build-packages.mjs && node scripts/release.mjs             → 검사 + npm publish --dry-run (기본)
 //   node scripts/release.mjs --publish                                     → 실제로 올린다 (npm 로그인 또는 NODE_AUTH_TOKEN)
 //
@@ -35,7 +35,7 @@ for (const p of ORDER) {
   }
   const j = JSON.parse(readFileSync(file, 'utf8'));
   const bad = (m) => problems.push(`${j.name ?? p}: ${m}`);
-  if (j.name !== `@quire/${p}`) bad(`이름이 @quire/${p}가 아님 (${j.name})`);
+  if (j.name !== `@quiredoc/${p}`) bad(`이름이 @quiredoc/${p}가 아님 (${j.name})`);
   if (j.version !== VERSION) bad(`판 ${j.version} ≠ ${VERSION}`);
   if (j.private) bad('private: true');
   if (j.license !== (p === 'fonts' ? 'OFL-1.1' : 'MIT')) bad(`license ${j.license}`);
@@ -46,7 +46,7 @@ for (const p of ORDER) {
   if (p !== 'fonts' && !existsSync(join(dir, 'LICENSE'))) bad('LICENSE 없음');
   for (const [d, v] of Object.entries({ ...j.dependencies, ...j.peerDependencies })) {
     if (/^(file|workspace|link):/.test(v) || v === '*') bad(`의존 ${d}@${v} (배포할 수 없는 판)`);
-    if (d.startsWith('@quire/') && v !== VERSION) bad(`내부 의존 ${d}@${v} ≠ ${VERSION}`);
+    if (d.startsWith('@quiredoc/') && v !== VERSION) bad(`내부 의존 ${d}@${v} ≠ ${VERSION}`);
   }
   // exports가 가리키는 파일이 있다
   const targets = [];

@@ -3,7 +3,7 @@
  * 가벼운 스토리는 빈 텍스트 = 빈 문단 하나이고 끝 ¶는 Loro에 없다 (유령 ¶). 두 피어가 같은 스토리를 동시에 처음 만들어도 합쳐진다.
  */
 import { describe, expect, it } from 'vitest';
-import { Doc, Document, History, MARK_KEYS, type MarkKey, type Op } from '@quire/model';
+import { Doc, Document, History, MARK_KEYS, type MarkKey, type Op } from '@quiredoc/model';
 import { SyncBridge } from './index';
 import { docFromLoro, storyNames } from './shape';
 import { formatState, stable } from './format-state.test-util';

@@ -1,9 +1,9 @@
 /**
- * PDF 내보내기·인쇄 (15 §5.2–5.4): 편집기의 쪽을 @quire/pdf로 PDF로 만들어 새 창에 연다 (브라우저 PDF 보기에서 인쇄).
+ * PDF 내보내기·인쇄 (15 §5.2–5.4): 편집기의 쪽을 @quiredoc/pdf로 PDF로 만들어 새 창에 연다 (브라우저 PDF 보기에서 인쇄).
  * PDF 모듈과 hb-subset WASM은 처음 내보낼 때 불러온다.
  */
-import type { Editor } from '@quire/editor';
-import type { Subsetter } from '@quire/pdf';
+import type { Editor } from '@quiredoc/editor';
+import type { Subsetter } from '@quiredoc/pdf';
 import subsetWasm from 'harfbuzzjs/dist/harfbuzz-subset.wasm?url';
 
 let subsetter: Promise<Subsetter> | null = null;
@@ -19,7 +19,7 @@ export interface PdfExportStats {
 
 export async function editorPdf(editor: Editor): Promise<{ blob: Blob; stats: PdfExportStats }> {
   const t0 = performance.now();
-  const pdf = await import('@quire/pdf');
+  const pdf = await import('@quiredoc/pdf');
   subsetter ??= fetch(subsetWasm)
     .then((r) => r.arrayBuffer())
     .then((b) => pdf.loadSubsetter(b));

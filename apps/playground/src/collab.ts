@@ -3,8 +3,8 @@
  * 각 편집기는 메인 스레드에 Doc만 두고, Loro·내보내기·가져오기·프레즌스는 피어마다 Worker에서 돈다 (09 §8).
  * Worker가 내보낸 업데이트는 메인을 거쳐(여기서 지연·오프라인을 흉내 낸다) 상대 Worker로 간다.
  */
-import { Editor } from '@quire/editor';
-import { startSyncWorker, type WorkerClient } from '@quire/sync';
+import { Editor } from '@quiredoc/editor';
+import { startSyncWorker, type WorkerClient } from '@quiredoc/sync';
 
 const TEXT = `두 편집기는 각자 문서 사본을 가지고 CRDT(Loro)로 변경을 주고받습니다.
 

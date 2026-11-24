@@ -1,4 +1,4 @@
-# @quire/model
+# @quiredoc/model
 
 Quire document model: stories, paragraphs, marks, tables, annotations and operations.
 
@@ -7,7 +7,7 @@ Part of [Quire](https://github.com/leessang10/quire), a web document editor with
 ## Install
 
 ```sh
-npm install @quire/model
+npm install @quiredoc/model
 ```
 
 ## Usage

@@ -6,8 +6,8 @@
  * - 종류: 구역 첫 쪽이고 titlePage면 first, oddEven이고 쪽 번호가 짝수면 even, 아니면 default. 스토리는 앞 구역에서 이어 쓴다.
  * - 본문 프레임은 자리표시 값으로 잰 높이로 정해지므로(Formatter.syncSections) 여기의 값은 본문 배치에 영향이 없다.
  */
-import { DEFAULT_HF_DISTANCE, formatPageNumber, fullSection, hfKindOf, type Doc, type HFKind, type HFPart } from '@quire/model';
-import { SectionFrames, type PageBox, type PagedLayout } from '@quire/layout';
+import { DEFAULT_HF_DISTANCE, formatPageNumber, fullSection, hfKindOf, type Doc, type HFKind, type HFPart } from '@quiredoc/model';
+import { SectionFrames, type PageBox, type PagedLayout } from '@quiredoc/layout';
 import { pt, type FieldValues, type Formatter } from './formatter';
 
 /** 쪽 하나의 머리말·꼬리말 자리 */

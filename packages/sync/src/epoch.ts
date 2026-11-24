@@ -9,10 +9,10 @@
  *   새 판 = 새 판 처음 상태 + diff(F → M)
  * diff는 화면 텍스트의 문단·글자 차이라서, 오프라인 동안의 문단 이동은 "지우고 다시 넣기"가 된다.
  */
-import { DEFAULT_STYLES, MARK_KEYS, OBJ_KEYS, PARA_KEYS, type Doc, type MarkKey } from '@quire/model';
+import { DEFAULT_STYLES, MARK_KEYS, OBJ_KEYS, PARA_KEYS, type Doc, type MarkKey } from '@quiredoc/model';
 import type { LoroDoc } from 'loro-crdt';
 import { LoroWriter, docFromLoro, documentFromLoro, initLoro, insertChunked, newLoro, readTable, storyIdsOf, storyNames, tableIdsOf, writeFormats, writeTable, writeTableRecord, type PeerId } from './shape';
-import type { Document } from '@quire/model';
+import type { Document } from '@quiredoc/model';
 import { writeAnnKey, writeAnnRange } from './annotations';
 import { writeCmt } from './comments';
 
@@ -325,7 +325,7 @@ export function restoreInto(fresh: LoroDoc, old: LoroDoc): void {
         prev = x;
       }
     }
-    const pairs: Array<[import('@quire/model').TableMapName, Record<string, unknown>, Record<string, unknown>]> = [
+    const pairs: Array<[import('@quiredoc/model').TableMapName, Record<string, unknown>, Record<string, unknown>]> = [
       ['gone', want.gone, have.gone], ['w', want.widths, have.widths], ['span', want.spans, have.spans],
       ['ra', want.rowAttrs, have.rowAttrs], ['ca', want.cellAttrs, have.cellAttrs], ['attrs', want.attrs as Record<string, unknown>, have.attrs as Record<string, unknown>],
     ];

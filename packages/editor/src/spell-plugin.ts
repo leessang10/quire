@@ -4,7 +4,7 @@
  * - 일정: 그리기가 끝나면(afterRender) 보인 문단을 세션에 알리고, 할 일이 없으면 유휴 시간에 나머지 본문 문단을 검사한다
  * - 오른쪽 클릭: 고칠 말·이 문서에서 무시·사전에 더하기 (그 낱말을 선택해 둔다)
  */
-import { replaceMatches } from '@quire/model';
+import { replaceMatches } from '@quiredoc/model';
 import type { Decoration, DecorationPara, MenuItem, PluginContext, QuirePlugin, StoryPos } from './plugins';
 import { SpellSession, carryIssues, type SpellChecker, type SpellIssue, type SpellKind } from './spell';
 

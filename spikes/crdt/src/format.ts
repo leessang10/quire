@@ -1,12 +1,12 @@
 /**
- * 서식 의미론 스파이크 (10 §3, 단계 2-1) 도우미. 실제 문서 모양(@quire/sync shape: 끝 표식 구획 M4 + 보초·자리표시)
+ * 서식 의미론 스파이크 (10 §3, 단계 2-1) 도우미. 실제 문서 모양(@quiredoc/sync shape: 끝 표식 구획 M4 + 보초·자리표시)
  * 위에 Loro 텍스트 마크로 글자 서식과 문단 속성(¶ 글자의 마크 `p_<키>`; Loro 마크 키에는 ':'를 쓸 수 없다)을 건다.
  *
  * 화면 위치 ↔ Loro 위치: Doc(fromRaw)의 화면 오프셋을 u16OfOffset으로 저장 위치로 바꾼다. 옮긴 문단은 화면에서 이어져도
  * 저장 위치가 떨어져 있으므로, 서식 범위는 저장 위치가 이어진 조각마다 따로 건다.
  */
-import { Doc } from '@quire/model';
-import { LoroWriter, readRaw, readState, SEG_MARK, TEXT, initLoro } from '@quire/sync';
+import { Doc } from '@quiredoc/model';
+import { LoroWriter, readRaw, readState, SEG_MARK, TEXT, initLoro } from '@quiredoc/sync';
 import { LoroDoc } from 'loro-crdt';
 
 /** 글자 서식 키와 확장 규칙 (10 §2.6) */

@@ -3,7 +3,7 @@
  * 각주는 글에 "*n"으로 적는다 (n줄짜리 각주, 줄 높이 20).
  */
 import { describe, expect, it } from 'vitest';
-import { Doc } from '@quire/model';
+import { Doc } from '@quiredoc/model';
 import { LayoutCache, PagedLayout, type FormatSource, type Measurer, type NoteSpec, type PageSetup } from './index';
 
 /** 모든 grapheme 폭 10 */

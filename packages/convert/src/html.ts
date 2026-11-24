@@ -2,9 +2,9 @@
  * 문서 단위 HTML (15 §6.1–6.2). 내보내기는 정본 → HTML 문서 (이미지는 data URL, 각주는 끝의 목록). 가져오기는 클립보드와 같은
  * 읽기 규칙(htmlToFragment, 문서 단위 선택)으로 조각을 만든 뒤 정본으로 옮긴다.
  */
-import { htmlToFragment, type Fragment } from '@quire/editor';
-import { defaultListDef, isNoteStory, noteStoryId, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs } from '@quire/model';
-import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quire/sync';
+import { htmlToFragment, type Fragment } from '@quiredoc/editor';
+import { defaultListDef, isNoteStory, noteStoryId, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs } from '@quiredoc/model';
+import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quiredoc/sync';
 import { Report, finishImport, addAsset, addUsedStyles, emptyQuire, fromDataUrl, toDataUrl, withSafeLinks, type AssetReader, type ImportResult, type ImportedAsset } from './common';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

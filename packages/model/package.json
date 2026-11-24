@@ -1,5 +1,5 @@
 {
-  "name": "@quire/model",
+  "name": "@quiredoc/model",
   "description": "Quire document model: stories, paragraphs, marks, tables, annotations and operations",
   "keywords": [
     "document-model",

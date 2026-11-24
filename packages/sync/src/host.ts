@@ -1,7 +1,7 @@
 /**
  * Worker 진입점과 메인 쪽 연결 도우미 (09 §8).
  *
- * Worker 파일에서:   import { serveSyncWorker } from '@quire/sync/host'; serveSyncWorker(self);
+ * Worker 파일에서:   import { serveSyncWorker } from '@quiredoc/sync/host'; serveSyncWorker(self);
  * 메인에서:          const client = await startSyncWorker(new Worker(...), config, options);
  *
  * 모드
@@ -10,7 +10,7 @@
  *   보낸 묶음이 끝나면(held) 옛 문서를 새 판으로 옮겨 새 코어를 만든다(reset). 09 §9.
  */
 import type { LoroDoc } from 'loro-crdt';
-import type { SegState } from '@quire/model';
+import type { SegState } from '@quiredoc/model';
 import { SyncClient, type ClientOptions } from './client';
 import { SyncCore, type CoreOptions, type NetOut } from './core';
 import { rebaseOnto, type RebaseInfo } from './epoch';

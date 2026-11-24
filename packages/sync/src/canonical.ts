@@ -33,7 +33,7 @@ import {
   type CommentMessage,
   type CommentThread,
   keysOfThread,
-} from '@quire/model';
+} from '@quiredoc/model';
 import type { LoroDoc } from 'loro-crdt';
 import { readRaw, readState } from './shape';
 

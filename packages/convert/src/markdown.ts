@@ -3,8 +3,8 @@
  * 코드(코드 스타일 문단 → 펜스). Markdown이 담지 못하는 것(밑줄, 크기·색, 정렬·간격, 병합 셀)은 버린다.
  * 가져오기: 블록 → 인라인 두 단계의 자체 파서 (GFM 명세의 일부).
  */
-import { defaultListDef, noteStoryId, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs } from '@quire/model';
-import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quire/sync';
+import { defaultListDef, noteStoryId, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs } from '@quiredoc/model';
+import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quiredoc/sync';
 import { BODY_WIDTH, Report, finishImport, addAsset, addUsedStyles, emptyQuire, fromDataUrl, tableGrid, type ImportResult, type ImportedAsset, withSafeLinks } from './common';
 
 const isTable = (b: QuireParagraph | QuireTable): b is QuireTable => 'table' in b;

@@ -11,12 +11,12 @@
 ## 설치 (패키지)
 
 ```bash
-npm install @quire/sdk @quire/fonts        # 바닐라·Vue·Svelte 등: createEditor
-npm install @quire/react @quire/fonts      # React: useQuire · QuireEditor
-npm install @quire/convert @quire/pdf      # HWPX·DOCX·Markdown·HTML 변환, PDF (Node에서도)
+npm install @quiredoc/sdk @quiredoc/fonts        # 바닐라·Vue·Svelte 등: createEditor
+npm install @quiredoc/react @quiredoc/fonts      # React: useQuire · QuireEditor
+npm install @quiredoc/convert @quiredoc/pdf      # HWPX·DOCX·Markdown·HTML 변환, PDF (Node에서도)
 ```
 
-글꼴 조각(`@quire/fonts`)과 PDF용 `harfbuzz-subset.wasm`은 앱의 공개 폴더에 둔다. 붙이는 법은 [examples/](examples/README.md)의 예제 여섯(바닐라·React·Next.js·Vue·SvelteKit·Node)과 스타일 예제 셋(Word식·Google Docs식·Notion식)을 본다.
+글꼴 조각(`@quiredoc/fonts`)과 PDF용 `harfbuzz-subset.wasm`은 앱의 공개 폴더에 둔다. 붙이는 법은 [examples/](examples/README.md)의 예제 여섯(바닐라·React·Next.js·Vue·SvelteKit·Node)과 스타일 예제 셋(Word식·Google Docs식·Notion식)을 본다.
 
 ## 실행
 
@@ -28,7 +28,7 @@ npm run bench   # 엔진 벤치마크 (모델 + 레이아웃, DOM 없음)
 npm run typecheck
 npm run fonts && npm run bench:browser  # 1,000쪽 성능 다섯 지표 (헤드리스 Chrome, bench/baseline.json과 비교)
 npm run golden  # 기준 문서 레이아웃이 브라우저에서도 같은지 (헤드리스 Chrome·Edge)
-node scripts/build-packages.mjs  # @quire/* 패키지 빌드 (.build/packs) → examples/의 예제 앱 6개
+node scripts/build-packages.mjs  # @quiredoc/* 패키지 빌드 (.build/packs) → examples/의 예제 앱 6개
 ```
 
 ## 문서

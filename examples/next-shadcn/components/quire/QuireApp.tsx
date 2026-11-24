@@ -1,14 +1,14 @@
 'use client';
 /**
  * Quire 전체 기능 예제 (Next.js App Router + Tailwind + shadcn/ui). 화면 조각은 모두 shadcn 컴포넌트,
- * 편집기 연결은 @quire/react의 useQuire·QuireEditor, 화면 상태는 useUi, 명령은 act(편집기 API를 부르고 포커스를 돌려줌).
+ * 편집기 연결은 @quiredoc/react의 useQuire·QuireEditor, 화면 상태는 useUi, 명령은 act(편집기 API를 부르고 포커스를 돌려줌).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, FileText, MessageSquarePlus, PanelLeft, PanelRight } from 'lucide-react';
 import { toast } from 'sonner';
-import { QuireEditor, useEditorState, useQuire } from '@quire/react';
-import { highlightWordsPlugin, wordCountPlugin, type Editor, type MenuItem as PluginMenuItem, type SpellMenu, type WordCount } from '@quire/editor';
-import { safeLink } from '@quire/model';
+import { QuireEditor, useEditorState, useQuire } from '@quiredoc/react';
+import { highlightWordsPlugin, wordCountPlugin, type Editor, type MenuItem as PluginMenuItem, type SpellMenu, type WordCount } from '@quiredoc/editor';
+import { safeLink } from '@quiredoc/model';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';

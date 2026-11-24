@@ -3,8 +3,8 @@
  * 멈추거나(무한 루프·스택 넘침) 엉뚱한 예외 없이 끝난다. 가져오기에 성공한 정본은 편집 문서로 열린다.
  */
 import { describe, expect, it } from 'vitest';
-import { safeLink } from '@quire/model';
-import { assetIdOf, documentFromQuire, migrateQuire, openQuire, packQuire, readZip, writeZip, type QuireDoc } from '@quire/sync';
+import { safeLink } from '@quiredoc/model';
+import { assetIdOf, documentFromQuire, migrateQuire, openQuire, packQuire, readZip, writeZip, type QuireDoc } from '@quiredoc/sync';
 import { elementsDocument, exportDocx, exportHtml, exportHwpx, exportMarkdown, importDocx, importHtml, importHwpx, importMarkdown, type ImportedAsset } from './index';
 import { parseXml } from './xml';
 

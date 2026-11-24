@@ -1,5 +1,5 @@
 {
-  "name": "@quire/convert",
+  "name": "@quiredoc/convert",
   "description": "Import and export for Quire documents: HWPX, DOCX, Markdown, HTML (no DOM required)",
   "keywords": [
     "hwpx",
@@ -17,8 +17,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@quire/editor": "*",
-    "@quire/model": "*",
-    "@quire/sync": "*"
+    "@quiredoc/editor": "*",
+    "@quiredoc/model": "*",
+    "@quiredoc/sync": "*"
   }
 }

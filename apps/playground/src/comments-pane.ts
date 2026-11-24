@@ -2,7 +2,7 @@
  * 댓글 창 (14 §3.2): 편집기 밖의 DOM. 범위가 있는 열린 스레드는 범위 시작의 y(문서 y - 스크롤)에 맞추어 놓고 겹치면 아래로 민다.
  * 해결한 스레드와 고아 스레드(글이 지워짐)는 아래 목록에 모은다. 캐럿이 댓글 범위에 들어가면 그 스레드를 고른다.
  */
-import type { Editor, SuggestionView, ThreadView } from '@quire/editor';
+import type { Editor, SuggestionView, ThreadView } from '@quiredoc/editor';
 
 const GAP = 8;
 

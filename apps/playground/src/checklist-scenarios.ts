@@ -8,8 +8,8 @@
  * 달라질 수 있는 경우(조합 중 방향키 등)는 accept 함수로 허용 범위를 둔다. V3(스크린리더)와 후보 창 위치는 눈·귀로 판정한다.
  */
 
-import type { Editor } from '@quire/editor';
-import { isHFStory } from '@quire/model';
+import type { Editor } from '@quiredoc/editor';
+import { isHFStory } from '@quiredoc/model';
 
 export type Group = 'V1' | 'V2' | 'V3' | 'V4';
 

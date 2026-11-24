@@ -3,8 +3,8 @@
  * 그려지며, 덧그리기 갈고리가 그리기 순서대로 불린다
  */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SECTION, Doc, Document, LAST_SECTION, cellStoryId, hfStoryId, noteStoryId, type SectionProps } from '@quire/model';
-import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quire/layout';
+import { DEFAULT_SECTION, Doc, Document, LAST_SECTION, cellStoryId, hfStoryId, noteStoryId, type SectionProps } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quiredoc/layout';
 import { Formatter, defaultPageSetup } from './formatter';
 import { RecordingTarget } from './paint';
 import { DEFAULT_METRICS, PagePainter, type PaintOverlay } from './painter';

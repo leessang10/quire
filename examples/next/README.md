@@ -1,6 +1,6 @@
 # Next.js + styled-components
 
-Next.js 16 App Router에서 `@quire/react`를 쓰는 예제입니다. 에디터는 브라우저에서만 만들고(`ssr: false`), 화면 틀과 styled-components 스타일은 서버에서 렌더링합니다.
+Next.js 16 App Router에서 `@quiredoc/react`를 쓰는 예제입니다. 에디터는 브라우저에서만 만들고(`ssr: false`), 화면 틀과 styled-components 스타일은 서버에서 렌더링합니다.
 
 ![Next.js 예제](screenshots/screenshot.webp)
 

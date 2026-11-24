@@ -1,9 +1,9 @@
 /**
- * 제품 구현(Q): @quire/model의 Doc + @quire/sync의 SyncBridge를 V4 시나리오·무작위 시험의 Replica로 감싼다.
+ * 제품 구현(Q): @quiredoc/model의 Doc + @quiredoc/sync의 SyncBridge를 V4 시나리오·무작위 시험의 Replica로 감싼다.
  * 문단 이동·삭제는 Doc의 구획 연산(moveParagraphs, hideParagraphs), 실행 취소는 Doc의 History.
  */
-import { History, type Doc, type Op } from '@quire/model';
-import { SyncBridge } from '@quire/sync';
+import { History, type Doc, type Op } from '@quiredoc/model';
+import { SyncBridge } from '@quiredoc/sync';
 import type { Model, Replica } from './models';
 
 class QuireReplica implements Replica {

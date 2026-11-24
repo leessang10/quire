@@ -64,7 +64,7 @@
 - 셰이핑 캐시 키: `(글꼴, 크기, OpenType 기능, 텍스트)`. 같은 단어가 반복되는 한글 문서에서 적중률이 높다.
 - 클러스터 매핑은 캐럿 위치 계산(03)에 쓰인다. 한글 음절, 결합 문자, 이모지 ZWJ 시퀀스는 하나의 캐럿 단위다 (`Intl.Segmenter` grapheme).
 
-### 1단계 구현 (`@quire/shaping`, ADR-0002)
+### 1단계 구현 (`@quiredoc/shaping`, ADR-0002)
 
 - **셰이퍼 = 레이아웃의 Measurer + `advances`·`fontsOf`**. 레이아웃은 공백·탭으로 나뉜 조각(어절)마다 셰이퍼에 코드포인트별 진행폭을 받아 x 위치를 채운다. 셰이퍼가 없으면 0단계처럼 grapheme별 폭을 합한다(시험용 고정 폭, 시스템 글꼴 캔버스).
 - **`HbShaper`** (harfbuzzjs)

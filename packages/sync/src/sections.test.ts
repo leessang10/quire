@@ -2,7 +2,7 @@
  * 구역 동기화·저장 (12 §3.2): 구역 설정은 Loro 맵 sections의 '<구역 ID>|<키>' (키마다 LWW), 구역 나눔은 ¶의 문단 속성.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { Doc, Document, LAST_SECTION, fullSection, hfStoryId, noteRefs, noteStoryId, type SectionProps } from '@quire/model';
+import { Doc, Document, LAST_SECTION, fullSection, hfStoryId, noteRefs, noteStoryId, type SectionProps } from '@quiredoc/model';
 import { SyncBridge } from './index';
 import { SyncClient } from './client';
 import { SyncCore } from './core';

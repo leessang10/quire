@@ -14,7 +14,7 @@
  * - 처음 문서: [사용자 문단들 BRK(t)][¶ BRK(p)][¶ 보초]. t는 순서 목록에, p는 자리표시.
  */
 import { Cursor, LoroDoc, type LoroEventBatch, type LoroText, type VersionVector } from 'loro-crdt';
-import { Document, type AnnotationChange, type CommentChange, type Doc, type RawChange, type TableChange, type TextDelta } from '@quire/model';
+import { Document, type AnnotationChange, type CommentChange, type Doc, type RawChange, type TableChange, type TextDelta } from '@quiredoc/model';
 import { COMMENTS, readCmt, readCmts, writeCmt } from './comments';
 import { ANNOTATIONS, annFromWire, annIdsInLoro, annIdsOf, annRangeToU16, readAnn, writeAnnKey, writeAnnRange } from './annotations';
 import {

@@ -1,7 +1,7 @@
 'use client';
 /** 대화상자 (shadcn Dialog): 쪽 설정, 글 한 줄 묻기(링크·대체 텍스트), 글자 수, 단축키, 알림 */
 import { useEffect, useState, type ReactNode } from 'react';
-import type { Editor, WordCount } from '@quire/editor';
+import type { Editor, WordCount } from '@quiredoc/editor';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';

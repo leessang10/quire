@@ -6,7 +6,7 @@
  * 원소 ID(Loro) 기준이라 텍스트 diff 추정이 없다. 결과를 모두 수락하면 B, 모두 거부하면 A다 (시험).
  * 구획 이동(문단 순서)·표 구조는 표시하지 않는다 (A의 순서로 보인다, 4-8).
  */
-import { MARK_KEYS, PARA_MARK_PREFIX, newAnnotationId, type CommentAuthor, type Document, type Doc, type TextDelta } from '@quire/model';
+import { MARK_KEYS, PARA_MARK_PREFIX, newAnnotationId, type CommentAuthor, type Document, type Doc, type TextDelta } from '@quiredoc/model';
 import type { LoroDoc } from 'loro-crdt';
 import { TEXT, documentFromLoro, storyIdsOf, storyNames } from './shape';
 

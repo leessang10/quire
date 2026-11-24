@@ -11,7 +11,7 @@
  * - 새 판 (09 §9): Worker가 hold를 보내면 보낸 묶음이 끝난 뒤 held로 답하고 그 뒤로는 보내지 않는다. 그때의 화면 텍스트를
  *   기억해 두었다가 reset을 받으면 새 Doc을 만들고, held 뒤에 한 로컬 변경(텍스트 차이)을 새 Doc에 다시 적용한다.
  */
-import { Doc, Document, type AnnotationChange, type CommentChange, type Position, type RawChange, type SegState, type TableChange, type TableRecord } from '@quire/model';
+import { Doc, Document, type AnnotationChange, type CommentChange, type Position, type RawChange, type SegState, type TableChange, type TableRecord } from '@quiredoc/model';
 import { annFromWire, annRangeToU16, type AnnWire } from './annotations';
 import { applyHunks, diffText, rebaseHunks } from './epoch';
 import { mapPosThrough, opToDelta, transform, type LocalChange } from './ot';

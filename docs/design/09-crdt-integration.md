@@ -6,7 +6,7 @@
 
 ## 1. 목표
 
-편집 모델(`@quire/model`의 `Doc`)과 Loro 문서를 이어, 여러 피어의 편집이 같은 문서로 수렴하게 한다.
+편집 모델(`@quiredoc/model`의 `Doc`)과 Loro 문서를 이어, 여러 피어의 편집이 같은 문서로 수렴하게 한다.
 키 입력 지연(현재 1만 쪽에서 p50 0.2 ms)을 늘리지 않는다.
 
 ## 2. 구조
@@ -32,7 +32,7 @@
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
-| 1 | 텍스트 동기화: `@quire/sync` 브리지, UTF-16 위치, 로컬 변경 기록, 원격 델타 적용, 내보내기·가져오기 묶음, 다중 피어 무작위 수렴 시험. 실행 취소는 Doc 자체(되살린 글자는 Loro에 새로 입력) | 완료 (§5) |
+| 1 | 텍스트 동기화: `@quiredoc/sync` 브리지, UTF-16 위치, 로컬 변경 기록, 원격 델타 적용, 내보내기·가져오기 묶음, 다중 피어 무작위 수렴 시험. 실행 취소는 Doc 자체(되살린 글자는 Loro에 새로 입력) | 완료 (§5) |
 | 2 | 구획: BRK를 Loro 텍스트의 U+E000으로, 구획 순서·숨김을 Loro 리스트·맵으로. 보초·자리표시 구획(V4 후속 4). 원격 구획 상태 → `Doc.applySegState` | 완료 (§6) |
 | 3 | 공유 위치: 원격 커서·선택(프레즌스), 주석 범위를 Loro 커서로. 사용자별 실행 취소(Loro UndoManager 또는 Doc 실행 취소의 의미 정리) | 완료 (§7) |
 | 4 | Worker로 이전 + 대기 중 로컬 변경 위로 원격 델타 변환. 네트워크 공급자(WebSocket), 재접속 | 완료 (§8) |
@@ -66,9 +66,9 @@ type RawChange =
 
 ### 구현
 
-- `@quire/model`: 청크별 UTF-16 길이, `observe()`(변경 기록), `applyDelta()`(원격 델타), `rawText()`(Loro 텍스트와 비교용), `segmentsEnabled`.
-- `@quire/sync`: `SyncBridge.create(text)` / `fromSnapshot(snapshot)`, `receive(update)`, `flush()`, `onUpdate`, `onRemoteChange`, `snapshot()`.
-- `@quire/editor`: `doc` 옵션(브리지가 붙은 Doc 편집), `docChanged()`(원격 변경 뒤 다시 배치·그리기).
+- `@quiredoc/model`: 청크별 UTF-16 길이, `observe()`(변경 기록), `applyDelta()`(원격 델타), `rawText()`(Loro 텍스트와 비교용), `segmentsEnabled`.
+- `@quiredoc/sync`: `SyncBridge.create(text)` / `fromSnapshot(snapshot)`, `receive(update)`, `flush()`, `onUpdate`, `onRemoteChange`, `snapshot()`.
+- `@quiredoc/editor`: `doc` 옵션(브리지가 붙은 Doc 편집), `docChanged()`(원격 변경 뒤 다시 배치·그리기).
 - 플레이그라운드 `/collab.html`: 두 편집기를 가짜 네트워크(지연, 오프라인)로 잇는 데모.
 
 ### 발견한 것
@@ -124,7 +124,7 @@ type RawChange =
 |---|---|
 | V4 시나리오 36개를 제품 구현에 그대로 (스파이크의 `Q` 모델: Doc + 브리지) | **36 통과**, 유실·중복 0 (M4와 같음) |
 | V4 무작위 동시 편집 (피어 3개 × 150 편집 × 200회, 일반 / 이동 35%) | 200/200 / 200/200 수렴, 구조 위반 0 (Doc = Loro, 문단 목록 = 처음부터 계산, 불변식 포함) |
-| `@quire/sync` 무작위 시험 (피어 3개 × 300단계 × 30개, 입력·삭제·이동·숨김·실행 취소·부분 전달) | 매 단계 모든 피어의 Doc = Loro 텍스트, 구획 키 일치, 문단 목록 일치. 끝에 세 피어 같은 문서 |
+| `@quiredoc/sync` 무작위 시험 (피어 3개 × 300단계 × 30개, 입력·삭제·이동·숨김·실행 취소·부분 전달) | 매 단계 모든 피어의 Doc = Loro 텍스트, 구획 키 일치, 문단 목록 일치. 끝에 세 피어 같은 문서 |
 | 단위 시험 | 이동·숨김과 실행 취소 전파(다른 피어의 이동은 그대로), 모두 지운 뒤 동시 입력 → 한 문단 |
 | 브라우저 데모 | A를 오프라인으로 두고 문단을 두 칸 위로 옮기는 동안 B가 그 문단을 고침 → 재연결 후 B의 수정이 옮겨진 문단 안에 들어가고 두 문서 같음 |
 
@@ -164,7 +164,7 @@ Loro 커서의 성질 (탐색 시험, loro-crdt 1.17.1)
 - `getCursorPos`는 1,200만 글자 문서에서 1회 약 0.06 ms다. `convertPos`(1회 26 ms)와 달리 바로 쓸 수 있다.
 - 모르는 연산을 가리키는 커서는 `undefined`를 준다 (예외 아님).
 
-### 프레즌스 (`@quire/sync`의 `Presence`)
+### 프레즌스 (`@quiredoc/sync`의 `Presence`)
 
 - 상태: 이름, 색, 선택 영역의 두 끝(커서). 문서 기록에는 남지 않는다.
 - **순서 규칙**: 피어마다 자기 키만 쓰므로, 보내는 피어의 일련번호(시작값 = 시각×1000, 갱신마다 +1)가 큰 쪽이 이긴다. 늦게 도착한 옛 상태는 버린다. 떠날 때는 빈 상태를 보낸다.
@@ -198,7 +198,7 @@ Loro 커서의 성질 (탐색 시험, loro-crdt 1.17.1)
 |---|---|
 | 왕복 (모든 캐럿 자리, 이모지·숨긴 문단·옮긴 문단 포함) | `resolveCursor(cursorAt(o)) = o`, 다른 피어에서 풀어도 같은 자리 |
 | 동시 편집·이동 | 같은 자리에 입력해도 커서는 기준 글자 앞, 문단을 옮겨도 그 글자를 따라감. 지운 글자 → 그 자리, 숨긴 문단 → 그 문단이 있던 자리 |
-| `@quire/sync` 무작위 시험 30개 | 매 단계 모든 피어에서 임의 캐럿의 왕복이 제자리. 25단계마다 만든 커서를 끝에서 세 피어가 같은 자리로 푼다 |
+| `@quiredoc/sync` 무작위 시험 30개 | 매 단계 모든 피어에서 임의 캐럿의 왕복이 제자리. 25단계마다 만든 커서를 끝에서 세 피어가 같은 자리로 푼다 |
 | 프레즌스 | 같은 밀리초 연속 갱신 → 마지막 것, 늦게 온 옛 상태 무시, flush 전 보류, 풀 수 없을 때 마지막 자리, 하트비트·시간 초과, 떠남 |
 | 브라우저 데모 | A의 선택이 B 화면에 파란 이름표와 함께 보임. B가 입력하면 A 화면의 B 캐럿이 입력한 글자 뒤를 따라감. A가 문단을 옮겨도 양쪽의 상대 캐럿·선택이 같은 글자에 남음 |
 
@@ -393,7 +393,7 @@ Worker로 옮기면 Doc과 Loro 사이에 비동기 지연이 생긴다. 메인�
 node --experimental-transform-types --import ./apps/sync-server/src/resolve.ts apps/sync-server/src/server.ts 8787 --data=.quire-data --idle=10000
 ```
 
-서버는 이제 `@quire/sync`(화면 텍스트, 정본 JSON, 새 판)를 쓴다. 워크스페이스 소스의 확장자 없는 상대 import를 풀기 위해 해석 훅(`resolve.ts`)이 필요하다. 생성자 매개변수 속성을 쓰므로 타입 제거만으로는 안 되고 `--experimental-transform-types`가 필요하다. 배포할 때는 묶어서 빌드한다.
+서버는 이제 `@quiredoc/sync`(화면 텍스트, 정본 JSON, 새 판)를 쓴다. 워크스페이스 소스의 확장자 없는 상대 import를 풀기 위해 해석 훅(`resolve.ts`)이 필요하다. 생성자 매개변수 속성을 쓰므로 타입 제거만으로는 안 되고 `--experimental-transform-types`가 필요하다. 배포할 때는 묶어서 빌드한다.
 
 ### 남은 것
 

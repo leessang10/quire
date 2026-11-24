@@ -1,4 +1,4 @@
-# @quire/sync
+# @quiredoc/sync
 
 Quire collaboration and storage: CRDT sync (Loro), presence, version history, .quire files.
 
@@ -7,7 +7,7 @@ Part of [Quire](https://github.com/leessang10/quire), a web document editor with
 ## Install
 
 ```sh
-npm install @quire/sync
+npm install @quiredoc/sync
 ```
 
 ## Usage

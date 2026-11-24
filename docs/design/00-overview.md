@@ -80,16 +80,16 @@ Word·한글(HWP) 수준의 조판 품질과 Google Docs 수준의 실시간 협
 
 | 패키지 | 역할 | DOM 의존 |
 |---|---|---|
-| `@quire/model` | 문서 모델, 위치, 범위, 연산, 스키마, 링크 정제 | 없음 |
-| `@quire/shaping` | 글꼴 로드(조각), HarfBuzz 셰이핑 | 없음 (WASM) |
-| `@quire/layout` | 문단 레이아웃, 쪽 조립, 표·다단·각주 | 없음 |
-| `@quire/sync` | CRDT(Loro) 어댑터, 정본 JSON, `.quire`, Worker·중계, 주석·버전 | 없음 |
-| `@quire/editor` | 캔버스 렌더러, 입력 층, 선택, 접근성 미러, 명령·키맵, 플러그인 | 있음 |
-| `@quire/sdk` | 프레임워크 무관 `createEditor` (08 §3) | 있음 |
-| `@quire/react` | React 컴포넌트와 훅 (08 §4) | 있음 |
-| `@quire/convert` | HTML·Markdown·DOCX·HWPX 가져오기·내보내기 | 없음 |
-| `@quire/pdf` | PDF 내보내기 (브라우저·Node) | 없음 (`pdfFromQuire`) |
-| `@quire/fonts` | 엔진 글꼴 조각 자산 (빌드 때 만듦) | - |
+| `@quiredoc/model` | 문서 모델, 위치, 범위, 연산, 스키마, 링크 정제 | 없음 |
+| `@quiredoc/shaping` | 글꼴 로드(조각), HarfBuzz 셰이핑 | 없음 (WASM) |
+| `@quiredoc/layout` | 문단 레이아웃, 쪽 조립, 표·다단·각주 | 없음 |
+| `@quiredoc/sync` | CRDT(Loro) 어댑터, 정본 JSON, `.quire`, Worker·중계, 주석·버전 | 없음 |
+| `@quiredoc/editor` | 캔버스 렌더러, 입력 층, 선택, 접근성 미러, 명령·키맵, 플러그인 | 있음 |
+| `@quiredoc/sdk` | 프레임워크 무관 `createEditor` (08 §3) | 있음 |
+| `@quiredoc/react` | React 컴포넌트와 훅 (08 §4) | 있음 |
+| `@quiredoc/convert` | HTML·Markdown·DOCX·HWPX 가져오기·내보내기 | 없음 |
+| `@quiredoc/pdf` | PDF 내보내기 (브라우저·Node) | 없음 (`pdfFromQuire`) |
+| `@quiredoc/fonts` | 엔진 글꼴 조각 자산 (빌드 때 만듦) | - |
 | `apps/playground` | 개발·검증용 앱 (벤치마크·골든·체크리스트 페이지) | 있음 |
 | `apps/sync-server` | 동기화·저장·권한 서버 | 없음 |
 | `examples/` | 저장소 밖 앱처럼 쓰는 예제 6개 | - |

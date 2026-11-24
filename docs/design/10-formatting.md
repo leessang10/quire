@@ -237,7 +237,7 @@ Loro 마크로 아래 시나리오를 두 피어 동시 편집 후 동기화해 
 
 ## 9. 2-2 결과: 모델
 
-### 구현 (`@quire/model`, `@quire/sync` canonical·ot)
+### 구현 (`@quiredoc/model`, `@quiredoc/sync` canonical·ot)
 
 - **저장**: 청크마다 `fmt: Uint16Array`. Doc에 서식 묶음 표(번호 → 얼린 `MarkSet`, 같은 내용은 같은 번호)와 (번호, 키, 값) → 번호 캐시.
 - **문단 속성**: ¶ 카운터 → 얼린 `ParaAttrs`. `ParagraphInfo`에 `attrs`와 `fmt`(글자별 묶음 번호, 서식 없으면 null)를 넣었다. 서식이 바뀐 문단은 새 객체가 되어 레이아웃이 알아챈다(2-3).
@@ -334,7 +334,7 @@ Loro 마크로 아래 시나리오를 두 피어 동시 편집 후 동기화해 
 
 ### 구현
 
-- **스타일** (`@quire/model` `styles.ts`):
+- **스타일** (`@quiredoc/model` `styles.ts`):
   - `Style { name, label, basedOn, next, para, marks }`.
   - 기본 스타일: 본문(`body`), 제목 1–3(`h1`–`h3`: 굵게 24·18·14pt, 앞뒤 간격, `keepWithNext`), 인용(`quote`: 양쪽 24pt 들여쓰기, 기울임, 회색), 목록 문단(`listParagraph`, 2-5에서 씀).
   - 스타일이 없는 문단은 본문이다.
@@ -394,7 +394,7 @@ Loro 마크로 아래 시나리오를 두 피어 동시 편집 후 동기화해 
 
 ### 구현
 
-- **목록 정의** (`@quire/model` `lists.ts`):
+- **목록 정의** (`@quiredoc/model` `lists.ts`):
   - `ListDef { id, kind, levels[9] }`. 수준마다 `{ format, text, indent, hanging, start? }`이고, `text`의 `%1`–`%9`가 그 수준 번호다 (`%1.%2.` 같은 여러 수준 번호도 된다).
   - 기본 번호 목록은 한국 문서 관행을 따른다: `1.` → `가.` → `1)` → `가)` → `(1)` → `(가)` → `①` → `㉮` → `i.`.
   - 기본 글머리 목록은 •, ◦, ▪를 되풀이한다. 수준마다 24pt씩 들여쓰고, 번호 자리(내어쓰기)는 18pt다.

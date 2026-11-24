@@ -2,10 +2,10 @@
  * 브라우저 없이 정본 → PDF (15 §5.4 서버 실행): 정본을 문서로 열고, 주어진 글꼴 파일로 셰이핑·조판해 exportPdf로 낸다.
  * 편집기(DOM)를 만들지 않는다. 서버·CLI·시험에서 쓴다.
  */
-import { DEFAULT_METRICS, Formatter, defaultPageSetup, type PainterEnv } from '@quire/editor';
-import { LayoutCache, PagedLayout, SectionFrames } from '@quire/layout';
-import { HbShaper, loadShapingFont, slotOf, type FontSlot } from '@quire/shaping';
-import { documentFromQuire, type QuireDoc } from '@quire/sync';
+import { DEFAULT_METRICS, Formatter, defaultPageSetup, type PainterEnv } from '@quiredoc/editor';
+import { LayoutCache, PagedLayout, SectionFrames } from '@quiredoc/layout';
+import { HbShaper, loadShapingFont, slotOf, type FontSlot } from '@quiredoc/shaping';
+import { documentFromQuire, type QuireDoc } from '@quiredoc/sync';
 import { exportPdf, type PdfResult } from './export';
 import type { PdfFontSource } from './fonts';
 import type { Subsetter } from './subset';

@@ -1,7 +1,7 @@
 <script lang="ts">
   // 예제 4: SvelteKit + Svelte scoped 스타일. 서버 렌더링 중에는 에디터를 만들지 않는다 (onMount는 브라우저에서만)
   import { onMount } from 'svelte';
-  import type { EditorState, QuireHandle } from '@quire/sdk';
+  import type { EditorState, QuireHandle } from '@quiredoc/sdk';
   import { ACCEPT, demoPlugins, fonts, openFile, sampleDoc, saveFile, type SaveKind } from '#lib/quire-demo';
 
   let host: HTMLElement;
@@ -16,7 +16,7 @@
     let h: QuireHandle | null = null;
     let off = () => {};
     // 에디터 패키지는 브라우저에서만 불러온다 (서버 묶음에 캔버스 코드를 넣지 않는다)
-    import('@quire/sdk').then(async ({ createEditor }) => {
+    import('@quiredoc/sdk').then(async ({ createEditor }) => {
       h = await createEditor({
         host,
         doc: sampleDoc('SvelteKit + scoped 스타일'),

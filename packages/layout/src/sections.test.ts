@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Doc } from '@quire/model';
+import { Doc } from '@quiredoc/model';
 import { LayoutCache, PagedLayout, SectionFrames, geomKey, type Measurer, type PageSetup, type SectionGeom, type SectionSource } from './index';
 
 /** 모든 grapheme 폭 10 */

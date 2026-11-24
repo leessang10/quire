@@ -177,7 +177,7 @@ describe('server storage', () => {
     const s = await serve({});
     const name = room();
     const { packQuire } = await import('./quire-file');
-    const { Doc } = await import('@quire/model');
+    const { Doc } = await import('@quiredoc/model');
     const doc = Doc.fromText('제목\n굵은 본문');
     doc.setParaAttr(0, 'style', 'h1');
     doc.setParaAttr(1, 'align', 'center');
@@ -202,7 +202,7 @@ describe('server storage', () => {
     const s = await serve({});
     const name = room();
     const { assetIdOf, packQuire, openQuire } = await import('./quire-file');
-    const { Doc } = await import('@quire/model');
+    const { Doc } = await import('@quiredoc/model');
     const bytes = new Uint8Array([137, 80, 78, 71, 9, 9, 9, 9]);
     const id = await assetIdOf(bytes);
     const url = `http://localhost:${s.port}/${name}/assets/${id}`;

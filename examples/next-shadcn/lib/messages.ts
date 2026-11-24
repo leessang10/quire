@@ -1,5 +1,5 @@
 /**
- * 앱 화면 문자열 (한국어·영어). 편집기의 메시지 장치(@quire/editor의 Messages)에 덧붙여 쓰므로
+ * 앱 화면 문자열 (한국어·영어). 편집기의 메시지 장치(@quiredoc/editor의 Messages)에 덧붙여 쓰므로
  * 편집기 키(attr.bold, section.nextPage, spell.addWord 등)도 그대로 쓸 수 있다 (설계 18 §5).
  * 키는 점으로 나눈 의미 이름, 자리표시는 {이름}, 복수형은 {n, plural, one {…} other {…}}.
  */
@@ -280,7 +280,7 @@ export const ko = {
   'report.description': '{name}에서 Quire가 담지 못하는 요소를 버렸습니다.',
   'report.item': '{what}: {count}개',
   'about.lead': 'Next.js App Router + Tailwind + shadcn/ui로 만든 Quire 전체 기능 예제입니다.',
-  'about.body': '편집기는 @quire/react의 useQuire·QuireEditor로 붙이고(브라우저에서만, ssr: false), 메뉴·도구 막대·대화상자는 모두 shadcn 컴포넌트입니다.',
+  'about.body': '편집기는 @quiredoc/react의 useQuire·QuireEditor로 붙이고(브라우저에서만, ssr: false), 메뉴·도구 막대·대화상자는 모두 shadcn 컴포넌트입니다.',
   'about.i18n': '화면 글은 한국어·영어 두 벌입니다. 앱 문구는 앱의 메시지 표(lib/messages.ts)를 편집기의 메시지 장치에 덧붙여 쓰고, 언어를 바꾸면 편집기도 setLocale로 함께 바뀝니다.',
   'about.sync': '실시간 협업·버전 이력은 동기화 서버가 필요해 넣지 않았습니다.',
 
@@ -610,7 +610,7 @@ export const en: Record<AppMessageKey, string> = {
   'report.description': 'Quire dropped elements of {name} it can’t hold.',
   'report.item': '{what}: {count}',
   'about.lead': 'A full-featured Quire example built with the Next.js App Router, Tailwind and shadcn/ui.',
-  'about.body': 'The editor is attached with useQuire and QuireEditor from @quire/react (browser only, ssr: false); menus, toolbar and dialogs are all shadcn components.',
+  'about.body': 'The editor is attached with useQuire and QuireEditor from @quiredoc/react (browser only, ssr: false); menus, toolbar and dialogs are all shadcn components.',
   'about.i18n': 'The screen comes in Korean and English. App strings live in the app’s message table (lib/messages.ts), layered on the editor’s message system; switching the language also calls the editor’s setLocale.',
   'about.sync': 'Real-time collaboration and version history are left out because they need a sync server.',
 

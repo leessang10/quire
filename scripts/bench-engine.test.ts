@@ -8,8 +8,8 @@
  * 글자 폭은 고정값(한글 16, 그 외 8)이므로 실제 브라우저의 measureText 비용은 포함되지 않는다.
  */
 import { it } from 'vitest';
-import { Doc, defaultListDef } from '@quire/model';
-import { PLAIN_STYLE, PagedLayout, type FormatSource, type Measurer, type PageSetup, type ParaBox, type RunStyle } from '@quire/layout';
+import { Doc, defaultListDef } from '@quiredoc/model';
+import { PLAIN_STYLE, PagedLayout, type FormatSource, type Measurer, type PageSetup, type ParaBox, type RunStyle } from '@quiredoc/layout';
 
 const measurer: Measurer = { width: (g, face = 0) => (g.codePointAt(0)! >= 0x1100 ? 16 : 8) + face };
 const setup: PageSetup = { width: 794, height: 1123, margin: 96, gap: 24, lineHeight: 27, paraSpacing: 8 };
@@ -64,8 +64,8 @@ function formatDoc(doc: Doc): FormatSource {
   };
   const pt = (v = 0) => (v / 1000) * (96 / 72);
   return (info, force) => {
-    const a = (info as unknown as { attrs: import('@quire/model').ParaAttrs }).attrs;
-    const label = a.list ? doc.listLabel(info as unknown as import('@quire/model').ParagraphInfo) : null;
+    const a = (info as unknown as { attrs: import('@quiredoc/model').ParaAttrs }).attrs;
+    const label = a.list ? doc.listLabel(info as unknown as import('@quiredoc/model').ParagraphInfo) : null;
     const lv = label ? label.def.levels[label.level]! : null;
     const box: ParaBox | null = a.align || a.indent || a.line || lv
       ? { align: a.align ?? 'left', left: pt(lv ? lv.indent : a.indent?.left), right: pt(a.indent?.right), first: lv ? 0 : pt(a.indent?.first), before: setup.paraSpacing, after: 0, line: a.line ?? null }

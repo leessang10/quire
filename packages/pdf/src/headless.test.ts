@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { quireFromText } from '@quire/sync';
+import { quireFromText } from '@quiredoc/sync';
 import { loadSubsetter, pdfFromQuire } from './index';
 
 const root = (p: string) => fileURLToPath(new URL(`../../../${p}`, import.meta.url));

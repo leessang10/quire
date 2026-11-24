@@ -28,7 +28,7 @@ npm run dev        # http://localhost:5307
 화면 전체가 한국어·영어 두 벌입니다. 보기 › 언어에서 바꾸거나 `?lang=en`으로 열면 되고, 고른 언어는 브라우저에 기억합니다. 문서 내용은 바뀌지 않습니다.
 
 - **메시지 표** ([`lib/messages.ts`](lib/messages.ts)): 앱 문구의 `ko`·`en`. `en`은 `Record<AppMessageKey, string>`이라 빠진 키가 타입 오류다.
-- **편집기 메시지 장치에 덧붙이기** ([`lib/i18n.tsx`](lib/i18n.tsx)): `new Messages(locale, { ko, en })`(`@quire/editor`). 그래서 `t()`는 앱 키와 편집기 키(`attr.bold`, `section.nextPage`, `spell.addWord` 등)를 모두 알고, 자리표시·복수형(`{count, plural, one {# page} other {# pages}}`)도 같은 문법이다.
+- **편집기 메시지 장치에 덧붙이기** ([`lib/i18n.tsx`](lib/i18n.tsx)): `new Messages(locale, { ko, en })`(`@quiredoc/editor`). 그래서 `t()`는 앱 키와 편집기 키(`attr.bold`, `section.nextPage`, `spell.addWord` 등)를 모두 알고, 자리표시·복수형(`{count, plural, one {# page} other {# pages}}`)도 같은 문법이다.
 - **편집기도 같이**: 언어가 바뀌면 `editor.setLocale(locale)` — 캔버스 표시(나눔 표시 등), 제안 요약, 접근성 이름. 처음엔 `useQuire({ locale })`.
 - 공통 코드([`lib/quire-app.ts`](lib/quire-app.ts))의 문구는 인자로 받는다: `documentTitle(h, t('app.untitled'))`, `checkPageForm(f, { negative, tooSmall })`.
 - 가져오기 보고의 요소 이름("가로줄" 등)도 언어를 따른다 (편집기 메시지 `drop.*`, 설계 18 §9 L-5).

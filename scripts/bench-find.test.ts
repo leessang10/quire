@@ -3,7 +3,7 @@
  *   npx vitest run --config vitest.bench.config.ts scripts/bench-find.test.ts --silent=false
  */
 import { expect, it } from 'vitest';
-import { Doc, Document, FindCache, compileFind, findInDocument, replaceMatches, type Matcher } from '@quire/model';
+import { Doc, Document, FindCache, compileFind, findInDocument, replaceMatches, type Matcher } from '@quiredoc/model';
 
 const NL = String.fromCharCode(10);
 const LINE = '찾기 시험용 긴 문서의 문단입니다. 보고서와 논문에서 자주 나오는 낱말을 찾아 바꾸어 봅니다. Report 2026';

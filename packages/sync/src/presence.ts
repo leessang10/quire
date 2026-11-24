@@ -9,7 +9,7 @@
  *   받는 쪽이 위치를 풀 수 없으므로, 아직 내보내지 않은 로컬 변경이 있으면 다음 묶음 처리(flush) 뒤에 보낸다.
  * - 그래도 풀 수 없는 경우(다른 피어를 거쳐 오는 연산 등)에는 마지막으로 푼 자리를 Doc 위치로 들고 있다가 쓴다.
  */
-import type { Position } from '@quire/model';
+import type { Position } from '@quiredoc/model';
 import type { SyncBridge } from './bridge';
 import { PresenceStore } from './presence-store';
 

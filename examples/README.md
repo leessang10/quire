@@ -64,12 +64,12 @@ shadcn 메모: shadcn CLI 4가 기본으로 Base UI 판(`base-nova`)을 깐다. 
 
 | 예제 | 프레임워크 | CSS | 붙이는 방법 | 포트 |
 |---|---|---|---|---|
-| [vanilla](vanilla) | HTML + JS (Vite) | 순수 CSS | `createEditor` (@quire/sdk) | 5301 |
-| [react-vite](react-vite) | React 19 + Vite | Tailwind 4 (preflight 켬) | `useQuire`·`QuireEditor`·`useEditorState` (@quire/react) | 5302 |
-| [next](next) | Next.js 16 App Router | styled-components (서버 렌더링 스타일) | @quire/react + `next/dynamic` `ssr: false` | 5303 |
+| [vanilla](vanilla) | HTML + JS (Vite) | 순수 CSS | `createEditor` (@quiredoc/sdk) | 5301 |
+| [react-vite](react-vite) | React 19 + Vite | Tailwind 4 (preflight 켬) | `useQuire`·`QuireEditor`·`useEditorState` (@quiredoc/react) | 5302 |
+| [next](next) | Next.js 16 App Router | styled-components (서버 렌더링 스타일) | @quiredoc/react + `next/dynamic` `ssr: false` | 5303 |
 | [vue](vue) | Vue 3 + Vite | SCSS | `createEditor` + 작은 컴포저블 (공식 래퍼 없음) | 5304 |
 | [svelte](svelte) | SvelteKit 3 + Svelte 5 | scoped 스타일 | `onMount`에서 `createEditor` (공식 래퍼 없음) | 5305 |
-| [node](node) | Node (DOM 없음) | — | `@quire/convert`·`pdfFromQuire` CLI | — |
+| [node](node) | Node (DOM 없음) | — | `@quiredoc/convert`·`pdfFromQuire` CLI | — |
 
 브라우저 예제 다섯 개는 기능이 같습니다: 굵게·기울임·밑줄(상태 반영), 실행 취소·다시 실행, 문단 스타일, 예제 플러그인(글자 수, 강조 낱말),
 파일 열기(HWPX·DOCX·Markdown·HTML), 저장(HWPX·DOCX·Markdown·PDF). 공통 코드는 [`shared/quire-demo.ts`](shared/quire-demo.ts)를 각 예제에 복사해 씁니다.
@@ -98,7 +98,7 @@ node convert.mjs some.hwpx out/some.docx
 
 ## 앱이 할 일
 
-- **글꼴**: `@quire/fonts`의 `fonts/`(조각 + `manifest.json`)를 공개 폴더 `/quire/fonts/`에 둔다. 문서에 나온 글자가 든 조각만 내려받는다.
+- **글꼴**: `@quiredoc/fonts`의 `fonts/`(조각 + `manifest.json`)를 공개 폴더 `/quire/fonts/`에 둔다. 문서에 나온 글자가 든 조각만 내려받는다.
 - **PDF**: `harfbuzzjs/dist/harfbuzz-subset.wasm`을 `/quire/harfbuzz-subset.wasm`에 둔다 (PDF 글꼴 부분화).
 - 그 밖의 WASM(HarfBuzz 셰이핑, Loro)은 패키지가 알아서 찾는다. 번들러 설정이 필요 없다 (Vite는 `optimizeDeps.exclude`에 `harfbuzzjs`·`loro-crdt`).
 - 서버 렌더링 프레임워크(Next.js·SvelteKit)에서는 에디터를 브라우저에서만 만든다 (`ssr: false`, `onMount`).

@@ -2,7 +2,7 @@
  * 맞춤법 검사 데모 (15 §4): 자주 틀리는 한국어 표기 몇 개를 찾는 작은 검사기와 오른쪽 클릭 메뉴.
  * 실제 한국어 검사기는 앱이 끼운다 (O-36). 영어 낱말은 WordListChecker로 작은 목록만 본다.
  */
-import { WordListChecker, type Editor, type MenuItem, type SpellChecker, type SpellIssue, type SpellMenu } from '@quire/editor';
+import { WordListChecker, type Editor, type MenuItem, type SpellChecker, type SpellIssue, type SpellMenu } from '@quiredoc/editor';
 
 /** 틀린 표기 → 고칠 말 (낱말 경계와 상관없이 찾는다: 활용형 앞부분이 같다) */
 const MISTAKES: Array<[string, string[], SpellIssue['kind'], string?]> = [

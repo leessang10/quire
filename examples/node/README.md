@@ -1,6 +1,6 @@
 # Node 변환기 (DOM 없음)
 
-브라우저 없이 Node에서 문서를 바꾸는 명령줄 도구입니다. 모든 변환은 정본(QuireDoc)을 거치고, PDF는 편집기와 같은 조판으로 쪽을 나눕니다 (`@quire/pdf`의 `pdfFromQuire`).
+브라우저 없이 Node에서 문서를 바꾸는 명령줄 도구입니다. 모든 변환은 정본(QuireDoc)을 거치고, PDF는 편집기와 같은 조판으로 쪽을 나눕니다 (`@quiredoc/pdf`의 `pdfFromQuire`).
 
 | 입력 | 출력 |
 |---|---|
@@ -40,8 +40,8 @@ $ node convert.mjs out/sample.hwpx out/roundtrip.md
 ## 핵심 코드
 
 ```js
-import { importHwpx, importMarkdown, exportDocx } from '@quire/convert';
-import { loadSubsetter, pdfFromQuire } from '@quire/pdf';
+import { importHwpx, importMarkdown, exportDocx } from '@quiredoc/convert';
+import { loadSubsetter, pdfFromQuire } from '@quiredoc/pdf';
 
 const { doc, assets, report } = await importHwpx(bytes);       // → 정본 + 그림 바이트 + 버린 요소
 const docx = await exportDocx(doc, { asset: (id) => assets.get(id) });
@@ -54,4 +54,4 @@ const pdf = await pdfFromQuire(doc, {
 });
 ```
 
-[`convert.mjs`](convert.mjs)는 `@quire/fonts`의 글꼴 조각 목록(manifest)에서 PDF용 글꼴을 모읍니다.
+[`convert.mjs`](convert.mjs)는 `@quiredoc/fonts`의 글꼴 조각 목록(manifest)에서 PDF용 글꼴을 모읍니다.

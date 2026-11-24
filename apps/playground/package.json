@@ -1,5 +1,5 @@
 {
-  "name": "@quire/playground",
+  "name": "@quiredoc/playground",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,11 +8,11 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@quire/editor": "*",
-    "@quire/sync": "*",
-    "@quire/model": "*",
-    "@quire/pdf": "*",
+    "@quiredoc/editor": "*",
+    "@quiredoc/sync": "*",
+    "@quiredoc/model": "*",
+    "@quiredoc/pdf": "*",
     "harfbuzzjs": "1.6.4",
-    "@quire/convert": "*"
+    "@quiredoc/convert": "*"
   }
 }

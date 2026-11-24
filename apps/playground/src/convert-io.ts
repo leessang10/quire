@@ -1,8 +1,8 @@
 /**
  * HTML·Markdown·DOCX·HWPX 가져오기·내보내기 (15 §6, 5-5–5-7): 정본을 거친다. 변환 모듈은 처음 쓸 때 불러온다.
  */
-import { dropMessageKey, type DropCounts, type DropKind, type Editor } from '@quire/editor';
-import { documentFromQuire, quireFromDocument } from '@quire/sync';
+import { dropMessageKey, type DropCounts, type DropKind, type Editor } from '@quiredoc/editor';
+import { documentFromQuire, quireFromDocument } from '@quiredoc/sync';
 
 export type ConvertKind = 'html' | 'md' | 'docx' | 'hwpx';
 const LABEL: Record<ConvertKind, string> = { html: 'HTML', md: 'Markdown', docx: 'DOCX', hwpx: 'HWPX' };
@@ -24,7 +24,7 @@ const baseName = (editor: Editor) => (editor.printSource().title || 'quire').rep
 
 /** 문서를 내보낸다 (내려받기 없이: 시험·확인용) */
 export async function exportAs(editor: Editor, kind: ConvertKind): Promise<string | Uint8Array> {
-  const c = await import('@quire/convert');
+  const c = await import('@quiredoc/convert');
   const q = quireFromDocument(editor.document);
   if (kind === 'md') return c.exportMarkdown(q);
   const src = editor.printSource();
@@ -49,7 +49,7 @@ export async function saveAs(editor: Editor, kind: ConvertKind): Promise<void> {
 
 /** 가져와 편집기 문서로 바꾼다. 버린 요소를 돌려준다 */
 export async function importAs(editor: Editor, data: string | Uint8Array, kind: ConvertKind): Promise<DropCounts> {
-  const c = await import('@quire/convert');
+  const c = await import('@quiredoc/convert');
   const r =
     kind === 'html' ? await c.importHtml(data as string) : kind === 'md' ? await c.importMarkdown(data as string) : kind === 'hwpx' ? await c.importHwpx(data as Uint8Array) : await c.importDocx(data as Uint8Array);
   for (const [, a] of r.assets) await editor.putAsset(new Blob([a.bytes as BlobPart], { type: a.type }));

@@ -66,7 +66,7 @@ import { Kbd } from '@/components/ui/kbd';
 import { cn } from '@/lib/utils';
 import type { Act } from '@/lib/use-ui';
 import { COLORS, FONTS, HIGHLIGHTS, LINE_SPACINGS, PAPERS, STYLES, applyPageForm, pageFormOf, paperSize, type Ui } from '@/lib/quire-app';
-import type { Editor } from '@quire/editor';
+import type { Editor } from '@quiredoc/editor';
 import { LOCALES, useI18n, useT } from '@/lib/i18n';
 import type { AppMessageKey } from '@/lib/messages';
 

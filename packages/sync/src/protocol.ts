@@ -6,7 +6,7 @@
  * Worker는 받은 묶음을 그 rev 뒤에 쌓인 원격 항목들에 대해 변환해 적용하고, 메인은 받은 원격 항목을
  * 보낸 것 + 대기열에 대해 변환해 Doc에 적용한다. 두 쪽이 같은 변환 함수(ot.ts)를 같은 입력에 쓰므로 같은 결과가 된다.
  */
-import type { ListDef, SectionProps, SegId, SegState, Style, TableRecord } from '@quire/model';
+import type { ListDef, SectionProps, SegId, SegState, Style, TableRecord } from '@quiredoc/model';
 import type { LocalChange, RemoteOp } from './ot';
 import type { AnnWire } from './annotations';
 import type { FormatState } from './shape';

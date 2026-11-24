@@ -2,8 +2,8 @@
  * 머리말·꼬리말과 필드 (12 §5): 본문 프레임은 자리표시 값으로 잰 머리말 높이로만 정해지고, 쪽 번호는 조립된 쪽 목록에서 센다.
  */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SECTION, Doc, Document, LAST_SECTION, hfStoryId, type SectionProps } from '@quire/model';
-import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quire/layout';
+import { DEFAULT_SECTION, Doc, Document, LAST_SECTION, hfStoryId, type SectionProps } from '@quiredoc/model';
+import { LayoutCache, PagedLayout, SectionFrames, type Measurer } from '@quiredoc/layout';
 import { Formatter, defaultPageSetup } from './formatter';
 import { hfText, layoutHF, pageHF } from './headers';
 

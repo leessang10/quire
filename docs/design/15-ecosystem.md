@@ -151,7 +151,7 @@ class PagePainter {
 
 ### 5.2 PDF 작성기
 
-외부 라이브러리 없이 쓴다 (`@quire/pdf`, DOM 없음, Node·브라우저·Worker).
+외부 라이브러리 없이 쓴다 (`@quiredoc/pdf`, DOM 없음, Node·브라우저·Worker).
 
 - **글꼴**: 글꼴 슬롯(Pretendard 조각들, Noto Sans KR)은 OpenType CFF(`.otf`)다. 쓰인 글리프만 남긴 부분 글꼴을 만들어 `FontFile3`(`/Subtype /OpenType`)로 넣고, `Type0` + `CIDFontType0` + `Identity-H`로 글리프 ID를 그대로 CID로 쓴다. 부분 글꼴 만들기(CFF 부분화)가 어려우면 첫 단계는 조각 파일을 통째로 넣는다 (조각 하나 250–460 KB, O-37).
 - **글자 복사**: 글꼴마다 `ToUnicode` CMap (글리프 ID → 원문 글자). 합자처럼 글리프 하나가 여러 글자면 그 글자열로 매핑한다. 한 글자가 여러 글리프면 첫 글리프에 매핑한다.
@@ -168,7 +168,7 @@ class PagePainter {
 
 ### 5.4 서버 실행 (08 §6)
 
-`PagePainter`와 PDF 작성기가 DOM에 의존하지 않으므로, 동기화 서버(또는 `@quire/server`)가 정본 JSON → 조판 → PDF를 낼 수 있다. 글꼴은 서버가 같은 파일을 읽는다. 첫 쪽 PNG 썸네일은 5단계 밖이다 (래스터라이저가 필요하다).
+`PagePainter`와 PDF 작성기가 DOM에 의존하지 않으므로, 동기화 서버(또는 `@quiredoc/server`)가 정본 JSON → 조판 → PDF를 낼 수 있다. 글꼴은 서버가 같은 파일을 읽는다. 첫 쪽 PNG 썸네일은 5단계 밖이다 (래스터라이저가 필요하다).
 
 ## 6. 교환 포맷 (G5)
 
@@ -200,7 +200,7 @@ class PagePainter {
 
 - 모든 변환은 **정본 JSON(07 §4)** 을 거친다: 내보내기는 정본 → 포맷, 가져오기는 포맷 → 정본 → `documentFromQuire`. 내보내기의 시작은 `quireFromDocument`다. 편집 모델·Loro를 직접 다루지 않는다.
 - 클립보드의 HTML 변환(`fragmentToHtml`·`htmlToFragment`, 04 §6)은 문서 조각용이다. 문서 단위 HTML은 이것을 넓혀 같이 쓴다 (정제 규칙 하나).
-- 패키지 `@quire/convert` (DOM 없음). HTML 파싱은 이미 자체 파서(`parseHtml`)가 있어 Node에서도 된다. DOCX·HWPX는 zip + XML이다: zip은 `sync/zip.ts`를 옮겨 같이 쓰고, XML은 작은 자체 파서를 둔다 (네임스페이스, 엔티티, CDATA만).
+- 패키지 `@quiredoc/convert` (DOM 없음). HTML 파싱은 이미 자체 파서(`parseHtml`)가 있어 Node에서도 된다. DOCX·HWPX는 zip + XML이다: zip은 `sync/zip.ts`를 옮겨 같이 쓰고, XML은 작은 자체 파서를 둔다 (네임스페이스, 엔티티, CDATA만).
 - 단위: DOCX는 twip(1/20 pt)·EMU, HWPX는 HWPUNIT(1/7200 인치 = 1/100 pt). 정본은 1/1000 pt라 정수 변환이다.
 
 ### 6.3 DOCX
@@ -253,7 +253,7 @@ interface QuirePlugin {
 ## 8. 공개 API 정리 (08)
 
 - 지금 편집기 생성자(`new Editor(opts)`)를 08 §3의 `createEditor`로 감싸고, 플러그인 옵션을 받는다.
-- `@quire/react`: `useQuire`, `QuireEditor`, `useEditorState` (08 §4). 입력 한 번이 리렌더를 일으키지 않음을 시험한다 (렌더 횟수 세기).
+- `@quiredoc/react`: `useQuire`, `QuireEditor`, `useEditorState` (08 §4). 입력 한 번이 리렌더를 일으키지 않음을 시험한다 (렌더 횟수 세기).
 - 이것은 5단계 끝(5-8)에 플러그인 API와 같이 한다.
 
 ## 9. 단계 계획
@@ -264,10 +264,10 @@ interface QuirePlugin {
 | 5-2 | 맞춤법(§4): 검사기 인터페이스, 내장 검사기 둘, 일정·캐시, 물결 밑줄과 메뉴 | **완료** (§13, 장식 레이어 일반화 포함) |
 | 5-3 | 쪽 그리기 분리(§5.1): `PaintTarget`·`PagePainter`, 편집기가 그것을 씀, 그리기 지문 시험 | **완료** (§14, 화면 픽셀 그대로) |
 | 5-4 | PDF 내보내기와 인쇄(§5.2–5.4): 글꼴 넣기·ToUnicode·이미지·링크·개요, Node 실행 | **완료** (§15, 화면과 픽셀 차 1% 미만) |
-| 5-5 | 문서 단위 HTML·Markdown 가져오기·내보내기, `@quire/convert`와 주요 요소 시험 틀(§6.1) | **완료** (§16, 예제 6종 왕복 투영 같음) |
+| 5-5 | 문서 단위 HTML·Markdown 가져오기·내보내기, `@quiredoc/convert`와 주요 요소 시험 틀(§6.1) | **완료** (§16, 예제 6종 왕복 투영 같음) |
 | 5-6 | DOCX 가져오기·내보내기 | **완료** (§17, Word로 열고 다시 저장해도 DOCX 열 같음) |
 | 5-7 | HWPX 가져오기·내보내기 | **완료** (§18, 한글로 열고 다시 저장해도 HWPX 열 같음) |
-| 5-8 | 플러그인 API(§7), 찾기·맞춤법을 플러그인으로, 예제 플러그인, `createEditor`·`@quire/react`(§8) | **완료** (§19, 찾기·맞춤법이 API만으로 같은 동작) |
+| 5-8 | 플러그인 API(§7), 찾기·맞춤법을 플러그인으로, 예제 플러그인, `createEditor`·`@quiredoc/react`(§8) | **완료** (§19, 찾기·맞춤법이 API만으로 같은 동작) |
 
 - 5-1이 장식 레이어를 만들고 5-2·5-8이 그것을 쓴다. 5-4는 5-3 위에 있다. 5-5가 변환 틀(정본 거치기, 주요 요소 시험)을 만들고 5-6·5-7이 그 위에 포맷만 더한다.
 - 5-3은 기능이 늘지 않는 리팩터링이라 앞의 다른 단계와 겹치지 않게 따로 둔다.
@@ -291,7 +291,7 @@ interface QuirePlugin {
 
 ### 구현
 
-- **찾기 엔진** (`@quire/model` `find.ts`, DOM 없음):
+- **찾기 엔진** (`@quiredoc/model` `find.ts`, DOM 없음):
   - `compileFind(query)`: 조건을 정규식 하나로 만든다. 보통 글자는 이스케이프한다. 낱말 단위는 앞뒤 `(?<![\p{L}\p{N}_])`·`(?![…])`이다. 대소문자 무시는 `i` 플래그라 원문 위에서 맞추고, 길이가 바뀌는 글자 문제가 없다. 틀린 정규식·빈 글자는 `error`다.
   - 결과는 코드포인트 오프셋이다 (보조 평면 글자가 있는 문단만 UTF-16 → 코드포인트 표를 만든다). 빈 결과와 개체 글자(U+FFFC)를 덮는 결과는 버린다.
   - `FindCache`: 문단 텍스트 → 결과. 바뀌지 않은 문단은 같은 문자열 객체라 조회가 싸다.
@@ -348,7 +348,7 @@ interface QuirePlugin {
 
 ### 구현
 
-- **장식 레이어** (§2를 일반화, `@quire/editor`):
+- **장식 레이어** (§2를 일반화, `@quiredoc/editor`):
   - `DecorationSource.decorationsIn(story, para)`: 그리기마다 보이는 문단마다 부르고, 그 문단 안의 장식을 시작 순으로 받는다. §2의 `(story, from, to)` 대신 문단(`{id, start, text}`)을 넘긴다. 찾기·맞춤법 모두 문단 단위로 계산하므로 소스가 문단을 다시 찾지 않아도 된다.
   - 소스는 찾기, 맞춤법, 그리고 `addDecorationSource`로 앱이 더한 것이다. 여러 소스의 결과는 합쳐 정렬한다. 한 그리기 안에서는 문단마다 한 번 구한다.
   - 겉모양은 종류마다 `DecorationStyle {fill, wave, underline}`이다. 바탕은 글자 아래(선택 영역 전), 물결·밑줄은 글자 위(제안 표시 다음)에 그린다. `setDecorationStyle`로 바꾸거나 더한다.
@@ -452,7 +452,7 @@ interface QuirePlugin {
 
 ### 구현
 
-- **패키지 `@quire/pdf`** (DOM 없음, 외부 라이브러리는 이미 쓰던 `harfbuzzjs`뿐):
+- **패키지 `@quiredoc/pdf`** (DOM 없음, 외부 라이브러리는 이미 쓰던 `harfbuzzjs`뿐):
   - `writer.ts`: 간접 개체, 스트림(`CompressionStream('deflate')`, Node 18+와 브라우저 같은 코드), 상호 참조 표, 트레일러. 글자열은 UTF-16BE 16진수.
   - `subset.ts`: `harfbuzzjs/dist/harfbuzz-subset.wasm`(hb-subset)으로 쓴 글리프만 남긴다. `RETAIN_GIDS`로 글리프 ID를 그대로 두고, 레이아웃 표(GSUB·GPOS·GDEF·kern 등)와 힌팅은 뺀다. Pretendard 1.57 MB → 23 KB (19 ms).
   - `sfnt.ts`: 표 위치, head의 글꼴 상자, OS/2 대문자 높이, CFF charset. 저장소 글꼴은 Pretendard 조각·Noto Sans KR 모두 **CID 방식 CFF**(ROS)라 내용 스트림에는 글리프 ID가 아니라 charset의 CID를 쓴다 (§5.2의 "글리프 ID를 그대로 CID로"는 틀렸다). 부분화해도 CID가 그대로임을 확인했다.
@@ -497,13 +497,13 @@ interface QuirePlugin {
 
 ### 다음
 
-- 5-5 문서 단위 HTML·Markdown 가져오기·내보내기, `@quire/convert`와 주요 요소 시험 틀 (§6.1).
+- 5-5 문서 단위 HTML·Markdown 가져오기·내보내기, `@quiredoc/convert`와 주요 요소 시험 틀 (§6.1).
 
 ## 16. 5-5 결과: HTML·Markdown
 
 ### 구현
 
-- **패키지 `@quire/convert`** (DOM 없음). 모든 변환은 정본(QuireDoc)을 거친다: 내보내기는 `quireFromDocument` → 포맷, 가져오기는 포맷 → 정본 → `documentFromQuire`. 가져오기 결과는 `{doc, assets, report}`이다: 새 자산(ID → 바이트, ID는 `.quire`와 같은 SHA-256 앞 32자)과 버린 요소 보고(`report.dropped`: 종류 `DropKind` → 개수, 화면 이름은 18 §9 L-5).
+- **패키지 `@quiredoc/convert`** (DOM 없음). 모든 변환은 정본(QuireDoc)을 거친다: 내보내기는 `quireFromDocument` → 포맷, 가져오기는 포맷 → 정본 → `documentFromQuire`. 가져오기 결과는 `{doc, assets, report}`이다: 새 자산(ID → 바이트, ID는 `.quire`와 같은 SHA-256 앞 32자)과 버린 요소 보고(`report.dropped`: 종류 `DropKind` → 개수, 화면 이름은 18 §9 L-5).
 - **HTML 내보내기** (`exportHtml`): 문서 하나(`<!doctype html>`, `lang="ko"`, 제목, 작은 기본 CSS).
   - 제목 1–6 → `h1`–`h6`, 인용 → `blockquote`, 연속 코드 문단 → `pre` 하나, 그 밖의 스타일은 `data-style`.
   - 문단: 정렬·들여쓰기(`margin-left/right`, `text-indent`)·간격(`margin-top/bottom`)·줄 간격(`line-height`, 배수 또는 pt).
@@ -559,7 +559,7 @@ interface QuirePlugin {
 ### 구현
 
 - **XML** (`xml.ts`): 작은 파서(요소·속성·글·엔티티·CDATA). 알려진 네임스페이스 URI는 정해진 접두사로 이름을 바꾼다 (문서가 `ns0:` 같은 다른 접두사를 써도 `w:p`로 찾는다). 작성기 `x(이름, 속성, …자식)`. HWPX(5-7)도 쓴다.
-- **zip**: `@quire/sync`의 `readZip`·`writeZip`을 공개해 같이 쓴다.
+- **zip**: `@quiredoc/sync`의 `readZip`·`writeZip`을 공개해 같이 쓴다.
 - **내보내기** (`exportDocx`):
   - `document.xml`: 문단(스타일, 정렬, 들여쓰기, 간격, 줄 간격, 쪽 나눔 제어, 번호), 런(글꼴, 굵게·기울임·밑줄·취소선, 색, 크기, 형광펜 `w:shd`, 첨자), 탭(`w:tab`).
   - 링크(`w:hyperlink` + 외부 관계), 필드(`w:fldSimple`: PAGE, NUMPAGES, SECTIONPAGES, DATE), 각주 참조.
@@ -685,7 +685,7 @@ interface QuirePlugin {
 
 ### 다음
 
-- 5-8 플러그인 API(§7), 찾기·맞춤법을 플러그인으로, 예제 플러그인, `createEditor`·`@quire/react`(§8).
+- 5-8 플러그인 API(§7), 찾기·맞춤법을 플러그인으로, 예제 플러그인, `createEditor`·`@quiredoc/react`(§8).
 
 ## 19. 5-8 결과: 플러그인 API, createEditor, React 래퍼
 
@@ -717,11 +717,11 @@ interface QuirePlugin {
   - 글자 수 세기: change 이벤트(묶어서), 명령, 내보내기 형식(통계 글), 장식 없음.
   - 강조 낱말: 장식 소스·겉모양, 명령(더하기·빼기·선택 더하기·다음), 단축키(Ctrl+Alt+K·J), 오른쪽 클릭 항목, 문서 데이터(낱말 목록, 판 1 쉼표 글 → 판 2 옮기기).
 - **문서 데이터** (07 §4): `Document.ext`(이름 → `{v, data}`). 정본 `x`로 저장·복원한다 (`quireFromDocument`·`documentFromQuire`). 실시간 동기화는 하지 않는다.
-- **`@quire/sdk`** `createEditor({host, doc: QuireDoc, plugins, …})` (08 §3):
+- **`@quiredoc/sdk`** `createEditor({host, doc: QuireDoc, plugins, …})` (08 §3):
   - `run`: 내장 명령은 점 없는 이름(toggleBold·undo·setStyle·bulletList·insertTable…, 플러그인 `core`), 플러그인 명령은 '이름.명령'.
   - `getState`: 불변 스냅샷 — 선택, 캐럿 서식, 문단 스타일, 실행 취소 가능, 제안 모드, 찾기, 플러그인. 값이 같으면 같은 객체다.
   - `subscribe`: 그리기가 끝날 때 알린다. 그 밖에 `caretRect`·`rangeRects`·`toJSON`·`use`·`destroy`.
-- **`@quire/react`** (08 §4, JSX 없이 `createElement`):
+- **`@quiredoc/react`** (08 §4, JSX 없이 `createElement`):
   - `useQuire(options)`: 처음 옵션으로 제어기 하나.
   - `QuireEditor`: div에 붙인다. 떼면 문서를 정본으로 들고 있다가 다시 붙일 때 이어 쓴다 (StrictMode 이중 마운트).
   - `useEditorState(editor, selector, isEqual)`: `useSyncExternalStore` 기반이고, 고른 값이 같으면 같은 값을 돌려줘 다시 그리지 않는다.

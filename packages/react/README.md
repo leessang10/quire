@@ -1,4 +1,4 @@
-# @quire/react
+# @quiredoc/react
 
 React bindings for the Quire editor: useQuire, QuireEditor, useEditorState.
 
@@ -7,13 +7,13 @@ Part of [Quire](https://github.com/leessang10/quire), a web document editor with
 ## Install
 
 ```sh
-npm install @quire/react
+npm install @quiredoc/react
 ```
 
 ## Usage
 
 ```tsx
-import { QuireEditor, useEditorState, useQuire } from '@quire/react';
+import { QuireEditor, useEditorState, useQuire } from '@quiredoc/react';
 
 function App() {
   const ctl = useQuire({ fonts });
