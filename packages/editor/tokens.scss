@@ -27,6 +27,14 @@ $quire-tokens: (
   table-border: #8e8e93,
   placeholder: #e9e9ec,
   placeholder-text: #6e6e73,
+  remote-1: #2563eb,
+  remote-2: #c2410c,
+  remote-3: #047857,
+  remote-4: #7c3aed,
+  remote-5: #be123c,
+  remote-6: #0e7490,
+  remote-7: #a16207,
+  remote-8: #4d7c0f,
 );
 
 /// 변수를 덮어쓴다. 키는 `--quire-`를 뺀 이름이고, 모르는 이름이면 컴파일 오류다

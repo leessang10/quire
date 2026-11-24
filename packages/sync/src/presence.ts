@@ -15,7 +15,7 @@ import { PresenceStore } from './presence-store';
 
 export interface PresenceUser {
   name: string;
-  /** CSS 색 (#rrggbb) */
+  /** 협업 팔레트 번호 '1'–'8'(테마의 --quire-remote-N을 따른다, `remoteColorSlot(id)`) 또는 CSS 색 */
   color: string;
 }
 
