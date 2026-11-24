@@ -24,3 +24,5 @@ export { compareVersions } from './compare';
 export type { Frontiers } from './compare';
 // .quire 파일의 협업 이력 (19 §4.1). 문서 JSON·파일 읽기·쓰기는 @quiredoc/model
 export { displayText, packQuireWithHistory, restoreHistory } from './history';
+export { collab } from './collab';
+export type { CollabOptions, CollabPlugin, CollabRole } from './collab';

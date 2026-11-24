@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@quiredoc/model": "*",
-    "loro-crdt": "1.17.1"
+    "loro-crdt": "1.17.1",
+    "@quiredoc/editor": "*"
   }
 }

@@ -4931,7 +4931,7 @@ export class Editor {
       doc: () => self.doc,
       selection() {
         const { anchor, head } = self.selection();
-        return { anchor, head, from: Math.min(anchor, head), to: Math.max(anchor, head), story: self.storyId };
+        return { anchor, head, from: Math.min(anchor, head), to: Math.max(anchor, head), story: self.storyId, ...(self.hf ? { page: self.hf.page } : {}) };
       },
       select(anchor, head = anchor) {
         self.setSelection(anchor, head);
@@ -4990,6 +4990,12 @@ export class Editor {
         return () => set!.delete(fn);
       },
       run: (command, ...args) => self.run(command, ...args),
+      sync: {
+        setDocument: (document) => self.setDocument(document),
+        documentChanged: () => self.docChanged(),
+        setRemoteCarets: (list) => self.setRemoteCarets(list),
+        setAccess: (role) => self.setAccess(role),
+      },
       getData<T>() {
         return (self.document.ext.get(plugin.name) as { data: T } | undefined)?.data;
       },

@@ -36,6 +36,7 @@ function host(text: string) {
       return true;
     },
     canEdit: () => !readOnly,
+    sync: { setDocument() {}, documentChanged() {}, setRemoteCarets() {}, setAccess() {} },
     edit(fn) {
       if (readOnly) return false;
       const ops = fn(document.body);

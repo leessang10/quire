@@ -4,6 +4,11 @@ All `@quiredoc/*` packages share one version and are released together. The form
 
 ## [Unreleased]
 
+### Added
+
+- `collab(options)` in `@quiredoc/sync` (to be published as `@quiredoc/collab`): real-time collaboration as one plugin — `editor.use(collab({ worker, url, user }))` or `createEditor({ plugins: [collab(...)] })`. It connects, puts the shared document into the editor, keeps remote edits, carets, permissions and new epochs in step, and sends your selection.
+- `PluginContext.sync` (`setDocument`, `documentChanged`, `setRemoteCarets`, `setAccess`) for plugins whose document changes outside the editor, and `page` in `PluginContext.selection()` while editing a header or footer.
+
 ### Changed (breaking)
 
 - The canonical document JSON and `.quire` files moved from `@quiredoc/sync` to `@quiredoc/model`: `QuireDoc`, `documentFromQuire`, `quireFromDocument`, `packQuire`, `openQuire`, `assetIdOf`, `readZip`, `writeZip` and related names. Saving and loading no longer pull in the CRDT (Loro): the basic React example's startup JavaScript went from about 5.2 MB to about 0.5 MB.
