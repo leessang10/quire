@@ -1,6 +1,6 @@
 # 19. 패키지 구성 (core + 조립)
 
-- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1–P-5 끝남 (§8).
+- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1–P-5 끝남, P-6은 올리기만 남음 (§8).
 - 범위: npm에 내는 패키지의 경계·이름·의존 방식, 기능을 골라 붙이는 방법, 0.1.0에서 옮기는 단계.
 - 범위 밖: 편집기 기능 자체. 저장소 안의 개발 구조(워크스페이스 폴더)는 거의 그대로 둔다.
 - 바탕: 08(통합·임베드), 15 §19(플러그인 API), 16 §10.1·§10.8(빌드·출시).
@@ -191,3 +191,12 @@ const { importHwpx } = await import('@quiredoc/convert');
   - Node 예제: Markdown → PDF·HWPX·DOCX, HWPX → Markdown.
   - 브라우저: react-full이 오류 없이 뜨고, `.quire` 저장이 core의 `packQuire`로 돈다.
 - 문서: 저장소 README 설치 절(core + 모듈, collab), examples/README, CHANGELOG `[Unreleased]`를 배포 패키지 기준으로 다시 씀(옛 → 새 이름 표).
+
+### 8.6 P-6 0.2.0 준비 (2026-11-25)
+
+- 판 0.2.0 (루트 `package.json`), CHANGELOG `[0.2.0] - 2026-11-25`.
+- 빌드는 판이 붙은 tgz와 함께 **판 없는 사본** `.build/packs/latest/quiredoc-<이름>.tgz`를 만든다. 예제 10개와 `examples/quire-deps.json`이 이것을 가리켜 판을 올려도 예제를 고치지 않는다.
+- `scripts/release.mjs --only=core,collab`: 검사는 모두 하고 고른 것만 올린다 (새 패키지를 처음 올릴 때). "이미 있는 판" 확인은 캐시를 믿지 않는다 (`--prefer-online`).
+- `scripts/deprecate-0.1.mjs`: 0.2.0에서 내지 않는 model·layout·shaping·editor·sdk(→ core), sync(→ core·collab)에 사용 중단 안내. 기본은 보기만, `--run`이면 `npm deprecate`.
+- 확인: 0.2.0으로 6개 빌드, 검사·dry-run 통과, react의 peer `@quiredoc/core@^0.2.0`. react-vite 예제가 판 없는 tgz로 0.2.0을 설치·타입 검사·빌드하고 Loro 없음.
+- 남은 것 (사람이, 16 §10.8 "0.2.0 올리기"): core·collab 처음 올리기와 Trusted Publisher 등록, `v0.2.0` 태그, 사용 중단 안내.

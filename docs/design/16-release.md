@@ -368,3 +368,15 @@
 - 패키지마다 npm Settings → Trusted Publisher → GitHub Actions: 소유자 `leessang10`, 저장소 `quire`, 워크플로 `release.yml`, 환경 이름 비움. **Allowed actions에서 "Allow npm publish"를 켠다**: npm 기본값은 `npm stage publish`만 허용이라, 켜지 않으면 워크플로의 `npm publish`가 거절된다. 태그를 푸시하면 2FA 승인 없이 바로 공개된다 (사용자 선택. 대안은 워크플로가 `npm stage publish`(npm 12)만 하고 사람이 Staged Packages에서 승인하는 방식).
 - 등록하면 상태가 "Pending validation"이고, 정해진 기한(처음 등록에서는 약 2일, 2026-11-26 08:23 UTC) 안에 이 워크플로로 한 번 올려야 확인된다. 기한을 넘기면 다시 등록해야 할 수 있다. 다음 판(예: 0.1.1) 태그를 기한 안에 푸시하면 된다 (사용자가 직접).
 - 10개 패키지 모두에 같은 설정이 있어야 한다. 하나라도 빠지면 그 패키지에서 `release.mjs`가 멈추고, 고친 뒤 다시 돌리면 이미 올라간 것은 건너뛴다.
+
+**0.2.0 올리기 (패키지 구성 바뀜, 19)**
+
+0.2.0은 새 이름 둘(`@quiredoc/core`·`@quiredoc/collab`)이 있다. npm Trusted Publisher는 이미 있는 패키지에만 등록되므로, 새 이름은 처음 한 번 사람이 올린다. 나머지 넷(convert·pdf·react·fonts)은 태그로 워크플로가 올린다 — 이것이 그 넷의 Trusted Publisher 확인(기한 2026-11-26 08:23 UTC)이 된다.
+
+1. 이 기기에서 (npm 로그인, 2단계 인증 코드를 npm이 묻는다):
+   `git pull` → `node scripts/build-packages.mjs` → `node scripts/release.mjs --publish --only=core,collab`
+2. `npm view @quiredoc/core version`과 `npm view @quiredoc/collab version`이 0.2.0인지 본다 (단계 게시 자리표시만 보이면 잠시 뒤 다시).
+3. npm에서 `@quiredoc/core`·`@quiredoc/collab`의 Settings → Trusted Publisher → GitHub Actions(`leessang10`/`quire`/`release.yml`, Allow npm publish 켬). Publishing access는 "2FA 필요, 우회 토큰 막음" 권장.
+4. `git tag v0.2.0 && git push origin v0.2.0`: 워크플로가 시험 뒤 core·collab은 이미 있어 건너뛰고 convert·pdf·react·fonts 0.2.0을 OIDC로 올리고 GitHub Release를 만든다.
+5. `node scripts/deprecate-0.1.mjs --run`: 옛 패키지 여섯에 사용 중단 안내.
+6. 빈 폴더에서 `npm install @quiredoc/core @quiredoc/react @quiredoc/convert @quiredoc/pdf @quiredoc/fonts @quiredoc/collab`로 확인.

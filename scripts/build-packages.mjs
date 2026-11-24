@@ -214,10 +214,13 @@ if (!existsSync(join(fontsSrc, 'pretendard/manifest.json'))) {
   );
 }
 
-// 4) npm pack
+// 4) npm pack. 판이 붙은 이름(출시·GitHub Release용)과 함께 판 없는 사본 packs/latest/quiredoc-<이름>.tgz를 둔다:
+// 예제들이 이것을 가리켜 판을 올려도 예제 package.json을 고치지 않는다
+mkdirSync(join(out, 'packs', 'latest'), { recursive: true });
 for (const name of [...UNITS.map((u) => u.name), 'fonts']) {
   const dir = join(out, 'packages', name);
   const file = npm(['pack', '--pack-destination', join(out, 'packs')], dir).trim().split('\n').pop();
+  cpSync(join(out, 'packs', file), join(out, 'packs', 'latest', `quiredoc-${name}.tgz`));
   console.log(`  ${relative(root, join(out, 'packs', file))}`);
 }
-console.log(`완료: ${readdirSync(join(out, 'packs')).length}개 tarball`);
+console.log(`완료: ${readdirSync(join(out, 'packs')).filter((f) => f.endsWith('.tgz')).length}개 tarball (판 없는 사본: .build/packs/latest)`);
