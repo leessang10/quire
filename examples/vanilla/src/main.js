@@ -1,5 +1,5 @@
 // 예제 1: 바닐라 — 프레임워크 없이 createEditor만 쓴다
-import { createEditor } from '@quiredoc/sdk';
+import { createEditor } from '@quiredoc/core';
 import { ACCEPT, demoPlugins, fonts, openFile, sampleDoc, saveFile } from './quire-demo.ts';
 
 const $ = (s) => document.querySelector(s);

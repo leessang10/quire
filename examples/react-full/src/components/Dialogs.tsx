@@ -1,6 +1,6 @@
 /** 대화상자: 쪽 설정, 링크, 대체 텍스트, 글자 수, 단축키, 가져오기 보고, 이 예제에 대해 · 오른쪽 클릭 메뉴 */
 import { useEffect, useRef, useState } from 'react';
-import type { Editor, MenuItem as PluginMenuItem, SpellMenu, WordCount } from '@quiredoc/editor';
+import type { Editor, MenuItem as PluginMenuItem, SpellMenu, WordCount } from '@quiredoc/core';
 import { PAPERS, SHORTCUTS, applyPageForm, checkPageForm, pageFormOf, paperSize, type PageForm } from '../lib/quire-app';
 import { Button, Dialog, Field, inputClass } from './ui';
 

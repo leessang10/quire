@@ -10,14 +10,9 @@
   },
   "dependencies": {
     "@quiredoc/convert": "file:../../.build/packs/quiredoc-convert-0.1.0.tgz",
-    "@quiredoc/editor": "file:../../.build/packs/quiredoc-editor-0.1.0.tgz",
+    "@quiredoc/core": "file:../../.build/packs/quiredoc-core-0.1.0.tgz",
     "@quiredoc/fonts": "file:../../.build/packs/quiredoc-fonts-0.1.0.tgz",
-    "@quiredoc/layout": "file:../../.build/packs/quiredoc-layout-0.1.0.tgz",
-    "@quiredoc/model": "file:../../.build/packs/quiredoc-model-0.1.0.tgz",
     "@quiredoc/pdf": "file:../../.build/packs/quiredoc-pdf-0.1.0.tgz",
-    "@quiredoc/sdk": "file:../../.build/packs/quiredoc-sdk-0.1.0.tgz",
-    "@quiredoc/shaping": "file:../../.build/packs/quiredoc-shaping-0.1.0.tgz",
-    "@quiredoc/sync": "file:../../.build/packs/quiredoc-sync-0.1.0.tgz",
     "harfbuzzjs": "1.6.4"
   },
   "devDependencies": {

@@ -5,7 +5,7 @@
  * (편집기 기본은 ko), 고른 언어는 브라우저에 기억한다. 편집기 쪽은 QuireApp이 setLocale로 맞춘다.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Messages, loadMessages, messagesLoaded, type MessageKey, type MessageParams } from '@quiredoc/editor';
+import { Messages, loadMessages, messagesLoaded, type MessageKey, type MessageParams } from '@quiredoc/core';
 import { en, ko, type AppMessageKey } from './messages';
 
 export type Locale = 'ko' | 'en';

@@ -1,6 +1,6 @@
 /** 상황별 도구 줄: 표 안·그림을 고름·머리말/꼬리말 편집·각주 편집일 때 도구 막대 아래에 나타난다. 편집 영역 위에 떠 있어 자리를 차지하지 않는다 (나타나고 사라질 때 문서가 밀리면 두 번 누르기의 두 번째가 다른 곳에 떨어진다) */
 import { ArrowDownToLine, ArrowRightToLine, Combine, Footprints, Image as ImageIcon, PaintBucket, PanelTop, Split, Table, Trash2, X } from 'lucide-react';
-import type { Editor } from '@quiredoc/editor';
+import type { Editor } from '@quiredoc/core';
 import type { Placement, Ui } from '../lib/quire-app';
 import { Button, Divider, ToolButton } from './ui';
 

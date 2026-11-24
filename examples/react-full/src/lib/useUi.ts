@@ -1,6 +1,6 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import type { QuireController } from '@quiredoc/react';
-import type { Editor } from '@quiredoc/editor';
+import type { Editor } from '@quiredoc/core';
 import { uiReader, type Ui } from './quire-app';
 
 /** 도구 막대·메뉴가 그릴 상태 (편집기 상태 알림마다 다시 읽고, 같으면 다시 그리지 않는다) */

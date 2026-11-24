@@ -1,6 +1,6 @@
 # 19. 패키지 구성 (core + 조립)
 
-- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1–P-4 끝남 (§8).
+- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1–P-5 끝남 (§8).
 - 범위: npm에 내는 패키지의 경계·이름·의존 방식, 기능을 골라 붙이는 방법, 0.1.0에서 옮기는 단계.
 - 범위 밖: 편집기 기능 자체. 저장소 안의 개발 구조(워크스페이스 폴더)는 거의 그대로 둔다.
 - 바탕: 08(통합·임베드), 15 §19(플러그인 API), 16 §10.1·§10.8(빌드·출시).
@@ -179,3 +179,15 @@ const { importHwpx } = await import('@quiredoc/convert');
 - **플러그인 면을 넓혔다** (`PluginContext`): `sync.setDocument`·`sync.documentChanged`·`sync.setRemoteCarets`·`sync.setAccess`(편집기 밖에서 문서가 바뀌는 플러그인용, 문서를 고치는 길은 그대로 `edit`·`editDocument`), `selection()`에 `page`(머리말·꼬리말을 편집 중인 쪽). sync는 editor의 **타입만** 가져온다(배포 묶음에서는 `@quiredoc/core`, 실행 코드에는 없음).
 - 플레이그라운드 실시간 페이지(`apps/playground/src/live.ts`)가 `editor.use(collab({...}))` 하나로 돈다: 직접 엮던 Worker 시작·편집기 콜백·권한·새 판 처리를 뺐고, 앱은 상태 줄·접속자 목록·파일·버전만 그린다. 나갈 때 `editor.destroy()`가 플러그인 정리로 연결을 닫는다.
 - 확인: 동기화 서버 + 두 탭 — 한 탭에서 친 글이 다른 탭에 오고, 다른 탭에 그 사람 캐럿·이름표(팔레트 1번)가 그려지고, 접속자 목록이 서로 보이고, 한 탭에서 `editor.destroy()`하면 다른 탭의 접속자가 1명으로. 콘솔 오류 없음. 시험 `packages/sync/src/collab.test.ts`(실제 서버, 가짜 PluginContext): 연결 전 보기만 → 연결 뒤 공유 문서·편집 권한, 두 플러그인 사이 편집 전달과 원격 변경 알림, 선택 → 상대 캐럿(색 포함), 정리(이벤트 떼기·client null·만든 Worker 끝내기), 두 편집기에 붙이기 거부.
+
+### 8.5 P-5 예제·문서 옮기기 (2026-11-25)
+
+- 예제 10개(vanilla·react-vite·next·vue·svelte·node·react-full·next-shadcn·next-word·next-notion)의 의존을 `@quiredoc/core` + 쓰는 모듈(react·convert·pdf·fonts)로, 가져오기·주석·README의 `@quiredoc/{sdk,editor,model,layout,shaping,sync}`(하위 경로 `i18n/en`·`tokens.scss` 포함)를 `@quiredoc/core`로. 예제는 협업을 쓰지 않아 collab을 설치하지 않는다 (예제에서 sync를 쓰던 곳은 P-1에서 옮긴 `.quire` 열기·저장뿐이었다). `examples/quire-deps.json`도.
+- 설치: 10개 모두 새 tgz로 설치된다 (P-3 뒤 새로 설치하면 실패하던 문제가 풀림). 예제의 `package-lock.json`(git에 넣지 않음)은 지우고 다시 만들었다.
+- 확인:
+  - TypeScript: react-vite·next·vue·react-full·next-shadcn·next-word·next-notion 통과, svelte는 `svelte-check` 오류 0.
+  - 프로덕션 빌드: Vite 다섯(vanilla·react-vite·vue·svelte·react-full)과 Next.js 넷(next·next-shadcn·next-word·next-notion) 모두 성공.
+  - **묶음에 Loro 없음**: Vite 다섯·Next 넷 모두 Loro가 든 조각이 0개. 시작 때 받는 JS: vanilla 350 KB, vue 413 KB, react-vite 531 KB, react-full 616 KB (0.1.0의 react-vite는 5,261 KB).
+  - Node 예제: Markdown → PDF·HWPX·DOCX, HWPX → Markdown.
+  - 브라우저: react-full이 오류 없이 뜨고, `.quire` 저장이 core의 `packQuire`로 돈다.
+- 문서: 저장소 README 설치 절(core + 모듈, collab), examples/README, CHANGELOG `[Unreleased]`를 배포 패키지 기준으로 다시 씀(옛 → 새 이름 표).

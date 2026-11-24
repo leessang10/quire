@@ -1,8 +1,8 @@
 /** 옆 창: 개요(왼쪽), 댓글·제안(오른쪽), 찾기 막대, 상태 줄 */
 import { useEffect, useRef, useState } from 'react';
 import { CaseSensitive, Check, ChevronDown, ChevronUp, MessageSquare, Regex, Undo, WholeWord, X } from 'lucide-react';
-import type { Editor, FindStatus, SuggestionView, ThreadView } from '@quiredoc/editor';
-import type { WordCount } from '@quiredoc/editor';
+import type { Editor, FindStatus, SuggestionView, ThreadView } from '@quiredoc/core';
+import type { WordCount } from '@quiredoc/core';
 import { outline, type Ui } from '../lib/quire-app';
 import { Button } from './ui';
 

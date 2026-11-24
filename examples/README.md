@@ -64,7 +64,7 @@ shadcn 메모: shadcn CLI 4가 기본으로 Base UI 판(`base-nova`)을 깐다. 
 
 | 예제 | 프레임워크 | CSS | 붙이는 방법 | 포트 |
 |---|---|---|---|---|
-| [vanilla](vanilla) | HTML + JS (Vite) | 순수 CSS | `createEditor` (@quiredoc/sdk) | 5301 |
+| [vanilla](vanilla) | HTML + JS (Vite) | 순수 CSS | `createEditor` (@quiredoc/core) | 5301 |
 | [react-vite](react-vite) | React 19 + Vite | Tailwind 4 (preflight 켬) | `useQuire`·`QuireEditor`·`useEditorState` (@quiredoc/react) | 5302 |
 | [next](next) | Next.js 16 App Router | styled-components (서버 렌더링 스타일) | @quiredoc/react + `next/dynamic` `ssr: false` | 5303 |
 | [vue](vue) | Vue 3 + Vite | SCSS | `createEditor` + 작은 컴포저블 (공식 래퍼 없음) | 5304 |
@@ -100,6 +100,6 @@ node convert.mjs some.hwpx out/some.docx
 
 - **글꼴**: `@quiredoc/fonts`의 `fonts/`(조각 + `manifest.json`)를 공개 폴더 `/quire/fonts/`에 둔다. 문서에 나온 글자가 든 조각만 내려받는다.
 - **PDF**: `harfbuzzjs/dist/harfbuzz-subset.wasm`을 `/quire/harfbuzz-subset.wasm`에 둔다 (PDF 글꼴 부분화).
-- 그 밖의 WASM(HarfBuzz 셰이핑, Loro)은 패키지가 알아서 찾는다. 번들러 설정이 필요 없다 (Vite는 `optimizeDeps.exclude`에 `harfbuzzjs`·`loro-crdt`).
+- 그 밖의 WASM(HarfBuzz 셰이핑, 협업을 쓰면 Loro)은 패키지가 알아서 찾는다. 번들러 설정이 필요 없다 (Vite는 `optimizeDeps.exclude`에 `harfbuzzjs`·`loro-crdt`). 예제는 `@quiredoc/core`와 필요한 모듈(react·convert·pdf·fonts)만 설치한다 (19 §3).
 - 서버 렌더링 프레임워크(Next.js·SvelteKit)에서는 에디터를 브라우저에서만 만든다 (`ssr: false`, `onMount`).
 - 문서를 바꾼 뒤(`load`) 글자 수 플러그인은 편집할 때만 다시 세므로 `run('wordCount.report')`로 한 번 세게 한다 (전체 기능 앱).

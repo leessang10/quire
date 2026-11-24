@@ -7,9 +7,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Download, FileText, FolderOpen, Languages, Minus, Moon, MoreHorizontal, MessageSquare, Plus, Printer, ScrollText, Search, Sparkles, Sun, Type } from 'lucide-react';
 import { toast } from 'sonner';
 import { QuireEditor, useEditorState, useQuire } from '@quiredoc/react';
-import { highlightWordsPlugin, wordCountPlugin, type Editor, type MenuItem as PluginMenuItem, type SpellMenu, type WordCount } from '@quiredoc/editor';
-import { safeLink } from '@quiredoc/model';
-import type { QuireDoc } from '@quiredoc/sdk';
+import { highlightWordsPlugin, wordCountPlugin, type Editor, type MenuItem as PluginMenuItem, type SpellMenu, type WordCount } from '@quiredoc/core';
+import { safeLink } from '@quiredoc/core';
+import type { QuireDoc } from '@quiredoc/core';
 import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
 import {

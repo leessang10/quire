@@ -1,5 +1,5 @@
 /**
- * 앱 화면 문자열 (한국어·영어). 편집기의 메시지 장치(@quiredoc/editor의 Messages)에 덧붙여 쓰므로
+ * 앱 화면 문자열 (한국어·영어). 편집기의 메시지 장치(@quiredoc/core의 Messages)에 덧붙여 쓰므로
  * 편집기 키(attr.bold, section.nextPage, spell.addWord 등)도 그대로 쓸 수 있다 (설계 18 §5).
  * 키는 점으로 나눈 의미 이름, 자리표시는 {이름}, 복수형은 {n, plural, one {…} other {…}}.
  */
