@@ -4,7 +4,7 @@ import { FindBar } from './find-bar';
 import { openPdf } from './pdf-export';
 import { lastConvert, openFile, saveAs } from './convert-io';
 import { DemoChecker, SpellContextMenu } from './spell-demo';
-import { documentFromQuire, quireFromDocument } from '@quiredoc/sync';
+import { documentFromQuire, quireFromDocument } from '@quiredoc/model';
 import { Doc, Document, LAST_SECTION, PAPER_SIZES, cellStoryId, defaultListDef, fullSection, hfStoryId, noteStoryId, type MarkSet, type ParaAttrs, type SectionProps, type SectionStart } from '@quiredoc/model';
 
 const SAMPLE = `Quire 0단계 프로토타입

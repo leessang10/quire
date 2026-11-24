@@ -7,7 +7,7 @@ import { SyncBridge } from './index';
 import { SyncClient } from './client';
 import { SyncCore } from './core';
 import type { ToMain, ToWorker } from './protocol';
-import { canonicalJson, docFromQuire, documentFromQuire, quireFromDoc, quireFromDocument } from './canonical';
+import { canonicalJson, docFromQuire, documentFromQuire, quireFromDoc, quireFromDocument } from '@quiredoc/model';
 import { docFromLoro } from './shape';
 import { formatState, stable } from './format-state.test-util';
 

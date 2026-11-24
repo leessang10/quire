@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "@quiredoc/editor": "*",
-    "@quiredoc/model": "*",
-    "@quiredoc/sync": "*"
+    "@quiredoc/model": "*"
   }
 }

@@ -3,7 +3,7 @@
  * 다른 도구가 만든 HTML·Markdown도 읽고, 담지 못한 요소는 보고한다. 가져온 정본은 편집 문서로 열린다.
  */
 import { describe, expect, it } from 'vitest';
-import { documentFromQuire, assetIdOf, type QuireDoc, type QuireParagraph } from '@quiredoc/sync';
+import { documentFromQuire, assetIdOf, type QuireDoc, type QuireParagraph } from '@quiredoc/model';
 import { SUPPORT, elementsDocument, exportHtml, exportMarkdown, firstDifference, importHtml, importMarkdown, project, toDataUrl, type ImportedAsset } from './index';
 
 /** 2×1 PNG (검정·빨강) */

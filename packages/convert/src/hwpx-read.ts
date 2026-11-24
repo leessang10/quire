@@ -6,7 +6,7 @@
  */
 import type { DropKind } from '@quiredoc/editor';
 import { PAPER_SIZES, defaultListDef, noteStoryId, type CommentThread, type FloatAttrs, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs, type Style } from '@quiredoc/model';
-import { readZip, type QuireDoc, type QuireParagraph, type QuireRun, type QuireTable } from '@quiredoc/sync';
+import { readZip, type QuireDoc, type QuireParagraph, type QuireRun, type QuireTable } from '@quiredoc/model';
 import { Report, finishImport, addAsset, addUsedStyles, emptyQuire, mimeOf, type ImportResult, type ImportedAsset } from './common';
 import { BASE_FONT, BASE_SIZE, HWP_NUM, HWP_STYLES, LINE_PERCENT } from './hwpx-write';
 import { descendants, kid, kids, parseXml, textOf, type XNode } from './xml';

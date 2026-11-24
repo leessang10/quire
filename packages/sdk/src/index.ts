@@ -5,10 +5,10 @@
  */
 import { Editor, type EditorOptions, type FindStatus, type ParagraphState, type PluginContext, type QuirePlugin, type Rect, type SelectionMarks } from '@quiredoc/editor';
 import type { MarkSet } from '@quiredoc/model';
-import { documentFromQuire, quireFromDocument, type QuireDoc } from '@quiredoc/sync';
+import { documentFromQuire, quireFromDocument, type QuireDoc } from '@quiredoc/model';
 
 export type { QuirePlugin, PluginContext, Rect } from '@quiredoc/editor';
-export type { QuireDoc } from '@quiredoc/sync';
+export type { QuireDoc } from '@quiredoc/model';
 
 /** 불변 상태 스냅샷 (바뀔 때만 새 객체) */
 export interface EditorState {

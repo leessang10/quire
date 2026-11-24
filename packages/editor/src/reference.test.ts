@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { documentFromQuire, migrateQuire } from '@quiredoc/sync';
+import { documentFromQuire, migrateQuire } from '@quiredoc/model';
 import { HbShaper, loadShapingFont, slotOf } from '@quiredoc/shaping';
 import type { Document } from '@quiredoc/model';
 import { composeReference, summarizeLayout } from './reference';

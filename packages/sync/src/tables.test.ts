@@ -419,7 +419,7 @@ describe('tables in the canonical JSON and .quire', () => {
   };
 
   it('writes the normalized grid with covered text appended to the owner cell', async () => {
-    const { quireFromDocument, documentFromQuire, canonicalJson } = await import('./canonical');
+    const { quireFromDocument, documentFromQuire, canonicalJson } = await import('@quiredoc/model');
     const { d } = build();
     const q = JSON.parse(canonicalJson(quireFromDocument(d)));
     expect(q.stories.body[1]).toEqual({
@@ -446,15 +446,16 @@ describe('tables in the canonical JSON and .quire', () => {
   });
 
   it('packs and opens a .quire with a table (CRDT and canonical agree)', async () => {
-    const { quireFromDocument, canonicalJson } = await import('./canonical');
-    const { packQuire, openQuire } = await import('./quire-file');
+    const { quireFromDocument, canonicalJson } = await import('@quiredoc/model');
+    const { openQuire } = await import('@quiredoc/model');
+    const { packQuireWithHistory, restoreHistory } = await import('./history');
     const { documentFromLoro } = await import('./shape');
     const { d } = build();
     const loro = compactDocument(d, 'e1', 5);
-    const opened = await openQuire(await packQuire({ loro }));
+    const opened = await openQuire(await packQuireWithHistory({ loro }));
     expect(canonicalJson(opened.doc)).toBe(canonicalJson(quireFromDocument(d)));
     const crdt = newLoro(9);
-    crdt.import(opened.crdt!);
+    crdt.import((await restoreHistory(opened))!);
     expect(canonicalJson(quireFromDocument(documentFromLoro(crdt)))).toBe(canonicalJson(quireFromDocument(d)));
   });
 });

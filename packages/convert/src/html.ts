@@ -4,7 +4,7 @@
  */
 import { htmlToFragment, type Fragment } from '@quiredoc/editor';
 import { defaultListDef, isNoteStory, noteStoryId, type ListDef, type MarkSet, type ObjAttrs, type ParaAttrs } from '@quiredoc/model';
-import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quiredoc/sync';
+import type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from '@quiredoc/model';
 import { Report, finishImport, addAsset, addUsedStyles, emptyQuire, fromDataUrl, toDataUrl, withSafeLinks, type AssetReader, type ImportResult, type ImportedAsset } from './common';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

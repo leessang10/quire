@@ -25,3 +25,10 @@ export type { HFKind, HFPart, SectionKey, SectionProps, SectionStart } from './s
 export { FindCache, compileFind, findInDocument, replaceMatches, replacementFor, storiesInOrder } from './find';
 export type { FindMatch, FindQuery, Matcher } from './find';
 export { safeLink } from './links';
+// 정본 문서 JSON과 .quire 파일 (07, 19 §4.1): 저장·불러오기. 협업 이력(CRDT)은 @quiredoc/sync
+export { SCHEMA_VERSION, canonicalJson, docFromQuire, documentFromQuire, migrateQuire, quireFromDoc, quireFromDocument, quireFromText, sha256Hex, stateHash, textFromQuire } from './canonical';
+export type { QuireDoc, QuireParagraph, QuireRun, QuireTable } from './canonical';
+export { FORMAT_VERSION, MIMETYPE, assetIdOf, assetIdsOf, openQuire, packQuire } from './quire-file';
+export type { Manifest, OpenedQuire, QuireAsset } from './quire-file';
+export { crc32, readZip, writeZip } from './zip';
+export type { ReadEntry, ZipEntry } from './zip';

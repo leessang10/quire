@@ -4,13 +4,13 @@
  * 여는 규칙
  * 1. mimetype·manifest 확인. formatVersion이 엔진보다 높으면 읽기 전용.
  * 2. document.json 스키마 확인 → 마이그레이션.
- * 3. crdt.bin이 있고 그 화면 상태의 정본 해시가 document.json의 정본 해시와 같으면 CRDT로 연다 (이력·협업 연속성 유지).
- *    다르면(외부 도구가 JSON만 고친 경우) crdt.bin을 버리고 document.json에서 새로 만든다.
+ * 3. history/crdt.bin(협업 이력, CRDT 스냅샷)은 여기서 읽지 않고 바이트 그대로 돌려준다 (`history`). 이력을 확인하고 되살리는
+ *    일(그 화면 상태가 document.json과 같은지, 다르면 버림)은 협업 쪽이 한다 (`@quiredoc/sync`의 `restoreHistory`, 19 §4.1).
+ *    그래서 이 모듈은 CRDT 라이브러리 없이 돈다: 저장·불러오기만 하는 앱에 Loro가 묶이지 않는다.
  */
-import type { LoroDoc } from 'loro-crdt';
-import type { Doc, Document } from '@quiredoc/model';
-import { canonicalJson, documentFromQuire, migrateQuire, quireFromDoc, quireFromDocument, quireFromText, sha256Hex, stateHash, textFromQuire, type QuireDoc } from './canonical';
-import { documentFromLoro, newLoro } from './shape';
+import type { Doc } from './doc';
+import type { Document } from './document';
+import { canonicalJson, migrateQuire, quireFromDoc, quireFromDocument, quireFromText, sha256Hex, stateHash, textFromQuire, type QuireDoc } from './canonical';
 import { readZip, writeZip, type ZipEntry } from './zip';
 
 export const MIMETYPE = 'application/vnd.quire';
@@ -28,10 +28,6 @@ export interface Manifest {
   files: Record<string, { sha256: string; stateHash?: string }>;
 }
 
-/**
- * 저장: 화면 텍스트로 document.json을 만들고, loro를 주면 그 스냅샷을 history/crdt.bin으로 넣는다.
- * loro를 주면 text는 loro의 화면 텍스트를 쓴다.
- */
 /** 자산 하나 (11 §2.2): ID = 내용 SHA-256 앞 32자 (16진) */
 export interface QuireAsset {
   id: string;
@@ -55,13 +51,17 @@ export function assetIdsOf(doc: Doc | Document): string[] {
   return [...ids].sort();
 }
 
+/**
+ * 저장: 문서(또는 텍스트)로 document.json을 만든다. `history`(협업 이력 CRDT 스냅샷 바이트)를 주면 history/crdt.bin으로 넣고
+ * 그 정본 해시를 manifest에 적는다 (열 때 이력이 문서와 같은지 확인하는 데 쓴다). 이력을 만드는 것은 협업 쪽
+ * (`packQuireWithHistory`)이고, 여기서는 바이트를 그대로 싣는다
+ */
 export async function packQuire(
-  src: ({ text: string } | { loro: LoroDoc } | { doc: Doc } | { document: Document }) & { assets?: readonly QuireAsset[] },
+  src: ({ text: string } | { doc: Doc } | { document: Document }) & { assets?: readonly QuireAsset[]; history?: Uint8Array },
 ): Promise<Uint8Array<ArrayBuffer>> {
   // 서식이 있으면 함께 (10, 07 §4)
   const doc =
-    'loro' in src ? quireFromDocument(documentFromLoro(src.loro))
-    : 'document' in src ? quireFromDocument(src.document)
+    'document' in src ? quireFromDocument(src.document)
     : 'doc' in src ? quireFromDoc(src.doc)
     : quireFromText(src.text);
   const json = encoder.encode(canonicalJson(doc));
@@ -77,10 +77,9 @@ export async function packQuire(
     files[name] = { sha256: await sha256Hex(a.bytes) };
     entries.push({ name, data: a.bytes });
   }
-  if ('loro' in src) {
-    const crdt = src.loro.export({ mode: 'snapshot' });
-    files['history/crdt.bin'] = { sha256: await sha256Hex(crdt), stateHash: await stateHash(doc) };
-    entries.push({ name: 'history/crdt.bin', data: crdt, deflate: true });
+  if (src.history) {
+    files['history/crdt.bin'] = { sha256: await sha256Hex(src.history), stateHash: await stateHash(doc) };
+    entries.push({ name: 'history/crdt.bin', data: src.history, deflate: true });
   }
   const manifest: Manifest = { format: 'quire', formatVersion: FORMAT_VERSION, schemaVersion: doc.version, generator: GENERATOR, files };
   entries[1]!.data = encoder.encode(canonicalJson(manifest));
@@ -93,10 +92,13 @@ export interface OpenedQuire {
   text: string;
   /** 들어 있는 자산 (assets/) */
   assets: QuireAsset[];
-  /** 이력을 쓸 수 있으면 CRDT 스냅샷, 아니면 null */
-  crdt: Uint8Array | null;
+  /**
+   * history/crdt.bin 바이트 (없으면 null). **확인하지 않은 값**이다: 협업 이력으로 쓰려면 `restoreHistory`(@quiredoc/sync)로
+   * 문서와 같은 상태인지 확인한다. 다시 저장할 때 `packQuire({ ..., history })`로 그대로 넘기면 이력을 잃지 않는다
+   */
+  history: Uint8Array | null;
   readOnly: boolean;
-  /** crdt.bin을 버린 이유 등 */
+  /** manifest 해시가 다른 항목, 버린 자산 등 */
   notes: string[];
 }
 
@@ -127,23 +129,7 @@ export async function openQuire(bytes: Uint8Array): Promise<OpenedQuire> {
   const { doc, readOnly: newerSchema } = migrateQuire(parseJson(j, 'document.json'));
   const readOnly = newerSchema || manifest.formatVersion > FORMAT_VERSION;
   const text = textFromQuire(doc);
-  let crdt: Uint8Array | null = get('history/crdt.bin') ?? null;
-  if (crdt) {
-    // 정본을 다시 정규화해 비교한다 (손으로 고친 JSON의 공백·키 순서 차이는 무시)
-    const want = await stateHash(quireFromDocument(documentFromQuire(doc).document));
-    let have: string | null = null;
-    try {
-      const loro = newLoro(1);
-      loro.import(crdt);
-      have = await stateHash(quireFromDocument(documentFromLoro(loro)));
-    } catch (e) {
-      notes.push(`history/crdt.bin: cannot be read (${String(e)})`);
-    }
-    if (have !== want) {
-      if (have !== null) notes.push('history/crdt.bin: state differs from document.json; history dropped');
-      crdt = null;
-    }
-  }
+  const history = get('history/crdt.bin') ?? null;
   const assets: QuireAsset[] = [];
   for (const e of entries) {
     const am = /^assets\/([0-9a-f]{32})\.(\w+)$/.exec(e.name);
@@ -154,5 +140,5 @@ export async function openQuire(bytes: Uint8Array): Promise<OpenedQuire> {
     }
     assets.push({ id: am[1]!, mime: MIME[am[2]!] ?? 'application/octet-stream', bytes: e.data });
   }
-  return { doc, text, crdt, readOnly, notes, assets };
+  return { doc, text, history, readOnly, notes, assets };
 }

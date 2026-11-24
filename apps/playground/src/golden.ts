@@ -12,7 +12,7 @@
  */
 import { Editor, composeReference, summarizeLayout, type LayoutSummary } from '@quiredoc/editor';
 import { HbShaper, loadShapingFont, slotOf } from '@quiredoc/shaping';
-import { documentFromQuire, migrateQuire, quireFromDocument } from '@quiredoc/sync';
+import { documentFromQuire, migrateQuire, quireFromDocument } from '@quiredoc/model';
 import pretendardUrl from '../../../fonts/pretendard/Pretendard-Regular.otf?url';
 import pretendardBoldUrl from '../../../fonts/pretendard/Pretendard-Bold.otf?url';
 import notoUrl from '../../../fonts/noto-sans-kr/NotoSansKR-Regular.otf?url';

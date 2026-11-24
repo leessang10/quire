@@ -3,7 +3,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { assetIdOf, documentFromQuire, readZip } from '@quiredoc/sync';
+import { assetIdOf, documentFromQuire, readZip } from '@quiredoc/model';
 import { SUPPORT, elementsDocument, exportHwpx, firstDifference, importHwpx, project, type ImportedAsset } from './index';
 import { parseXml } from './xml';
 

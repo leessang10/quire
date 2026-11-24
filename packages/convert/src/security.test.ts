@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { safeLink } from '@quiredoc/model';
-import { assetIdOf, documentFromQuire, migrateQuire, openQuire, packQuire, readZip, writeZip, type QuireDoc } from '@quiredoc/sync';
+import { assetIdOf, documentFromQuire, migrateQuire, openQuire, packQuire, readZip, writeZip, type QuireDoc } from '@quiredoc/model';
 import { elementsDocument, exportDocx, exportHtml, exportHwpx, exportMarkdown, importDocx, importHtml, importHwpx, importMarkdown, type ImportedAsset } from './index';
 import { parseXml } from './xml';
 

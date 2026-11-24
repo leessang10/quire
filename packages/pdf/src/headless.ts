@@ -5,7 +5,7 @@
 import { DEFAULT_METRICS, Formatter, defaultPageSetup, type PainterEnv } from '@quiredoc/editor';
 import { LayoutCache, PagedLayout, SectionFrames } from '@quiredoc/layout';
 import { HbShaper, loadShapingFont, slotOf, type FontSlot } from '@quiredoc/shaping';
-import { documentFromQuire, type QuireDoc } from '@quiredoc/sync';
+import { documentFromQuire, type QuireDoc } from '@quiredoc/model';
 import { exportPdf, type PdfResult } from './export';
 import type { PdfFontSource } from './fonts';
 import type { Subsetter } from './subset';
