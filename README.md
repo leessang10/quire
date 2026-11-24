@@ -53,5 +53,6 @@ node scripts/build-packages.mjs  # @quiredoc/* 패키지 빌드 (.build/packs) �
 | [16. 출시 준비](docs/design/16-release.md) | 6단계: CI, 성능 벤치마크, 레이아웃 골든, 보안, 남은 일 분류, 패키지·예제 앱 |
 | [17. 테마](docs/design/17-themes.md) | 7단계: 화면 테마(CSS 변수), 라이트·다크, 연속 보기 |
 | [18. UI 다국어](docs/design/18-i18n.md) | 7단계: 메시지 키, 한국어·영어 |
+| [19. 패키지 구성](docs/design/19-packages.md) | 8단계: core + 선택 모듈(collab·convert·pdf), 0.2.0 옮기기 |
 | [예제 앱](examples/README.md) | 기본: 바닐라, React+Tailwind, Next.js, Vue, SvelteKit, Node 변환기 · 전체 기능: React(Tailwind), Next.js(shadcn/ui) |
 | [ADR](docs/adr/) | 아키텍처 결정 기록 |
