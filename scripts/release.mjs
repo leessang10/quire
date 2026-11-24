@@ -2,6 +2,7 @@
 //   node scripts/build-packages.mjs && node scripts/release.mjs             → 검사 + npm publish --dry-run (기본)
 //   node scripts/release.mjs --publish                                     → 실제로 올린다 (npm 로그인 또는 NODE_AUTH_TOKEN)
 //   node scripts/release.mjs --publish --otp=123456                        → 2단계 인증 코드를 미리 준다
+//   node scripts/release.mjs --publish --only=core,collab                  → 이것들만 올린다 (검사는 모두). 새 패키지를 처음 올릴 때 (16 §10.8)
 //
 // - 실제로 올릴 때는 npm을 이 터미널에 그대로 붙여 돌린다: 2단계 인증 코드나 브라우저 인증을 npm이 직접 묻는다.
 //
@@ -17,6 +18,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const built = join(root, '.build', 'packages');
 const publish = process.argv.includes('--publish');
 const otp = process.argv.find((a) => a.startsWith('--otp='))?.slice('--otp='.length);
+const only = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length).split(',').map((s) => s.trim()).filter(Boolean);
 /** 올리는 순서: core 먼저 (모듈이 peer로 기댄다), 그다음 모듈과 글꼴 (19 §3) */
 const ORDER = ['core', 'collab', 'convert', 'pdf', 'react', 'fonts'];
 /** 폴더 안의 .js (재귀) */
@@ -83,10 +85,12 @@ console.log(`검사 통과: ${pkgs.length}개 패키지, 판 ${VERSION}`);
 
 // 2) 올리기 (기본은 dry-run)
 const tag = /-/.test(VERSION) ? 'next' : 'latest';
-for (const { dir, name } of pkgs) {
+if (only) for (const n of only) if (!pkgs.some((x) => x.p === n)) throw new Error(`--only: 없는 패키지 ${n} (${pkgs.map((x) => x.p).join(', ')})`);
+for (const { dir, name } of only ? pkgs.filter((x) => only.includes(x.p)) : pkgs) {
   let exists = false;
   try {
-    exists = npm(['view', `${name}@${VERSION}`, 'version'], dir).trim() === VERSION;
+    // 캐시를 믿지 않는다: 방금 다른 곳(로컬·워크플로)에서 올린 판을 못 보고 다시 올리려 하면 실패한다
+    exists = npm(['view', `${name}@${VERSION}`, 'version', '--prefer-online'], dir).trim() === VERSION;
   } catch {
     // 아직 없는 이름·판 (E404)
   }

@@ -10,10 +10,10 @@
     "demo": "node convert.mjs sample.md out/sample.pdf && node convert.mjs sample.md out/sample.hwpx && node convert.mjs sample.md out/sample.docx && node convert.mjs out/sample.hwpx out/roundtrip.md"
   },
   "dependencies": {
-    "@quiredoc/convert": "file:../../.build/packs/quiredoc-convert-0.1.0.tgz",
-    "@quiredoc/core": "file:../../.build/packs/quiredoc-core-0.1.0.tgz",
-    "@quiredoc/fonts": "file:../../.build/packs/quiredoc-fonts-0.1.0.tgz",
-    "@quiredoc/pdf": "file:../../.build/packs/quiredoc-pdf-0.1.0.tgz",
+    "@quiredoc/convert": "file:../../.build/packs/latest/quiredoc-convert.tgz",
+    "@quiredoc/core": "file:../../.build/packs/latest/quiredoc-core.tgz",
+    "@quiredoc/fonts": "file:../../.build/packs/latest/quiredoc-fonts.tgz",
+    "@quiredoc/pdf": "file:../../.build/packs/latest/quiredoc-pdf.tgz",
     "harfbuzzjs": "1.6.4"
   }
 }

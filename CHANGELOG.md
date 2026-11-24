@@ -4,6 +4,8 @@ All `@quiredoc/*` packages share one version and are released together. The form
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-25
+
 ### Changed (breaking): packages
 
 The ten 0.1.0 packages become one core and optional modules ([design 19](docs/design/19-packages.md)). Install `@quiredoc/core` and add only what you use; modules take `@quiredoc/core` as a peer dependency, so an app has one copy of it.
@@ -55,5 +57,6 @@ First public release.
 - Themes (classic, minimal, modern) × light/dark, `--quire-*` CSS variables (fixed public names, `tokens.scss` for SCSS), collaborator palette `--quire-remote-1…8`, continuous view, formatting marks overlay, zoom (`setZoom`, fit to width, Ctrl+wheel).
 - UI languages: Korean built in, English loaded on demand (`@quiredoc/editor/i18n/en`); import reports use stable kinds with translated names.
 
-[Unreleased]: https://github.com/leessang10/quire/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/leessang10/quire/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/leessang10/quire/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/leessang10/quire/releases/tag/v0.1.0
