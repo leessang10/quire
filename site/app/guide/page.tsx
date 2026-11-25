@@ -164,6 +164,21 @@ export default function Page() {
 
         <Step n={6} id="toolbar">
           <p>
+            먼저 글꼴 목록을 다른 파일로 뺍니다. 7·8단계에서도 쓰기 때문입니다. 4단계의 <code>fonts</code>를 그대로 옮기고 <code>export</code>를 붙입니다.
+          </p>
+          <Code file="app/fonts.ts">{`
+import type { FontSource } from '@quiredoc/core';
+
+export const fonts: FontSource[] = [
+  {
+    name: 'Pretendard',
+    manifest: '/quire/fonts/pretendard/manifest.json',
+    bold: { manifest: '/quire/fonts/pretendard-bold/manifest.json' },
+  },
+  { name: 'Noto Sans KR', manifest: '/quire/fonts/noto-sans-kr/manifest.json' },
+];
+`}</Code>
+          <p>
             <code>useEditorState</code>로 편집기 상태에서 필요한 값만 고릅니다. 고른 값이 바뀔 때만 컴포넌트가 다시 그려지므로, 글자를 칠 때마다 도구 막대가 다시 그려지지 않습니다. 단추는 <code>editor.run</code>으로 명령을 보냅니다.
           </p>
           <Code file="app/Editor.tsx">{`
@@ -199,7 +214,7 @@ export default function Editor() {
 }
 `}</Code>
           <p>
-            글꼴 목록은 다음 단계에서도 쓰므로 4단계의 <code>fonts</code>를 <code>app/fonts.ts</code>로 옮기고 <code>export</code>합니다. 쓸 수 있는 명령은{' '}
+            쓸 수 있는 명령은 이 밖에도{' '}
             <code>toggleItalic</code>, <code>toggleUnderline</code>, <code>redo</code>, <code>setStyle</code>, <code>setAlign</code> 등이 있습니다 (<a href={doc('docs/design/15-ecosystem.md')}>명령 목록</a>).
           </p>
         </Step>

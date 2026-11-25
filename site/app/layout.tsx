@@ -26,6 +26,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 <Link href="/#demo">데모</Link>
               </li>
               <li>
+                <Link href="/#examples">예제</Link>
+              </li>
+              <li>
                 <Link href="/#install">설치</Link>
               </li>
               <li>

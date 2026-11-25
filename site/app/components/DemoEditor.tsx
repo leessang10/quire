@@ -27,7 +27,8 @@ export default function DemoEditor() {
       const n = await saveFile(editor.handle, kind);
       setMessage(`${kind.toUpperCase()}로 저장했습니다 (${(n / 1024).toFixed(1)} KB)`);
     } catch (e) {
-      setMessage(`저장하지 못했습니다: ${(e as Error).message}`);
+      console.error(e);
+      setMessage(`${kind.toUpperCase()}로 저장하지 못했습니다. 페이지를 새로 고친 뒤 다시 시도하거나 다른 형식으로 저장해 보세요.`);
     } finally {
       setBusy(false);
     }
@@ -37,13 +38,13 @@ export default function DemoEditor() {
     <div className="demo">
       <div className="demo-bar" role="toolbar" aria-label="데모 편집 도구">
         <div className="group">
-          <button type="button" aria-pressed={bold} onClick={() => run('toggleBold')} title="굵게 (Ctrl+B)">
+          <button type="button" aria-pressed={bold} onClick={() => run('toggleBold')} title="굵게 (Ctrl+B)" aria-label="굵게">
             <b>가</b>
           </button>
-          <button type="button" aria-pressed={italic} onClick={() => run('toggleItalic')} title="기울임 (Ctrl+I)">
+          <button type="button" aria-pressed={italic} onClick={() => run('toggleItalic')} title="기울임 (Ctrl+I)" aria-label="기울임">
             <i>가</i>
           </button>
-          <button type="button" aria-pressed={underline} onClick={() => run('toggleUnderline')} title="밑줄 (Ctrl+U)">
+          <button type="button" aria-pressed={underline} onClick={() => run('toggleUnderline')} title="밑줄 (Ctrl+U)" aria-label="밑줄">
             <u>가</u>
           </button>
         </div>
@@ -76,9 +77,10 @@ export default function DemoEditor() {
               if (!f) return;
               try {
                 const dropped = await openFile(editor, f);
-                setMessage(`${f.name}을(를) 열었습니다${dropped ? ` · 옮기지 못한 요소 ${dropped}개` : ''}`);
+                setMessage(`'${f.name}' 파일을 열었습니다.${dropped ? ` 지원하지 않는 요소 ${dropped}개는 빠졌습니다.` : ''}`);
               } catch (err) {
-                setMessage(`열지 못했습니다: ${(err as Error).message}`);
+                console.error(err);
+                setMessage(`'${f.name}' 파일을 열지 못했습니다. HWPX·DOCX·Markdown 파일인지, 손상되지 않았는지 확인하고 다시 열어 보세요.`);
               }
             }}
           />
@@ -91,7 +93,7 @@ export default function DemoEditor() {
       </div>
       <QuireEditor editor={editor} className="demo-canvas" />
       <p className="demo-status" aria-live="polite">
-        {message || '편집한 내용은 이 브라우저 밖으로 나가지 않습니다.'}
+        {message || '편집한 내용은 이 브라우저 밖으로 나가지 않습니다. 편집기 안에서 Tab은 탭 문자를 넣고, Shift+Tab으로 빠져나옵니다.'}
       </p>
     </div>
   );

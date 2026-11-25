@@ -1,15 +1,17 @@
 import Link from 'next/link';
 import Code from './components/Code';
 import Demo from './components/Demo';
+import Gallery from './components/Gallery';
 import { GITHUB, NPM, doc, tree } from '../lib/links';
+import { coreVersion } from '../lib/version';
 
 const FEATURES = [
   { title: '실제 쪽 나눔', body: '화면에서 본 쪽이 PDF와 인쇄에서도 같습니다. 머리말·꼬리말, 다단, 각주, 표가 쪽을 넘어갑니다.' },
-  { title: '정밀한 한글 조판', body: '어절 단위 줄바꿈, 금칙 문장부호, 양쪽 맞춤의 고른 간격. 글꼴 모양을 직접 잡아 캔버스에 그립니다.' },
-  { title: '입력기를 끝까지', body: '조합 중인 한글, 한자 변환, 두 번 눌린 Enter 같은 실제 Windows·macOS 입력기의 동작을 따로 다룹니다.' },
-  { title: 'HWPX·DOCX·PDF', body: '한글과 워드 문서를 열고 저장합니다. PDF는 쓴 글자만 담은 글꼴을 넣어 작게 만듭니다. 서버가 필요 없습니다.' },
+  { title: '정밀한 한글 조판', body: '어절 단위로 줄을 바꾸고, 닫는 문장부호는 줄 첫머리에 오지 않게 하며, 양쪽 맞춤 간격을 고르게 나눕니다.' },
+  { title: '한글 입력기 그대로', body: '조합 중인 글자, 한자 변환, 조합 중에 누른 Enter까지 Windows·macOS 한글 입력기에서 정확하게 동작합니다.' },
+  { title: 'HWPX·DOCX·PDF', body: '한컴오피스 한글(HWPX)과 워드(DOCX) 문서를 열고 저장합니다. PDF에는 쓴 글자만 담은 글꼴을 넣어 파일이 작습니다. 서버 없이 브라우저에서 처리합니다.' },
   { title: '큰 문서', body: '보이는 쪽만 그리고 바뀐 문단만 다시 조판합니다. 수백 쪽 문서에서도 입력이 밀리지 않습니다.' },
-  { title: '필요한 것만 조립', body: '@quiredoc/core 하나로 시작하고, React·변환·PDF·협업은 쓸 때만 더합니다. 기본 앱의 시작 JS는 수백 KB입니다.' },
+  { title: '필요한 것만 조립', body: '@quiredoc/core 하나로 시작하고 React·변환·PDF·협업은 필요할 때만 더합니다. 기본 앱은 처음에 약 500 KB만 받습니다.' },
 ];
 
 const PACKAGES = [
@@ -33,18 +35,19 @@ const DOCS = [
 ];
 
 export default function Home() {
+  const version = coreVersion();
   return (
     <>
       <section className="hero">
         <div className="wrap">
-          <span className="eyebrow">0.2.0 · MIT</span>
+          <span className="eyebrow">{version ? `${version} · MIT` : 'MIT'}</span>
           <h1>웹에서 쓰는 한글 문서 편집기</h1>
           <p className="lead">
-            Quire는 브라우저의 텍스트 상자 대신 자체 조판 엔진으로 캔버스에 문서를 그립니다. 실제 쪽 나눔과 정밀한 한글 조판, HWPX·DOCX·PDF를 앱에 몇 줄로 넣으세요.
+            Quire는 브라우저의 텍스트 상자 대신 자체 조판 엔진으로 캔버스에 문서를 그립니다. 실제 쪽 나눔과 정밀한 한글 조판, HWPX·DOCX·PDF 저장까지 코드 몇 줄로 앱에 넣으세요.
           </p>
           <div className="actions">
             <a className="btn primary" href="#demo">
-              지금 써 보기
+              데모 써 보기
             </a>
             <Link className="btn" href="/guide">
               예제 앱 만들기
@@ -53,6 +56,14 @@ export default function Home() {
               GitHub
             </a>
           </div>
+        </div>
+      </section>
+
+      <section className="section" id="examples" aria-labelledby="examples-title">
+        <div className="wrap">
+          <h2 id="examples-title">예제 앱</h2>
+          <p className="sub">Quire로 만든 예제 앱들입니다. 같은 편집기를 워드 프로세서, 노트 앱, 기본 편집기로 꾸몄습니다.</p>
+          <Gallery />
         </div>
       </section>
 
@@ -74,8 +85,11 @@ export default function Home() {
 
       <section className="section" id="demo" aria-labelledby="demo-title">
         <div className="wrap">
-          <h2 id="demo-title">써 보기</h2>
+          <h2 id="demo-title">데모</h2>
           <p className="sub">아래는 이 페이지에 넣은 실제 Quire 편집기입니다. 한글을 입력하고, 서식을 바꾸고, 파일을 열거나 저장해 보세요.</p>
+          <a className="skip-demo" href="#install">
+            데모 건너뛰기
+          </a>
           <Demo />
         </div>
       </section>
