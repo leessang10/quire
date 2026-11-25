@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import Code from '../components/Code';
-import { doc, tree } from '../../lib/links';
+import Code from '../../components/Code';
+import { doc, tree } from '../../../lib/links';
 
 export const metadata: Metadata = {
   title: '예제 앱 만들기',
@@ -48,6 +48,7 @@ export default function Guide() {
         </ol>
       </nav>
       <article>
+        <p className="kicker">안내서</p>
         <h1>예제 앱 만들기</h1>
         <p className="sub">
           빈 Next.js 앱에 Quire 편집기를 넣고, 도구 막대와 파일 열기·저장, PDF 내보내기를 붙여 Vercel에 올립니다. 다 만들면{' '}
@@ -215,7 +216,7 @@ export default function Editor() {
 `}</Code>
           <p>
             쓸 수 있는 명령은 이 밖에도{' '}
-            <code>toggleItalic</code>, <code>toggleUnderline</code>, <code>redo</code>, <code>setStyle</code>, <code>setAlign</code> 등이 있습니다 (<a href={doc('docs/design/15-ecosystem.md')}>명령 목록</a>).
+            <code>toggleItalic</code>, <code>toggleUnderline</code>, <code>redo</code>, <code>setStyle</code>, <code>setAlign</code> 등이 있습니다 (<Link href="/docs#commands">명령 전체</Link>).
           </p>
         </Step>
 
@@ -349,16 +350,19 @@ export async function savePdf(editor: QuireController) {
           <h2 id="next-title">다음으로</h2>
           <ul>
             <li>
+              <Link href="/docs">API 문서</Link>: 편집기 옵션, 명령, 상태를 모두
+            </li>
+            <li>
               <a href={tree('examples')}>예제 앱 10개</a>: Vue, Svelte, 바닐라 JS, Node에서 변환하기, 워드·노션 같은 화면을 흉내 낸 Next.js 앱
             </li>
             <li>
-              <a href={doc('docs/design/17-themes.md')}>테마</a>로 편집기 색과 글꼴을 앱에 맞추기
+              <Link href="/docs#themes">테마</Link>로 편집기 색과 글꼴을 앱에 맞추기
             </li>
             <li>
-              <a href={doc('docs/design/15-ecosystem.md')}>플러그인</a>으로 명령과 그리기 층 더하기
+              <Link href="/docs#plugins">플러그인</Link>으로 명령과 그리기 층 더하기
             </li>
             <li>
-              <code>@quiredoc/collab</code>으로 실시간 협업 붙이기 (<a href={doc('docs/design/14-collaboration-history.md')}>협업과 기록</a>)
+              <code>@quiredoc/collab</code>으로 <Link href="/docs#collab">실시간 협업</Link> 붙이기 (설계 노트: <a href={doc('docs/design/14-collaboration-history.md')}>협업과 기록</a>)
             </li>
           </ul>
         </section>
