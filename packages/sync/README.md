@@ -4,6 +4,8 @@ Real-time collaboration for the Quire editor: CRDT sync (Loro, runnable in a Wor
 
 Part of [Quire](https://github.com/leessang10/quire). Requires `@quiredoc/core` (peer dependency). Saving and loading documents without collaboration needs only `@quiredoc/core`; add this package when several people edit the same document.
 
+Website, live demo and a step-by-step guide: https://quire-ten-omega.vercel.app
+
 ## Install
 
 ```sh
