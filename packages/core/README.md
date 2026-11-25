@@ -1,5 +1,7 @@
 # @quiredoc/core
 
+Website, live demo and a step-by-step guide: https://quire-ten-omega.vercel.app
+
 Quire core: a web document editor that draws pages on a canvas with its own typesetting engine — real page layout, precise Korean typesetting, full IME control, large documents.
 
 This package is everything the editor needs to run on its own: the document model, the layout engine, HarfBuzz text shaping, the editor, `createEditor`, and saving/loading (canonical JSON and `.quire` files). Optional features are separate packages you add when you need them:

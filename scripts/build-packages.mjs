@@ -23,9 +23,11 @@ const VERSION = process.env.QUIRE_VERSION || JSON.parse(readFileSync(join(root, 
 if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(VERSION ?? '')) throw new Error(`판이 semver가 아님: ${VERSION}`);
 /** 배포용 package.json에 같이 쓰는 것 */
 const REPO = 'https://github.com/leessang10/quire';
+/** 소개 페이지 (site/, Vercel): npm의 Homepage */
+const SITE = 'https://quire-ten-omega.vercel.app';
 const meta = (dir) => ({
   repository: { type: 'git', url: `git+${REPO}.git`, directory: dir },
-  homepage: `${REPO}#readme`,
+  homepage: SITE,
   bugs: { url: `${REPO}/issues` },
   publishConfig: { access: 'public' },
 });
@@ -185,6 +187,8 @@ if (!existsSync(join(fontsSrc, 'pretendard/manifest.json'))) {
       `Font chunks and manifests used by the [Quire](${REPO}) editor: Pretendard and Noto Sans KR, split so the editor loads only the chunks a document needs.`,
       '',
       "Copy `node_modules/@quiredoc/fonts/fonts` to `<public>/quire/fonts/` and point the editor's `fonts` option at the manifests.",
+      '',
+      `Website, live demo and a step-by-step guide: ${SITE} (copying the fonts is step 3 of the guide).`,
       '',
       '## License',
       '',

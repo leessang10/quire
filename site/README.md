@@ -1,6 +1,6 @@
 # Quire 소개 페이지
 
-Vercel에 올리는 소개 페이지 (Next.js App Router).
+Vercel에 올리는 소개 페이지 (Next.js App Router): https://quire-ten-omega.vercel.app
 
 - `/`: 소개, 실제 편집기 데모(열기·HWPX·DOCX·Markdown·PDF 저장), 설치, 문서 링크
 - `/guide`: Next.js 예제 앱을 처음부터 만드는 단계별 가이드
