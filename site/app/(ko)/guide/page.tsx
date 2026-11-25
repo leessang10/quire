@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import Code from '../../components/Code';
+import DocsLayout from '../../components/DocsLayout';
 import { doc, tree } from '../../../lib/links';
 
 export const metadata: Metadata = {
@@ -36,19 +37,7 @@ function Step({ n, id, children }: { n: number; id: string; children: React.Reac
 
 export default function Guide() {
   return (
-    <div className="wrap guide">
-      <nav className="toc" aria-label="단계">
-        <p>단계</p>
-        <ol>
-          {STEPS.map(([id, title]) => (
-            <li key={id}>
-              <a href={`#${id}`}>{title}</a>
-            </li>
-          ))}
-        </ol>
-      </nav>
-      <article>
-        <p className="kicker">안내서</p>
+    <DocsLayout lang="ko" page="/guide" sections={STEPS}>
         <h1>예제 앱 만들기</h1>
         <p className="sub">
           빈 Next.js 앱에 Quire 편집기를 넣고, 도구 막대와 파일 열기·저장, PDF 내보내기를 붙여 Vercel에 올립니다. 다 만들면{' '}
@@ -366,7 +355,6 @@ export async function savePdf(editor: QuireController) {
             </li>
           </ul>
         </section>
-      </article>
-    </div>
+    </DocsLayout>
   );
 }

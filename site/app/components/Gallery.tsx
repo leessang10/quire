@@ -1,5 +1,8 @@
 'use client';
-import { useRef, useState, type KeyboardEvent } from 'react';
+import { useState } from 'react';
+import { Code2 } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { buttonVariants } from '@/components/ui/button';
 import { tree } from '../../lib/links';
 import type { Lang } from '../../lib/i18n';
 
@@ -92,72 +95,53 @@ const T = {
     all: 'All 10 examples and how to run them',
   },
 };
-
-export default function Gallery({ lang }: { lang: Lang }) {
-  const t = T[lang];
-  const [active, setActive] = useState(0);
+function ExamplePanel({ example, lang }: { example: Example; lang: Lang }) {
   const [shot, setShot] = useState(0);
-  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
-  const ex = EXAMPLES[active];
-  const current = ex.shots[shot] ?? ex.shots[0];
-
-  const select = (i: number) => {
-    setActive(i);
-    setShot(0);
-  };
-  // 탭 목록: 화살표·Home·End로 이동 (APG tabs, 자동 선택)
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const n = EXAMPLES.length;
-    const next = { ArrowRight: active + 1, ArrowLeft: active - 1 + n, Home: 0, End: n - 1 }[e.key];
-    if (next === undefined) return;
-    e.preventDefault();
-    const i = next % n;
-    select(i);
-    tabs.current[i]?.focus();
-  };
+  const t = T[lang];
+  const label = example.label[lang];
+  const current = example.shots[shot];
 
   return (
-    <div className="gallery">
-      <div className="gallery-tabs" role="tablist" aria-label={t.tabs} onKeyDown={onKeyDown}>
-        {EXAMPLES.map((x, i) => (
-          <button
-            key={x.id}
-            ref={(el) => {
-              tabs.current[i] = el;
-            }}
-            type="button"
-            role="tab"
-            id={`ex-tab-${x.id}`}
-            aria-selected={i === active}
-            aria-controls={`ex-panel-${x.id}`}
-            tabIndex={i === active ? 0 : -1}
-            onClick={() => select(i)}
-          >
-            {x.label[lang]}
-          </button>
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 sm:px-5">
+        <p className="flex-1 basis-64 text-sm leading-relaxed text-muted-foreground">{example.desc[lang]}</p>
+        <a href={tree(example.source)} className={buttonVariants({ variant: 'outline' })}>
+          <Code2 aria-hidden="true" />
+          {t.source(label)}
+        </a>
+      </div>
+      <figure className="relative bg-muted/60">
+        {/* Screenshots already ship as WebP and are shown without cropping. */}
+        <img src={current.src} alt={t.alt(label, current.caption[lang])} width={1440} height={900} loading="lazy" className="aspect-[16/10] w-full object-contain" />
+        <figcaption className="border-y bg-card px-4 py-2 text-sm text-muted-foreground sm:px-5">{current.caption[lang]}</figcaption>
+      </figure>
+      <ul aria-label={t.pick} className="flex flex-wrap gap-1.5 p-3">
+        {example.shots.map((item, index) => (
+          <li key={item.src}>
+            <button type="button" aria-pressed={index === shot} onClick={() => setShot(index)}
+              className={buttonVariants({ variant: index === shot ? 'secondary' : 'ghost', className: 'px-3' })}>
+              {item.short[lang]}
+            </button>
+          </li>
         ))}
-      </div>
-      <div className="gallery-panel" role="tabpanel" id={`ex-panel-${ex.id}`} aria-labelledby={`ex-tab-${ex.id}`}>
-        <p className="desc">{ex.desc[lang]}</p>
-        <figure className="shot">
-          <img src={current.src} alt={t.alt(ex.label[lang], current.caption[lang])} width={1440} height={900} />
-          <figcaption>{current.caption[lang]}</figcaption>
-        </figure>
-        <ul className="shots" aria-label={t.pick}>
-          {ex.shots.map((s, i) => (
-            <li key={s.src}>
-              <button type="button" aria-pressed={i === shot} onClick={() => setShot(i)}>
-                <img src={s.src} alt="" width={1440} height={900} loading="lazy" />
-                {s.short[lang]}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <p className="gallery-links">
-          <a href={tree(ex.source)}>{t.source(ex.label[lang])}</a>
-          <a href={tree('examples')}>{t.all}</a>
-        </p>
-      </div>
-    </div>
+      </ul>
+    </>
+  );
+}
+
+export default function Gallery({ lang }: { lang: Lang }) {
+  const examples = [EXAMPLES[2], EXAMPLES[0], EXAMPLES[1], EXAMPLES[3]];
+  return (
+    <Tabs defaultValue="full" className="gap-3">
+      <TabsList activateOnFocus aria-label={T[lang].tabs} className="h-auto! max-w-full flex-wrap justify-start! gap-0.5">
+        {examples.map((example) => <TabsTrigger key={example.id} value={example.id} className="min-h-8 flex-none! px-2.5">{example.label[lang]}</TabsTrigger>)}
+      </TabsList>
+      {examples.map((example) => (
+        <TabsContent key={example.id} value={example.id} className="min-w-0 overflow-hidden rounded-xl border bg-card">
+          <ExamplePanel example={example} lang={lang} />
+        </TabsContent>
+      ))}
+      <a href={tree('examples')} className="w-fit text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">{T[lang].all}</a>
+    </Tabs>
   );
 }

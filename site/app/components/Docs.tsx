@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import Code from './Code';
+import DocsLayout from './DocsLayout';
 import { doc, tree } from '../../lib/links';
 import { href, type Lang } from '../../lib/i18n';
 
@@ -147,19 +148,7 @@ export default function Docs({ lang }: { lang: Lang }) {
   const C = ko ? (['명령', '인자', '하는 일'] as [string, string, string]) : (['Command', 'Arguments', 'What it does'] as [string, string, string]);
   const P = (k: ReactNode, e: ReactNode) => <p>{ko ? k : e}</p>;
   return (
-    <div className="wrap guide">
-      <nav className="toc" aria-label={ko ? '차례' : 'Contents'}>
-        <p>{ko ? '차례' : 'Contents'}</p>
-        <ol>
-          {SECTIONS.map(([id, t]) => (
-            <li key={id}>
-              <a href={`#${id}`}>{t[lang]}</a>
-            </li>
-          ))}
-        </ol>
-      </nav>
-      <article>
-        <p className="kicker">{ko ? '참고서' : 'Reference'}</p>
+    <DocsLayout lang={lang} page="/docs" sections={SECTIONS.map(([id, title]) => [id, title[lang]] as const)}>
         <h1>{ko ? 'API 문서' : 'API reference'}</h1>
         <p className="sub">
           {ko ? (
@@ -470,7 +459,6 @@ await sync.ready;`}</Code>
             </>,
           )}
         </Sec>
-      </article>
-    </div>
+    </DocsLayout>
   );
 }

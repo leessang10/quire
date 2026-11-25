@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import Chrome from '../../components/Chrome';
-import { serif } from '../../../lib/fonts';
+import SiteTheme from '../../components/SiteTheme';
 import '../../globals.css';
 
 export const metadata: Metadata = {
@@ -12,9 +12,9 @@ export const metadata: Metadata = {
 
 export default function EnLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={serif.variable}>
-      <body className="lang-en">
-        <Chrome lang="en">{children}</Chrome>
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <SiteTheme><Chrome lang="en">{children}</Chrome></SiteTheme>
       </body>
     </html>
   );

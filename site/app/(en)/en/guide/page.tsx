@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import Code from '../../../components/Code';
+import DocsLayout from '../../../components/DocsLayout';
 import { doc, tree } from '../../../../lib/links';
 
 export const metadata: Metadata = {
@@ -36,19 +37,7 @@ function Step({ n, id, children }: { n: number; id: string; children: React.Reac
 
 export default function Guide() {
   return (
-    <div className="wrap guide">
-      <nav className="toc" aria-label="Steps">
-        <p>Steps</p>
-        <ol>
-          {STEPS.map(([id, title]) => (
-            <li key={id}>
-              <a href={`#${id}`}>{title}</a>
-            </li>
-          ))}
-        </ol>
-      </nav>
-      <article>
-        <p className="kicker">A guide</p>
+    <DocsLayout lang="en" page="/guide" sections={STEPS}>
         <h1>Build an example app</h1>
         <p className="sub">
           Start from an empty Next.js app, add the Quire editor, a toolbar, opening and saving files and PDF export, then deploy it to Vercel. You end up with the same app as{' '}
@@ -360,7 +349,6 @@ export async function savePdf(editor: QuireController) {
             </li>
           </ul>
         </section>
-      </article>
-    </div>
+    </DocsLayout>
   );
 }

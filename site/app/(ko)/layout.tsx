@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import Chrome from '../components/Chrome';
-import { serif } from '../../lib/fonts';
+import SiteTheme from '../components/SiteTheme';
 import '../globals.css';
 
 export const metadata: Metadata = {
@@ -12,9 +12,9 @@ export const metadata: Metadata = {
 
 export default function KoLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="ko" className={serif.variable}>
+    <html lang="ko" suppressHydrationWarning>
       <body>
-        <Chrome lang="ko">{children}</Chrome>
+        <SiteTheme><Chrome lang="ko">{children}</Chrome></SiteTheme>
       </body>
     </html>
   );

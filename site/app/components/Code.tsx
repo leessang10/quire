@@ -11,7 +11,7 @@ export default function Code({ children, file, lang, ui = 'ko' }: { children: st
         <span>{file ?? lang ?? ''}</span>
         <CopyButton text={code} label={file ?? (lang === 'sh' ? t.command : t.code)} ui={ui} />
       </figcaption>
-      <pre>
+      <pre tabIndex={0}>
         <code>{code}</code>
       </pre>
     </figure>

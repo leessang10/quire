@@ -1,6 +1,9 @@
 'use client';
-import { useRef, useState } from 'react';
+import { Bold, ChevronDown, Italic, Redo2, Underline, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { useTheme } from 'next-themes';
+import { useEffect, useRef, useState } from 'react';
 import { QuireEditor, useEditorState, useQuire } from '@quiredoc/react';
+import { Button } from '@/components/ui/button';
 import { ACCEPT, SAVE_KINDS, demoDoc, fonts, openFile, saveFile, type SaveKind } from '../../lib/quire';
 import type { Lang } from '../../lib/i18n';
 
@@ -12,7 +15,8 @@ const T = {
     underline: ['밑줄', '밑줄 (Ctrl+U)'],
     undo: ['실행 취소', '실행 취소 (Ctrl+Z)'],
     redo: ['다시 실행', '다시 실행 (Ctrl+Y)'],
-    glyph: '가',
+    zoomIn: '실제 크기로 보기',
+    zoomOut: '쪽 폭에 맞추기',
     style: '문단 스타일',
     styles: { body: '본문', h1: '제목 1', h2: '제목 2', h3: '제목 3' },
     open: '열기',
@@ -31,7 +35,8 @@ const T = {
     underline: ['Underline', 'Underline (Ctrl+U)'],
     undo: ['Undo', 'Undo (Ctrl+Z)'],
     redo: ['Redo', 'Redo (Ctrl+Y)'],
-    glyph: 'A',
+    zoomIn: 'View at actual size',
+    zoomOut: 'Fit to page width',
     style: 'Paragraph style',
     styles: { body: 'Body', h1: 'Heading 1', h2: 'Heading 2', h3: 'Heading 3' },
     open: 'Open',
@@ -49,7 +54,10 @@ export default function DemoEditor({ lang }: { lang: Lang }) {
   const t = T[lang];
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [actualSize, setActualSize] = useState(false);
   const editor = useQuire({ doc: demoDoc(lang), fonts, locale: lang, colorScheme: 'auto' });
+  const instance = useEditorState(editor, () => editor.handle?.editor);
+  const { resolvedTheme } = useTheme();
   const bold = useEditorState(editor, (s) => !!s.marksAtCaret.bold);
   const italic = useEditorState(editor, (s) => !!s.marksAtCaret.italic);
   const underline = useEditorState(editor, (s) => !!s.marksAtCaret.underline);
@@ -57,6 +65,24 @@ export default function DemoEditor({ lang }: { lang: Lang }) {
   const canRedo = useEditorState(editor, (s) => s.canRedo);
   const style = useEditorState(editor, (s) => s.paragraphStyle);
   const file = useRef<HTMLInputElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (resolvedTheme === 'dark' || resolvedTheme === 'light') instance?.setColorScheme(resolvedTheme);
+  }, [instance, resolvedTheme]);
+
+  useEffect(() => {
+    const element = viewport.current;
+    if (!instance || !element) return;
+    let width = 0;
+    const observer = new ResizeObserver(() => {
+      if (width === element.clientWidth) return;
+      width = element.clientWidth;
+      instance.setZoom(actualSize ? 1 : Math.min(1, instance.fitWidthZoom()));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [instance, actualSize]);
 
   const run = (cmd: string, ...args: unknown[]) => {
     editor.run(cmd, ...args);
@@ -80,37 +106,42 @@ export default function DemoEditor({ lang }: { lang: Lang }) {
 
   return (
     <div className="demo">
-      <div className="demo-bar" role="toolbar" aria-label={t.toolbar}>
-        <div className="group">
-          <button type="button" aria-pressed={bold} onClick={() => run('toggleBold')} title={t.bold[1]} aria-label={t.bold[0]}>
-            <b>{t.glyph}</b>
-          </button>
-          <button type="button" aria-pressed={italic} onClick={() => run('toggleItalic')} title={t.italic[1]} aria-label={t.italic[0]}>
-            <i>{t.glyph}</i>
-          </button>
-          <button type="button" aria-pressed={underline} onClick={() => run('toggleUnderline')} title={t.underline[1]} aria-label={t.underline[0]}>
-            <u>{t.glyph}</u>
-          </button>
+      <div className="flex flex-wrap items-center gap-2 border-y bg-card px-2.5 py-2 sm:px-4" role="group" aria-label={t.toolbar}>
+        <div className="flex gap-0.5">
+          <Button variant={bold ? 'secondary' : 'ghost'} size="icon" aria-pressed={bold} onClick={() => run('toggleBold')} title={t.bold[1]} aria-label={t.bold[0]}>
+            <Bold />
+          </Button>
+          <Button variant={italic ? 'secondary' : 'ghost'} size="icon" aria-pressed={italic} onClick={() => run('toggleItalic')} title={t.italic[1]} aria-label={t.italic[0]}>
+            <Italic />
+          </Button>
+          <Button variant={underline ? 'secondary' : 'ghost'} size="icon" aria-pressed={underline} onClick={() => run('toggleUnderline')} title={t.underline[1]} aria-label={t.underline[0]}>
+            <Underline />
+          </Button>
         </div>
-        <div className="group">
-          <button type="button" disabled={!canUndo} onClick={() => run('undo')} title={t.undo[1]} aria-label={t.undo[0]}>
-            ↶
-          </button>
-          <button type="button" disabled={!canRedo} onClick={() => run('redo')} title={t.redo[1]} aria-label={t.redo[0]}>
-            ↷
-          </button>
+        <div className="flex gap-0.5 border-l pl-2">
+          <Button variant="ghost" size="icon" disabled={!canUndo} onClick={() => run('undo')} title={t.undo[1]} aria-label={t.undo[0]}>
+            <Undo2 />
+          </Button>
+          <Button variant="ghost" size="icon" disabled={!canRedo} onClick={() => run('redo')} title={t.redo[1]} aria-label={t.redo[0]}>
+            <Redo2 />
+          </Button>
         </div>
-        <select aria-label={t.style} value={['h1', 'h2', 'h3'].includes(style) ? style : 'body'} onChange={(e) => run('setStyle', e.target.value)}>
-          {Object.entries(t.styles).map(([v, label]) => (
-            <option key={v} value={v}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <div className="group push">
-          <button type="button" onClick={() => file.current?.click()}>
+        <div className="relative">
+          <select className="h-8 appearance-none rounded-md border bg-background py-0 pr-7 pl-2 text-sm" aria-label={t.style}
+            value={['h1', 'h2', 'h3'].includes(style) ? style : 'body'} onChange={(e) => run('setStyle', e.target.value)}>
+            {Object.entries(t.styles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <ChevronDown aria-hidden="true" className="pointer-events-none absolute top-2.5 right-2 size-3 text-muted-foreground" />
+        </div>
+        <Button variant="ghost" size="icon" className="lg:hidden" disabled={!instance}
+          aria-label={actualSize ? t.zoomOut : t.zoomIn} title={actualSize ? t.zoomOut : t.zoomIn}
+          onClick={() => setActualSize((current) => !current)}>
+          {actualSize ? <ZoomOut /> : <ZoomIn />}
+        </Button>
+        <div className="flex flex-wrap gap-1 sm:ml-auto">
+          <Button variant="outline" onClick={() => file.current?.click()}>
             {t.open}
-          </button>
+          </Button>
           <input
             ref={file}
             type="file"
@@ -129,14 +160,16 @@ export default function DemoEditor({ lang }: { lang: Lang }) {
             }}
           />
           {SAVE_KINDS.map((k) => (
-            <button type="button" key={k} disabled={busy} onClick={() => void save(k)} title={t.saveAs(k.toUpperCase())}>
+            <Button variant="ghost" key={k} disabled={busy} onClick={() => void save(k)} title={t.saveAs(k.toUpperCase())}>
               {k.toUpperCase()}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
-      <QuireEditor editor={editor} className="demo-canvas" />
-      <p className="demo-status" aria-live="polite">
+      <div ref={viewport} className="min-h-0 min-w-0">
+        <QuireEditor editor={editor} className="demo-canvas" />
+      </div>
+      <p className="border-t bg-card px-3 py-2 text-sm text-muted-foreground sm:px-4" aria-live="polite">
         {message || t.idle}
       </p>
     </div>
