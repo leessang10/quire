@@ -1,6 +1,6 @@
 # 19. 패키지 구성 (core + 조립)
 
-- 상태: 설계 (2026-11-24). 0.2.0에서 바꾼다. P-1–P-5 끝남, P-6은 올리기만 남음 (§8).
+- 상태: 끝남 (2026-11-25). 0.2.0으로 나감 (§8).
 - 범위: npm에 내는 패키지의 경계·이름·의존 방식, 기능을 골라 붙이는 방법, 0.1.0에서 옮기는 단계.
 - 범위 밖: 편집기 기능 자체. 저장소 안의 개발 구조(워크스페이스 폴더)는 거의 그대로 둔다.
 - 바탕: 08(통합·임베드), 15 §19(플러그인 API), 16 §10.1·§10.8(빌드·출시).
@@ -37,7 +37,7 @@
 | `@quiredoc/pdf` | PDF 내보내기, Node에서 정본 → PDF (그대로) | harfbuzzjs (부분화) | 선택 |
 | `@quiredoc/fonts` | 글꼴 조각 (그대로) | — | 선택 (자산) |
 
-- 열 개 → 여섯 개. `model`·`layout`·`shaping`·`editor`·`sync`·`sdk`는 0.2.0부터 내지 않는다 (§6 사용 중단 안내).
+- 열 개 → 여섯 개. `model`·`layout`·`shaping`·`editor`·`sync`·`sdk`는 0.2.0부터 내지 않는다 (§6: npm에서 지움).
 - 0.1.0과 이름이 같은 `react`·`convert`·`pdf`·`fonts`는 Trusted Publisher 설정을 그대로 쓴다. 새 이름 `core`·`collab`은 처음 한 번 사람이 올린 뒤 등록한다 (16 §10.8과 같은 절차).
 
 ### 3.1 쓰는 모습
@@ -117,11 +117,11 @@ const { importHwpx } = await import('@quiredoc/convert');
 | P-3 | core 진입점과 빌드: `packages/core`, 묶기·이름 바꾸기·peer (§4.2), 검사 더하기 | 빌드 결과 여섯 패키지, `release.mjs` 새 검사 통과 |
 | P-4 | collab 플러그인 (§4.4) | 플레이그라운드 협업 데모가 `collab()` 하나로 돈다 |
 | P-5 | 예제·문서 옮기기 (§4.5), 묶음 크기 확인 | react-vite 기본 앱 묶음에 Loro 없음 (시작 때 받는 JS가 지금 5 MB대 → 수백 KB대), 예제 typecheck·빌드, 골든 |
-| P-6 | 0.2.0 출시: core·collab 처음 올리기와 Trusted Publisher 등록, 옛 패키지 사용 중단 안내 (§6) | npm에서 여섯 개 0.2.0, 빈 폴더 설치·동작 확인 |
+| P-6 | 0.2.0 출시: core·collab 처음 올리기와 Trusted Publisher 등록, 옛 패키지 정리 (§6) | npm에서 여섯 개 0.2.0, 빈 폴더 설치·동작 확인 |
 
 ## 6. 0.1.0에서 옮기기
 
-- **사용 중단 안내**: `npm deprecate @quiredoc/model "@quiredoc/core로 옮겼습니다 (0.2.0)"`처럼 model·layout·shaping·editor·sdk(→ core), sync(→ collab)에. 패키지와 0.1.0은 지우지 않는다 (설치한 사람이 깨지지 않게).
+- **옛 패키지 지우기** (2026-11-25에 바꿈): 처음엔 `npm deprecate`로 안내만 걸 생각이었으나, 0.1.0이 나간 지 하루라 쓰는 사람이 사실상 없어 npm의 72시간 안 지우기(`npm unpublish`)로 지웠다. model·layout·shaping·editor·sdk·sync는 이름째, convert·pdf·react·fonts는 0.1.0 판만. 서로 기대는 순서 때문에 react·convert·pdf 0.1.0 → sdk → editor·sync → shaping·model → layout 순. 지운 판 번호(0.1.0)는 그 패키지에서 다시 쓸 수 없다.
 - **가져오기 표** (CHANGELOG 0.2.0에 싣는다):
 
 | 0.1.0 | 0.2.0 |
@@ -200,3 +200,11 @@ const { importHwpx } = await import('@quiredoc/convert');
 - `scripts/deprecate-0.1.mjs`: 0.2.0에서 내지 않는 model·layout·shaping·editor·sdk(→ core), sync(→ core·collab)에 사용 중단 안내. 기본은 보기만, `--run`이면 `npm deprecate`.
 - 확인: 0.2.0으로 6개 빌드, 검사·dry-run 통과, react의 peer `@quiredoc/core@^0.2.0`. react-vite 예제가 판 없는 tgz로 0.2.0을 설치·타입 검사·빌드하고 Loro 없음.
 - 남은 것 (사람이, 16 §10.8 "0.2.0 올리기"): core·collab 처음 올리기와 Trusted Publisher 등록, `v0.2.0` 태그, 사용 중단 안내.
+
+### 8.7 P-6 0.2.0 출시 (2026-11-25)
+
+- core·collab은 사람이 이 기기에서 처음 올리고 Trusted Publisher 등록. `v0.2.0` 태그의 워크플로가 convert·pdf·react를 OIDC로 올렸다.
+- fonts는 워크플로에서 `ENEEDAUTH`(Trusted Publisher 설정이 맞지 않음)로 두 번 실패해 사람이 이 기기에서 올렸다. 설정은 고쳤으나 워크플로로 올린 확인은 다음 태그 때.
+- 0.1.0은 npm에서 지웠다 (§6). `scripts/deprecate-0.1.mjs`는 쓸 일이 없어져 지웠다.
+- 확인: npm에 여섯 개 모두 0.2.0만, 빈 폴더에서 여섯 개 + react 설치 → core·convert·collab 가져오기 동작, fonts 파일 있음. GitHub Release v0.2.0.
+- 겪은 것: npm 로그인 토큰이 만료되면 `publish`가 401이 아니라 **404**로 실패한다 (`npm whoami`로 확인). 단계 게시라 올린 뒤 메타데이터·tgz가 보이기까지 2–3분.

@@ -378,5 +378,5 @@
 2. `npm view @quiredoc/core version`과 `npm view @quiredoc/collab version`이 0.2.0인지 본다 (단계 게시 자리표시만 보이면 잠시 뒤 다시).
 3. npm에서 `@quiredoc/core`·`@quiredoc/collab`의 Settings → Trusted Publisher → GitHub Actions(`leessang10`/`quire`/`release.yml`, Allow npm publish 켬). Publishing access는 "2FA 필요, 우회 토큰 막음" 권장.
 4. `git tag v0.2.0 && git push origin v0.2.0`: 워크플로가 시험 뒤 core·collab은 이미 있어 건너뛰고 convert·pdf·react·fonts 0.2.0을 OIDC로 올리고 GitHub Release를 만든다.
-5. `node scripts/deprecate-0.1.mjs --run`: 옛 패키지 여섯에 사용 중단 안내.
+5. (바꿈) 옛 0.1.0은 사용 중단 안내 대신 72시간 안에 `npm unpublish`로 지웠다 (19 §6·§8.7).
 6. 빈 폴더에서 `npm install @quiredoc/core @quiredoc/react @quiredoc/convert @quiredoc/pdf @quiredoc/fonts @quiredoc/collab`로 확인.

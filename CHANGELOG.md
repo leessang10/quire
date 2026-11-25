@@ -30,6 +30,8 @@ The ten 0.1.0 packages become one core and optional modules ([design 19](docs/de
 
 ## [0.1.0] - 2026-11-24
 
+Removed from npm on 2026-11-25 (replaced by 0.2.0); the tag and the notes below remain.
+
 First public release.
 
 ### Packages
