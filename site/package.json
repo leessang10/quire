@@ -1,0 +1,29 @@
+{
+  "name": "quire-site",
+  "private": true,
+  "description": "Quire 소개 페이지 (Vercel). 저장소 워크스페이스 밖이라 npm에 올라간 @quiredoc/* 판을 그대로 쓴다.",
+  "scripts": {
+    "postinstall": "node scripts/copy-assets.mjs public",
+    "dev": "next dev -p 5310",
+    "build": "next build",
+    "start": "next start -p 5310",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@quiredoc/convert": "^0.2.0",
+    "@quiredoc/core": "^0.2.0",
+    "@quiredoc/fonts": "^0.2.0",
+    "@quiredoc/pdf": "^0.2.0",
+    "@quiredoc/react": "^0.2.0",
+    "harfbuzzjs": "1.6.4",
+    "next": "^16",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "typescript": "5.8.3"
+  }
+}
