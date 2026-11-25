@@ -717,7 +717,7 @@ interface QuirePlugin {
   - 글자 수 세기: change 이벤트(묶어서), 명령, 내보내기 형식(통계 글), 장식 없음.
   - 강조 낱말: 장식 소스·겉모양, 명령(더하기·빼기·선택 더하기·다음), 단축키(Ctrl+Alt+K·J), 오른쪽 클릭 항목, 문서 데이터(낱말 목록, 판 1 쉼표 글 → 판 2 옮기기).
 - **문서 데이터** (07 §4): `Document.ext`(이름 → `{v, data}`). 정본 `x`로 저장·복원한다 (`quireFromDocument`·`documentFromQuire`). 실시간 동기화는 하지 않는다.
-- **`@quiredoc/sdk`** `createEditor({host, doc: QuireDoc, plugins, …})` (08 §3):
+- **`@quiredoc/core`** (0.1.0의 sdk) `createEditor({host, doc: QuireDoc, plugins, …})` (08 §3):
   - `run`: 내장 명령은 점 없는 이름(toggleBold·undo·setStyle·bulletList·insertTable…, 플러그인 `core`), 플러그인 명령은 '이름.명령'.
   - `getState`: 불변 스냅샷 — 선택, 캐럿 서식, 문단 스타일, 실행 취소 가능, 제안 모드, 찾기, 플러그인. 값이 같으면 같은 객체다.
   - `subscribe`: 그리기가 끝날 때 알린다. 그 밖에 `caretRect`·`rangeRects`·`toJSON`·`use`·`destroy`.
