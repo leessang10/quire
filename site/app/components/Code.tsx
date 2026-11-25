@@ -7,7 +7,7 @@ export default function Code({ children, file, lang }: { children: string; file?
     <figure className="code">
       <figcaption>
         <span>{file ?? lang ?? ''}</span>
-        <CopyButton text={code} />
+        <CopyButton text={code} label={file ?? (lang === 'sh' ? '명령' : '코드')} />
       </figcaption>
       <pre>
         <code>{code}</code>
