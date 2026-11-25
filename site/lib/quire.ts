@@ -12,8 +12,30 @@ export const fonts: FontSource[] = [
   { name: 'Noto Sans KR', manifest: `${ASSET_BASE}/fonts/noto-sans-kr/manifest.json` },
 ];
 
-export function demoDoc(): QuireDoc {
-  const p = (t: string, attrs: Record<string, unknown> = {}, m?: Record<string, unknown>) => ({ p: attrs, c: [{ t, ...(m ? { m } : {}) }] });
+const BODY = {
+  ko: (p: P) => [
+    p('첫 쪽', { style: 'h1' }),
+    p('이 쪽은 그림이 아니라 실제 원고입니다. 아무 곳이나 눌러 한 문장 이어 써 보세요. 굵게, 기울임, 제목도 바꿔 볼 수 있습니다.'),
+    p('글자는 브라우저의 글상자가 아니라 Quire의 조판 엔진이 한 줄씩 짜서 그립니다. 그래서 여기서 본 쪽이 PDF에서도, 종이에서도 같은 쪽입니다.'),
+    p('조판에 대하여', { style: 'h2' }),
+    p('줄은 어절 사이에서 바꾸고, 닫는 문장부호는 줄 첫머리에 두지 않습니다. 이 문단은 양쪽 맞춤이라 어절 사이를 고르게 늘려 오른쪽 끝을 맞춥니다.', { align: 'justify' }),
+    p('원고를 옮기는 일', { style: 'h2' }),
+    p('열기 단추로 HWPX·DOCX·Markdown 원고를 불러오고, 저장 단추로 HWPX·DOCX·Markdown·PDF를 내려받을 수 있습니다. 모든 일은 이 브라우저 안에서만 일어납니다.', {}, { italic: true }),
+  ],
+  en: (p: P) => [
+    p('The first page', { style: 'h1' }),
+    p('This page is not a picture; it is a real manuscript. Click anywhere and continue a sentence. You can also try bold, italic and headings.'),
+    p('The text is not laid out by a browser text box. Quire’s own engine sets it line by line, so the page you see here is the same page in the PDF and on paper.'),
+    p('On typesetting', { style: 'h2' }),
+    p('Korean lines break between words, and closing punctuation never begins a line: 줄은 어절 사이에서 바꾸고, 닫는 문장부호는 줄 첫머리에 두지 않습니다. This paragraph is justified, so the spaces between words widen evenly to meet the right margin.', { align: 'justify' }),
+    p('Moving manuscripts', { style: 'h2' }),
+    p('Use Open to bring in an HWPX, DOCX or Markdown manuscript, and the save buttons to download HWPX, DOCX, Markdown or PDF. Everything happens inside this browser.', {}, { italic: true }),
+  ],
+};
+type P = (t: string, attrs?: Record<string, unknown>, m?: Record<string, unknown>) => unknown;
+
+export function demoDoc(lang: 'ko' | 'en' = 'ko'): QuireDoc {
+  const p: P = (t, attrs = {}, m) => ({ p: attrs, c: [{ t, ...(m ? { m } : {}) }] });
   return {
     format: 'quire',
     version: 1,
@@ -21,15 +43,7 @@ export function demoDoc(): QuireDoc {
     styles: {},
     sections: [{ id: 's1', page: { width: 595276, height: 841890, margin: [72000, 72000, 72000, 72000] }, columns: 1 }],
     stories: {
-      body: [
-        p('Quire로 써 보는 문서', { style: 'h1' }),
-        p('이 화면은 그림이 아니라 실제 편집기입니다. 아무 곳이나 눌러 한글을 입력하고, 굵게·기울임·제목을 바꿔 보세요.'),
-        p('글자는 브라우저의 텍스트 상자가 아니라 Quire의 조판 엔진이 캔버스에 직접 그립니다. 그래서 화면에서 본 쪽 나눔이 PDF와 인쇄에서도 그대로입니다.'),
-        p('한글 조판', { style: 'h2' }),
-        p('줄바꿈은 어절 단위로 하고, 닫는 문장부호는 줄 첫머리에 오지 않게 합니다. 양쪽 맞춤 문단에서는 어절 사이를 고르게 늘려 오른쪽 끝을 맞춥니다.', { align: 'justify' }),
-        p('파일', { style: 'h2' }),
-        p('위의 열기 단추로 HWPX·DOCX·Markdown 파일을 불러오고, 저장 단추로 HWPX·DOCX·Markdown·PDF를 내려받을 수 있습니다. 모든 처리는 이 브라우저 안에서만 일어납니다.', {}, { italic: true }),
-      ],
+      body: BODY[lang](p),
     },
     annotations: [],
   } as unknown as QuireDoc;
