@@ -1,0 +1,6 @@
+node_modules/
+.next/
+public/quire/
+next-env.d.ts
+tsconfig.tsbuildinfo
+.vercel

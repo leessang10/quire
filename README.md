@@ -8,6 +8,8 @@
 
 > 상태: **0.2.0 출시** (core + 모듈, [19](docs/design/19-packages.md)) — 1–7단계 완료, 6-7(실제 환경 확인)은 1차 실행 끝·스크린리더 청취 남음 ([로드맵](docs/design/06-roadmap.md), [출시 절차](docs/design/16-release.md)). 바뀐 것: [CHANGELOG](CHANGELOG.md). 라이선스: [MIT](LICENSE) (글꼴은 SIL OFL 1.1). 0단계 결과: [편집기·성능](docs/spikes/phase0-baseline.md), [동기화(CRDT) 비교](docs/spikes/phase0-crdt.md)
 
+소개 페이지(데모·설치·단계별 가이드)는 [`site/`](site/README.md)에 있고 Vercel에 올립니다.
+
 ## 설치 (패키지)
 
 ```bash

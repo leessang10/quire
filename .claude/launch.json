@@ -145,6 +145,18 @@
         "5309"
       ],
       "port": 5309
+    },
+    {
+      "name": "site",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "site/node_modules/next/dist/bin/next",
+        "start",
+        "site",
+        "-p",
+        "5310"
+      ],
+      "port": 5310
     }
   ]
 }
